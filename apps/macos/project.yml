@@ -1,0 +1,190 @@
+name: Kriya
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
+options:
+  bundleIdPrefix: com.kriya
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: YES
+    GENERATE_INFOPLIST_FILE: NO
+    # One binary for Apple Silicon and Intel.
+    ARCHS: "$(ARCHS_STANDARD)"
+    DEVELOPMENT_TEAM: X4MH29QNRS
+    # The updater stays off until a signing key is set here.
+    SPARKLE_PUBLIC_KEY: "ERIBpYqmQwW3v6Jy6G1KMI0Rgu6HXA3Og6XmyySGPKQ="
+  configs:
+    Debug:
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      ONLY_ACTIVE_ARCH: NO
+targets:
+  Kriya:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+      - path: Shared
+      - path: Resources
+      - path: Generated/kriya_core.swift
+    dependencies:
+      - package: Sparkle
+        product: Sparkle
+      - sdk: FinderSync.framework
+      - target: KriyaFinder
+      - framework: Generated/KriyaCore.xcframework
+        embed: false
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Kriya
+        CFBundleName: Kriya
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        LSMinimumSystemVersion: "14.0"
+        # A menu-bar app: no Dock icon until the settings window is open (or the person asks for one).
+        LSUIElement: true
+        NSPrincipalClass: NSApplication
+        NSHumanReadableCopyright: "Copyright © 2026 Kriya. All rights reserved."
+        NSAppleEventsUsageDescription: "Kriya runs the AppleScripts you create, which may control other apps."
+        SUFeedURL: https://raw.githubusercontent.com/lokeshreddyveer/kriya/main/appcast.xml
+        SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
+        SUEnableAutomaticChecks: false
+        # Right-click › Services entries. Each message is a method of FinderServicesProvider.
+        NSServices:
+          - NSMenuItem:
+              default: "Kriya: Copy Full Path"
+            NSMessage: copyFullPath
+            NSPortName: Kriya
+            NSSendTypes: [public.file-url, NSFilenamesPboardType]
+          - NSMenuItem:
+              default: "Kriya: Copy Filename"
+            NSMessage: copyFileName
+            NSPortName: Kriya
+            NSSendTypes: [public.file-url, NSFilenamesPboardType]
+          - NSMenuItem:
+              default: "Kriya: Copy Parent Folder Path"
+            NSMessage: copyParentPath
+            NSPortName: Kriya
+            NSSendTypes: [public.file-url, NSFilenamesPboardType]
+          - NSMenuItem:
+              default: "Kriya: Copy Shell-Escaped Path"
+            NSMessage: copyShellPath
+            NSPortName: Kriya
+            NSSendTypes: [public.file-url, NSFilenamesPboardType]
+          - NSMenuItem:
+              default: "Kriya: Open in Terminal"
+            NSMessage: openInTerminal
+            NSPortName: Kriya
+            NSSendTypes: [public.file-url, NSFilenamesPboardType]
+          - NSMenuItem:
+              default: "Kriya: Compress"
+            NSMessage: compressItems
+            NSPortName: Kriya
+            NSSendTypes: [public.file-url, NSFilenamesPboardType]
+          - NSMenuItem:
+              default: "Kriya: Duplicate"
+            NSMessage: duplicateItems
+            NSPortName: Kriya
+            NSSendTypes: [public.file-url, NSFilenamesPboardType]
+          - NSMenuItem:
+              default: "Kriya: Actions…"
+            NSMessage: showActions
+            NSPortName: Kriya
+            NSSendTypes: [public.file-url, NSFilenamesPboardType]
+        # kriya://finder/run?… is how the Finder extension asks the app to run an action.
+        CFBundleURLTypes:
+          - CFBundleURLName: Kriya Finder request
+            CFBundleURLSchemes: [kriya]
+          # Lets Kriya be chosen as the default browser, so it can send each link to the right place.
+          - CFBundleURLName: Web links
+            CFBundleURLSchemes: [http, https]
+    entitlements:
+      path: Kriya.entitlements
+      # Not sandboxed: Kriya watches input and moves other apps' windows. Hardened runtime, notarized.
+      properties:
+        com.apple.security.automation.apple-events: true
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        PRODUCT_BUNDLE_IDENTIFIER: com.kriya.app
+        PRODUCT_NAME: Kriya
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
+        # Hardened runtime without the sandbox: the app has to watch input and move other apps' windows.
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+      configs:
+        # The unit tests are loaded into this app. The hardened runtime refuses a test bundle signed differently, so it is
+        # off for debug builds only; release builds keep it.
+        Debug:
+          ENABLE_HARDENED_RUNTIME: NO
+  KriyaFinder:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: FinderExtension
+        excludes: ["*.entitlements"]
+      - path: Shared
+    dependencies:
+      - sdk: FinderSync.framework
+    info:
+      path: FinderExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Kriya Finder Actions
+        CFBundleName: KriyaFinder
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        LSMinimumSystemVersion: "14.0"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.FinderSync
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FinderSync
+    entitlements:
+      path: FinderExtension/KriyaFinder.entitlements
+      # Finder extensions must be sandboxed. This one can only read the menu file the app writes.
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.temporary-exception.files.home-relative-path.read-only:
+          - /Library/Application Support/Kriya/finder-menu.json
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kriya.app.finder
+        PRODUCT_NAME: KriyaFinder
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+  KriyaTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: Kriya
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kriya.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Kriya.app/Contents/MacOS/Kriya"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  Kriya:
+    build:
+      targets:
+        Kriya: all
+        KriyaTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [KriyaTests]
+    archive:
+      config: Release

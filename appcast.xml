@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Kriya</title>
+    <!-- One <item> per release, added by hand after scripts/release.sh and Sparkle's sign_update. -->
+    <item>
+      <title>Kriya 0.2.1</title>
+      <pubDate>Wed, 21 Oct 2026 23:27:58 -0000</pubDate>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/lokeshreddyveer/kriya/releases/download/v0.2.1/Kriya-0.2.1.dmg" length="28335133" type="application/octet-stream" sparkle:edSignature="qjtLY6MUziRLdUYElsjeWG02Md0xVK36Aa9/m0fjXIl+onBjDQM/ZE5jAjJBDqb2b6Mb5mGqVQqbHxWdQP0aAQ=="/>
+    </item>
+  </channel>
+</rss>

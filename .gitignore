@@ -1,0 +1,10 @@
+.DS_Store
+build/
+dist/
+core/target/
+apps/macos/Generated/
+apps/macos/Kriya.xcodeproj/
+apps/macos/Info.plist
+xcuserdata/
+DerivedData/
+apps/macos/FinderExtension/Info.plist
