@@ -71,6 +71,7 @@ extension SelectionActionKind {
         case .script(let language, _, let replace): return (language == .shell ? "Shell script" : "AppleScript") + (replace ? " that replaces the selection" : "")
         case .shortcut(let name, _): return "Shortcut “\(name)”"
         case .workflow: return "Run a workflow"
+        case .intelligence(let task): return "Apple Intelligence: " + intelligenceTitle(task: task).lowercased()
         }
     }
 }

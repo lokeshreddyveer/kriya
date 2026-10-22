@@ -7,6 +7,7 @@ on the machine that built it; it is too large for this repository.
 
 | Version | Build | DMG SHA-256 | Swift tests | Notes |
 |---|---|---|---|---|
+| 0.2.9 | 16 | `4ab5c50a1ad090f8827a954f12cbba6d9359e20e38c8d58550e55c2e620afd94` | 246 passed, 0 failed | Apple Intelligence (on-device only): selection bar actions, launcher ask and clipboard actions, settings pane. Rust: 396 passed |
 | 0.2.8 | 15 | `d4f20bf5f51f61129bccf5984859ba6e9eead86255e6874eca189d758770ee6c` | 229 passed, 0 failed | Encrypted clipboard and protected backups, unified launcher, interaction map, layout editor, screen capture with text recognition and redaction, browser extensions, diagnostics. Rust: 389 passed |
 | 0.2.7 | 14 | `cf8e428225907530309e32cdb763134fd0e536cf9f566c0ba3338530c5e4269e` | 120 passed, 0 failed | New quick-paste clipboard panel (day groups, tinted tiles, selected row opens up); a failed app-update check is no longer shown as done; README lists what Kriya does by itself. Rust: 373 passed |
 | 0.2.6 | 13 | `68c8e9924414bc25c98f584565f72f3b2c20c53f8c29508073960659426392de` | 119 passed, 0 failed | Updates and scans run by themselves (no check buttons), tab bars fit their tabs, Homebrew upgrades serialized, Stop race and search-section fixes, shortcut registry made thread-safe. Rust: 373 passed |

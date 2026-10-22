@@ -3,7 +3,7 @@ import Foundation
 /// The kinds of thing the launcher can find. Each can be turned off in Settings › Launcher.
 enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
     case calculator, utility, command, layout, snippet, action, workflow, feature, setting
-    case app, window, clipboard, file, system, emoji
+    case app, window, clipboard, file, system, emoji, intelligence
 
     var id: String { rawValue }
 
@@ -24,6 +24,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .file: return "Files and folders"
         case .system: return "System"
         case .emoji: return "Emoji"
+        case .intelligence: return "Apple Intelligence"
         }
     }
 
@@ -45,6 +46,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .file: return "File"
         case .system: return "System"
         case .emoji: return "Emoji"
+        case .intelligence: return "AI"
         }
     }
 
@@ -65,6 +67,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .file: return "doc"
         case .system: return "desktopcomputer"
         case .emoji: return "face.smiling"
+        case .intelligence: return "sparkles"
         }
     }
 
@@ -75,6 +78,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .clipboard: return "Searches your clipboard history. Hidden while it is locked."
         case .window: return "Needs Accessibility, to list and raise windows."
         case .app: return "Installed and running apps."
+        case .intelligence: return "Type “ask” and a question, or use the clipboard shortcuts. Handled on this Mac; needs Apple Intelligence."
         default: return ""
         }
     }
@@ -89,6 +93,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .window: return 30
         case .setting, .system: return 0
         case .emoji: return -10
+        case .intelligence: return 10
         case .clipboard: return -20
         case .file: return -60
         }

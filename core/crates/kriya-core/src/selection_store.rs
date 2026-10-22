@@ -217,6 +217,19 @@ fn read_actions(conn: &Connection) -> Result<Vec<SelectionAction>, CoreError> {
         write_json(conn, "selection_actions", &list)?;
         write_json(conn, "selection_defaults_v2", &true)?;
     }
+    // The Apple Intelligence actions are offered once the same way.
+    if read_json::<bool>(conn, "selection_defaults_v3")?.is_none() {
+        for extra in default_actions()
+            .into_iter()
+            .filter(|a| a.id.starts_with("ai-"))
+        {
+            if !list.iter().any(|a| a.id == extra.id) {
+                list.push(extra);
+            }
+        }
+        write_json(conn, "selection_actions", &list)?;
+        write_json(conn, "selection_defaults_v3", &true)?;
+    }
     Ok(list)
 }
 
@@ -380,6 +393,33 @@ mod tests {
             .unwrap()
             .iter()
             .any(|a| a.id == "mine"));
+    }
+
+    #[test]
+    fn apple_intelligence_actions_reach_existing_users_once() {
+        let store = open();
+        let old: Vec<SelectionAction> = default_actions()
+            .into_iter()
+            .filter(|a| !a.id.starts_with("ai-"))
+            .collect();
+        store.save_selection_actions(&old).unwrap();
+        let first = store.selection_actions().unwrap();
+        assert_eq!(first.iter().filter(|a| a.id.starts_with("ai-")).count(), 8);
+        assert!(first
+            .iter()
+            .filter(|a| a.id.starts_with("ai-"))
+            .all(|a| a.group.as_deref() == Some(crate::selection::INTELLIGENCE_GROUP)));
+        let mut trimmed = first.clone();
+        trimmed.retain(|a| a.id != "ai-reply");
+        store.save_selection_actions(&trimmed).unwrap();
+        assert!(
+            !store
+                .selection_actions()
+                .unwrap()
+                .iter()
+                .any(|a| a.id == "ai-reply"),
+            "one that was removed does not come back"
+        );
     }
 
     #[test]

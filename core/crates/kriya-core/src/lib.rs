@@ -84,8 +84,9 @@ pub use screen_tools::{
 };
 pub use scroll::{ScrollShaper, ScrollStep, SmoothScroller};
 pub use selection::{
-    AppBehavior, ApprovedScript, SelectionAction, SelectionActionKind, SelectionConfig,
-    SelectionMode, SelectionTarget, ToolbarPosition, ToolbarSize, ToolbarTheme, TranslateProvider,
+    AppBehavior, ApprovedScript, IntelligenceInput, IntelligenceTask, SelectionAction,
+    SelectionActionKind, SelectionConfig, SelectionMode, SelectionTarget, ToolbarPosition,
+    ToolbarSize, ToolbarTheme, TranslateProvider,
 };
 pub use session::SessionOutcome;
 pub use template::{PromptValue, TemplateContext, TemplateOutput};
@@ -778,6 +779,49 @@ pub fn selection_translate_url(
     text: String,
 ) -> Result<String, CoreError> {
     selection::translate_url(provider, &target, &text).map_err(CoreError::invalid)
+}
+
+// ---- Apple Intelligence: what to ask the on-device model, and tidying what it says ---------------------------------------
+
+#[uniffi::export]
+pub fn intelligence_instructions(task: selection::IntelligenceTask) -> String {
+    task.instructions()
+}
+
+#[uniffi::export]
+pub fn intelligence_title(task: selection::IntelligenceTask) -> String {
+    task.title()
+}
+
+#[uniffi::export]
+pub fn intelligence_replaces_selection(task: selection::IntelligenceTask) -> bool {
+    task.replaces_selection()
+}
+
+/// Why a task cannot be used, or nothing when it can.
+#[uniffi::export]
+pub fn intelligence_check(task: selection::IntelligenceTask) -> Option<String> {
+    task.check().err()
+}
+
+#[uniffi::export]
+pub fn intelligence_ask_instructions() -> String {
+    selection::INTELLIGENCE_ASK_INSTRUCTIONS.to_string()
+}
+
+#[uniffi::export]
+pub fn intelligence_group() -> String {
+    selection::INTELLIGENCE_GROUP.to_string()
+}
+
+#[uniffi::export]
+pub fn intelligence_limit_input(text: String, max_chars: u32) -> selection::IntelligenceInput {
+    selection::limit_intelligence_input(&text, max_chars as usize)
+}
+
+#[uniffi::export]
+pub fn intelligence_clean_output(output: String, original: String) -> String {
+    selection::clean_intelligence_output(&output, &original)
 }
 
 #[uniffi::export]

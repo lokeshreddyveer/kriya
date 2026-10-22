@@ -1,0 +1,252 @@
+import AppKit
+import Combine
+import Foundation
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
+
+/// Whether Apple Intelligence's on-device model can be used right now, and if not, why, in words a person can act on.
+enum IntelligenceAvailability: Equatable {
+    case available
+    case needsNewerMacOS
+    case notSupportedByThisMac
+    case notTurnedOn
+    case modelNotReady
+    case unknown
+
+    var isAvailable: Bool { self == .available }
+
+    var title: String {
+        switch self {
+        case .available: return "Ready"
+        case .needsNewerMacOS: return "Needs a newer macOS"
+        case .notSupportedByThisMac: return "Not supported on this Mac"
+        case .notTurnedOn: return "Turned off in System Settings"
+        case .modelNotReady: return "Still getting ready"
+        case .unknown: return "Not available"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .available: return "The on-device model is ready. Text you send it is handled on this Mac and goes nowhere else."
+        case .needsNewerMacOS: return "Apple Intelligence needs macOS 26 or later. Update macOS to use it from Kriya."
+        case .notSupportedByThisMac: return "This Mac cannot run Apple Intelligence. It needs a Mac with Apple silicon."
+        case .notTurnedOn: return "Turn on Apple Intelligence in System Settings, then come back here."
+        case .modelNotReady: return "macOS is still downloading or preparing the model. This usually takes a few minutes, and needs a network connection once."
+        case .unknown: return "macOS did not say why Apple Intelligence is not available."
+        }
+    }
+}
+
+/// What can go wrong when asking the model, each with wording a person can use. None of these carry the text that was sent.
+enum IntelligenceError: Error, Equatable, LocalizedError {
+    case unavailable(IntelligenceAvailability)
+    case emptyText
+    case tooLong
+    case refused
+    case unsupportedLanguage
+    case busy
+    case cancelled
+    case failed
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable(let why): return why.explanation
+        case .emptyText: return "There is no text to work on."
+        case .tooLong: return "That text is too long for the on-device model, even after cutting it down."
+        case .refused: return "Apple Intelligence declined to work on that text."
+        case .unsupportedLanguage: return "Apple Intelligence does not support the language of that text yet."
+        case .busy: return "Apple Intelligence is busy. Try again in a moment."
+        case .cancelled: return "Stopped."
+        case .failed: return "Apple Intelligence could not finish that. Try again."
+        }
+    }
+
+    /// Reads which kind of failure the framework reported from the name of its case alone. The name is all that is looked
+    /// at: the framework's descriptions can quote what was sent, and that must never be read, logged or shown.
+    static func classify(caseName: String) -> IntelligenceError {
+        switch caseName {
+        case "contextSizeExceeded", "exceededContextWindowSize": return .tooLong
+        case "guardrailViolation", "refusal": return .refused
+        case "unsupportedLanguageOrLocale": return .unsupportedLanguage
+        case "rateLimited", "concurrentRequests": return .busy
+        case "assetsUnavailable": return .unavailable(.modelNotReady)
+        default: return .failed
+        }
+    }
+
+    static func classify(_ error: Error) -> IntelligenceError {
+        if let known = error as? IntelligenceError { return known }
+        if error is CancellationError { return .cancelled }
+        let described = String(describing: error)
+        return classify(caseName: String(described.prefix { $0 != "(" && $0 != " " }))
+    }
+}
+
+/// Whatever answers a request. The real one is the on-device model; a test stands one in.
+protocol TextModel {
+    func availability() -> IntelligenceAvailability
+    /// `rewriting` is for work on the person's own text (fixing, rewording), which the system's content checks should let
+    /// through; a question typed in is checked in the usual way.
+    func respond(instructions: String, prompt: String, rewriting: Bool) async throws -> String
+}
+
+/// Apple Intelligence's on-device model, through the Foundation Models framework. Nothing here can reach a network: the
+/// framework's on-device model is the only one used, never its cloud one.
+struct SystemTextModel: TextModel {
+    func availability() -> IntelligenceAvailability {
+        #if canImport(FoundationModels)
+        guard #available(macOS 26.0, *) else { return .needsNewerMacOS }
+        switch SystemLanguageModel.default.availability {
+        case .available: return .available
+        case .unavailable(let reason):
+            switch reason {
+            case .deviceNotEligible: return .notSupportedByThisMac
+            case .appleIntelligenceNotEnabled: return .notTurnedOn
+            case .modelNotReady: return .modelNotReady
+            @unknown default: return .unknown
+            }
+        @unknown default: return .unknown
+        }
+        #else
+        return .needsNewerMacOS
+        #endif
+    }
+
+    func respond(instructions: String, prompt: String, rewriting: Bool) async throws -> String {
+        #if canImport(FoundationModels)
+        guard #available(macOS 26.0, *) else { throw IntelligenceError.unavailable(.needsNewerMacOS) }
+        let model = rewriting ? SystemLanguageModel(guardrails: .permissiveContentTransformations) : SystemLanguageModel.default
+        let session = LanguageModelSession(model: model, instructions: instructions)
+        var options = GenerationOptions()
+        options.temperature = 0.3
+        options.maximumResponseTokens = 900
+        let response = try await session.respond(to: prompt, options: options)
+        return response.content
+        #else
+        throw IntelligenceError.unavailable(.needsNewerMacOS)
+        #endif
+    }
+}
+
+/// What the person chose about Apple Intelligence in Kriya.
+struct IntelligenceSettings: Codable, Equatable {
+    var inSelectionBar = true
+    var inLauncher = true
+    var onClipboardItems = true
+    /// A language to write results in. Empty means the language of the text.
+    var outputLanguage = ""
+}
+
+/// Where Kriya uses Apple Intelligence's on-device model: what it is asked, in what order of fallbacks, and what the
+/// person allowed. It records nothing about what was sent.
+final class AppleIntelligence: ObservableObject {
+    static let maxInputCharacters = 6000
+    /// When the model says the text is still too long, it is tried again with this share of the limit.
+    static let retryShare = 0.4
+
+    @Published private(set) var availability: IntelligenceAvailability
+    @Published private(set) var settings: IntelligenceSettings
+    @Published private(set) var requestsInFlight = 0
+
+    private let model: TextModel
+    private let defaults: UserDefaults
+    private let key = "intelligenceSettings.v1"
+    private var observer: NSObjectProtocol?
+
+    init(model: TextModel = SystemTextModel(), defaults: UserDefaults = .standard, watchSystem: Bool = true) {
+        self.model = model
+        self.defaults = defaults
+        availability = model.availability()
+        if let data = defaults.data(forKey: key), let decoded = try? JSONDecoder().decode(IntelligenceSettings.self, from: data) {
+            settings = decoded
+        } else {
+            settings = IntelligenceSettings()
+        }
+        if watchSystem {
+            // The person may turn it on in System Settings while Kriya is running, or the model may finish downloading.
+            observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
+        }
+    }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    var isAvailable: Bool { availability.isAvailable }
+
+    func refresh() {
+        let now = model.availability()
+        if now != availability {
+            availability = now
+            Log.info("Intelligence", "Apple Intelligence: \(now.title)")
+        }
+    }
+
+    func update(_ change: (inout IntelligenceSettings) -> Void) {
+        var next = settings
+        change(&next)
+        next.outputLanguage = String(next.outputLanguage.trimmingCharacters(in: .whitespaces).prefix(40))
+        guard next != settings else { return }
+        settings = next
+        if let data = try? JSONEncoder().encode(next) { defaults.set(data, forKey: key) }
+    }
+
+    // MARK: Asking
+
+    struct Output: Equatable {
+        let text: String
+        /// The text sent was cut down to fit.
+        let truncated: Bool
+    }
+
+    /// Works on `text` as the task says.
+    func run(_ task: IntelligenceTask, on text: String) async throws -> Output {
+        // A custom instruction with nothing in it, or too much, is refused before anything is sent.
+        if intelligenceCheck(task: task) != nil { throw IntelligenceError.failed }
+        let instructions = withLanguage(intelligenceInstructions(task: task))
+        return try await send(text: text, instructions: instructions, rewriting: true, original: text) { "Text to work on:\n<<<\n\($0)\n>>>" }
+    }
+
+    /// Answers a question typed in.
+    func ask(_ question: String) async throws -> Output {
+        let instructions = withLanguage(intelligenceAskInstructions())
+        return try await send(text: question, instructions: instructions, rewriting: false, original: "") { $0 }
+    }
+
+    private func withLanguage(_ instructions: String) -> String {
+        let language = settings.outputLanguage
+        return language.isEmpty ? instructions : instructions + "\nWrite the result in \(language)."
+    }
+
+    private func send(text: String, instructions: String, rewriting: Bool, original: String, prompt: (String) -> String) async throws -> Output {
+        refresh()
+        guard availability.isAvailable else { throw IntelligenceError.unavailable(availability) }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw IntelligenceError.emptyText }
+        await MainActor.run { requestsInFlight += 1 }
+        defer { Task { @MainActor in self.requestsInFlight = max(0, self.requestsInFlight - 1) } }
+
+        var limit = Self.maxInputCharacters
+        var cut = false
+        for attempt in 0..<2 {
+            try Task.checkCancellation()
+            let input = intelligenceLimitInput(text: text, maxChars: UInt32(limit))
+            cut = cut || input.truncated
+            do {
+                let raw = try await model.respond(instructions: instructions, prompt: prompt(input.text), rewriting: rewriting)
+                let cleaned = intelligenceCleanOutput(output: raw, original: original)
+                guard !cleaned.isEmpty else { throw IntelligenceError.failed }
+                return Output(text: cleaned, truncated: cut)
+            } catch {
+                let reason = IntelligenceError.classify(error)
+                // Too long for the model: try once more with much less of it.
+                if reason == .tooLong, attempt == 0 {
+                    limit = max(200, Int(Double(limit) * Self.retryShare))
+                    cut = true
+                    continue
+                }
+                throw reason
+            }
+        }
+        throw IntelligenceError.tooLong
+    }
+}

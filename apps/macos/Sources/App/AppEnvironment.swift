@@ -52,6 +52,7 @@ final class AppEnvironment {
     let links: LinkRouter
     let bridge: BrowserBridge
     let capture: ScreenCaptureService
+    let intelligence: IntelligenceCoordinator
     let timeline = PerformanceTimeline()
     private let captureEditor = CaptureEditorController()
     private(set) var launcherSources: LauncherSources?
@@ -93,6 +94,7 @@ final class AppEnvironment {
         let links = LinkRouter(store: linkStore)
         let bridge = BrowserBridge(support: paths.support)
         let capture = ScreenCaptureService(settings: CaptureSettingsStore())
+        let intelligence = IntelligenceCoordinator(service: AppleIntelligence())
         let workspaceStore = WorkspaceStore(core: core)
         let pointerStore = PointerEffectsStore(core: core)
         let pointerEffects = PointerEffects(store: pointerStore, displays: windowController.displays, executor: executor)
@@ -185,6 +187,7 @@ final class AppEnvironment {
         self.links = links
         self.bridge = bridge
         self.capture = capture
+        self.intelligence = intelligence
         self.workspaceStore = workspaceStore
         self.workspaces = workspaces
         self.pointerStore = pointerStore
@@ -311,7 +314,16 @@ final class AppEnvironment {
         }
         // Apps, open windows, files, clipboard history, macOS settings, a calculator, timers and emoji.
         let sources = LauncherSources(inventory: inventory, clipboard: clipboard, prefs: keyboard.palette.prefs)
+        sources.intelligence = intelligence
         sources.register(in: keyboard.palette)
+        // Apple Intelligence on the selection: the bar offers its actions only where it can run and the person allows it.
+        selection.runner.runIntelligence = { [weak intelligence] task, text, pointer, replace in
+            DispatchQueue.main.async { intelligence?.perform(task, on: text, near: pointer, replace: replace) }
+        }
+        selection.isOffered = { [weak intelligence] action in
+            guard case .intelligence = action.kind else { return true }
+            return intelligence?.service.isAvailable == true && intelligence?.service.settings.inSelectionBar == true
+        }
         launcherSources = sources
         quickCommands.search = { [weak palette = keyboard.palette] text in palette?.search(text) ?? [] }
         quickCommands.choose = { [weak palette = keyboard.palette] entry in palette?.choose(entry) }
@@ -337,6 +349,7 @@ extension View {
             .environmentObject(env.linkStore)
             .environmentObject(env.bridge)
             .environmentObject(env.capture)
+            .environmentObject(env.intelligence.service)
             .environmentObject(env.timeline)
             .environmentObject(env.keyboard.palette.prefs)
             .environmentObject(env.workspaceStore)

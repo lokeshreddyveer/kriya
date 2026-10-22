@@ -146,6 +146,8 @@ final class LauncherSources {
     }
 
     let timers = LauncherTimers()
+    /// Apple Intelligence, when set up: a typed question, and actions on the clipboard.
+    var intelligence: IntelligenceCoordinator?
     private let files = LauncherFileSearch()
     private weak var inventory: AppInventory?
     private let clipboard: ClipboardService
@@ -168,6 +170,7 @@ final class LauncherSources {
         palette.addProvider { [weak self] in self?.windowEntries() ?? [] }
         palette.addProvider { [weak self] in self?.systemEntries() ?? [] }
         palette.addProvider { [weak self] in self?.runningTimerEntries() ?? [] }
+        palette.addProvider { [weak self] in self?.intelligenceEntries() ?? [] }
         palette.addQueryProvider { [weak self] text in self?.queryEntries(text) ?? [] }
         palette.willShow = { [weak self] in self?.prepare() }
         files.onResults = { [weak palette] in palette?.model.refresh() }
@@ -357,6 +360,12 @@ final class LauncherSources {
                 ) { Self.copy(entry.emoji) })
             }
         }
+        if data.isEnabled(.intelligence), let question = Self.question(in: text), let intelligence, intelligence.service.isAvailable, intelligence.service.settings.inLauncher {
+            found.append(PaletteEntry(
+                id: "ai:ask:\(question)", title: "Ask Apple Intelligence: \(Self.oneLine(question))", subtitle: "Answered on this Mac, in a small window", symbol: "sparkles",
+                category: .intelligence, rememberable: false, queryScore: 900
+            ) { [weak intelligence] in intelligence?.ask(question) })
+        }
         if data.isEnabled(.clipboard) { found.append(contentsOf: clipboardEntries(text)) }
         if data.isEnabled(.file) { found.append(contentsOf: fileEntries(text)) }
         return found
@@ -377,12 +386,14 @@ final class LauncherSources {
             let title = item.sensitive ? "•••••••• Sensitive" : Self.oneLine(item.title ?? item.preview)
             var detail = ["Clipboard"]
             if let app = item.sourceApp { detail.append(AppChoice.name(for: app)) }
+            var actions = [
+                PaletteAction(title: "Paste as Plain Text", symbol: "textformat") { [clipboard] in clipboard.paster.choose(item, plain: true) },
+                PaletteAction(title: "Delete from History", symbol: "trash") { [clipboard] in clipboard.store.delete(item.id) },
+            ]
+            actions.append(contentsOf: intelligenceActions(for: item))
             return PaletteEntry(
                 id: "clip:\(item.id)", title: title, subtitle: detail.joined(separator: " · "), symbol: item.kind.symbol, category: .clipboard, rememberable: false, queryScore: 200,
-                actions: [
-                    PaletteAction(title: "Paste as Plain Text", symbol: "textformat") { [clipboard] in clipboard.paster.choose(item, plain: true) },
-                    PaletteAction(title: "Delete from History", symbol: "trash") { [clipboard] in clipboard.store.delete(item.id) },
-                ]
+                actions: actions
             ) { [clipboard] in clipboard.paster.choose(item, plain: false) }
         }
     }
@@ -402,6 +413,59 @@ final class LauncherSources {
                 ]
             ) { NSWorkspace.shared.open(url) }
         }
+    }
+
+    // MARK: Apple Intelligence
+
+    /// "ask what is a monad" or "ai what is a monad" or "? what is a monad", as the question that follows.
+    static func question(in text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["ask ", "ai ", "? "] where trimmed.lowercased().hasPrefix(prefix) {
+            let rest = String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return rest.count >= 3 ? String(rest.prefix(500)) : nil
+        }
+        return nil
+    }
+
+    /// What the clipboard holds, as text, unless it is something that must not go anywhere: marked secret by the app that
+    /// copied it, or looking like a password, key or card number.
+    static func plainClipboardText(from board: NSPasteboard = .general) -> String? {
+        let concealed = ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType"].map(NSPasteboard.PasteboardType.init(rawValue:))
+        if board.types?.contains(where: { concealed.contains($0) }) == true { return nil }
+        guard let text = board.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !clipLooksSensitive(text: text) else { return nil }
+        return text
+    }
+
+    /// Work on whatever is on the clipboard now: summarize it, fix it, explain it.
+    private func intelligenceEntries() -> [PaletteEntry] {
+        guard prefs.data.isEnabled(.intelligence), let intelligence, intelligence.service.isAvailable, intelligence.service.settings.inLauncher else { return [] }
+        let jobs: [(id: String, task: IntelligenceTask, symbol: String)] = [
+            ("summarize", .summarize, "text.append"), ("fix", .fixGrammar, "checkmark.circle"), ("explain", .explain, "questionmark.bubble"),
+            ("professional", .professional, "briefcase"), ("concise", .concise, "arrow.down.right.and.arrow.up.left"),
+        ]
+        return jobs.map { job in
+            PaletteEntry(
+                id: "ai:clipboard:\(job.id)", title: "\(intelligenceTitle(task: job.task)) the clipboard text", subtitle: "Apple Intelligence, on this Mac", symbol: job.symbol, category: .intelligence
+            ) { [weak intelligence] in
+                guard let text = Self.plainClipboardText() else {
+                    Toast().show("The clipboard has no text to work on, or it looks like a secret.", isError: true)
+                    return
+                }
+                intelligence?.perform(job.task, on: text)
+            }
+        }
+    }
+
+    /// Things Apple Intelligence can do with a clipboard item, for the actions menu. Never for an item labelled sensitive.
+    private func intelligenceActions(for item: ClipItem) -> [PaletteAction] {
+        guard let intelligence, intelligence.service.isAvailable, intelligence.service.settings.onClipboardItems, prefs.data.isEnabled(.intelligence),
+              !item.sensitive, item.kind == .text || item.kind == .richText || item.kind == .url,
+              let text = clipboard.store.blob(item.id)?.plain, !text.isEmpty else { return [] }
+        return [
+            PaletteAction(title: "Summarize with Apple Intelligence", symbol: "sparkles") { [weak intelligence] in intelligence?.perform(.summarize, on: text) },
+            PaletteAction(title: "Explain with Apple Intelligence", symbol: "questionmark.bubble") { [weak intelligence] in intelligence?.perform(.explain, on: text) },
+            PaletteAction(title: "Fix Grammar with Apple Intelligence", symbol: "checkmark.circle") { [weak intelligence] in intelligence?.perform(.fixGrammar, on: text) },
+        ]
     }
 
     // MARK: Helpers

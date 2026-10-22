@@ -417,9 +417,13 @@ final class SelectionService: ObservableObject {
         }
     }
 
+    /// Lets part of the app leave an action out of the bar. Apple Intelligence's actions are left out on a Mac that cannot
+    /// run it, or when the person turned them off. Set by the app.
+    var isOffered: (SelectionAction) -> Bool = { _ in true }
+
     private func present(_ snapshot: SelectionSnapshot, ids: [String]) {
         let (actions, config) = store.current
-        let chosen = ids.compactMap { id in actions.first { $0.id == id } }
+        let chosen = ids.compactMap { id in actions.first { $0.id == id } }.filter(isOffered)
         guard !chosen.isEmpty else { return }
         self.snapshot = snapshot
         lastProblem = nil

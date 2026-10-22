@@ -118,6 +118,9 @@ final class SelectionActionRunner {
 
     /// Runs a workflow by id with the selection as its input. Set when the automation engine exists.
     var runWorkflow: (_ id: String, _ selection: String) -> Void = { _, _ in }
+    /// Hands the selection to Apple Intelligence. `replace` puts a result in place of the selection, and is nil when the
+    /// text cannot be replaced. Set when Apple Intelligence is set up.
+    var runIntelligence: (_ task: IntelligenceTask, _ text: String, _ pointer: CGPoint, _ replace: ((String) -> Bool)?) -> Void = { _, _, _, _ in }
 
     init(store: SelectionStore, clipboard: ClipboardService, approvals: ScriptApprovals) {
         self.store = store
@@ -177,6 +180,9 @@ final class SelectionActionRunner {
             runShortcut(name, replace, snapshot)
         case .workflow(let id):
             runWorkflow(id, snapshot.text)
+        case .intelligence(let task):
+            // The text is not logged, and not sent anywhere but the model on this Mac.
+            runIntelligence(task, snapshot.text, pointer, snapshot.editable ? { [weak self] result in self?.replace(snapshot, with: result) ?? false } : nil)
         }
     }
 

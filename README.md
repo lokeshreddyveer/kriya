@@ -308,3 +308,16 @@ Already there: move the pointer to the next or previous display, and to the midd
 - **Diagnostics**: Health (permissions and what each feature needs, secure-input status, release stuck modifier keys), Trace (what Kriya did for each shortcut or command, off until started, five minutes), Timeline (event-tap speed over the last ten minutes), and support reports with your name, paths, addresses and keys removed. Devices shows which mouse settings apply right now and why, with a tester for buttons, scrolling and keys.
 
 Not verified by hand: the encrypted file on disk, the Keychain and Touch ID flows, capture and text recognition on a real screen, the layout editor on real windows, and the extensions in a real browser.
+
+## Apple Intelligence (0.2.9)
+
+Kriya uses Apple Intelligence's on-device model through the Foundation Models framework (macOS 26 or later, on a Mac with Apple Intelligence turned on). It never uses the framework's cloud model, so nothing leaves the Mac, and what you select or copy is not logged or kept.
+
+- **Selection bar:** an "Apple Intelligence" group of actions: Summarize, Key points, Fix grammar, Make friendlier, Make professional, Make shorter, Explain, Draft a reply, and your own instruction (Settings › Selection Bar › Add Action › Ask Apple Intelligence). The result opens in a small window: Return replaces the selection (rewrites in an editable field) or copies it; Escape closes. The actions are left out of the bar on a Mac that cannot run it.
+- **Launcher:** type `ask` (or `ai`, or `?`) and a question; or Summarize, Fix, Explain, Make professional or shorter the clipboard text. In clipboard results, ⌘K offers Summarize, Explain and Fix grammar.
+- **Never sent:** anything marked secret by the app that copied it, clipboard items labelled sensitive, and text that looks like a password, key or card number.
+- **Apple Intelligence pane:** status and how to fix it, where it is used, the language of results, and a place to try it.
+- **Limits:** about 6000 characters go to the model (a longer text is cut, and the result says so; one retry with less if the model says it is still too long). The model supports a limited set of languages and can make mistakes.
+- Existing selection-bar setups get the new actions once; ones you remove do not come back.
+
+Verified: it compiles, its tests pass with a stand-in model, and a real call to this Mac's on-device model fixed a test sentence. Not verified by hand: the selection bar actions, the result window, the launcher "ask" and the clipboard actions on real windows.

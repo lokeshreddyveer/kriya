@@ -126,6 +126,7 @@ private struct SelectionActionsTab: View {
 enum NewSelectionKind: String, CaseIterable, Identifiable {
     case transform = "Change the text", copyResult = "Copy a changed version", url = "Open a web address", translate = "Translate"
     case shell = "Run a shell script", appleScript = "Run an AppleScript", shortcut = "Run a Shortcut", workflow = "Run a workflow"
+    case intelligence = "Ask Apple Intelligence"
     var id: String { rawValue }
 
     func blank() -> SelectionAction {
@@ -139,6 +140,7 @@ enum NewSelectionKind: String, CaseIterable, Identifiable {
         case .appleScript: kind = .script(language: .appleScript, source: "return item 1 of argv", replaceWithOutput: false)
         case .shortcut: kind = .shortcut(name: "", replaceWithOutput: false)
         case .workflow: kind = .workflow(workflowId: "")
+        case .intelligence: kind = .intelligence(task: .custom(instruction: ""))
         }
         return SelectionAction(id: UUID().uuidString, title: rawValue, symbol: "star", kind: kind, enabled: true, applies: self == .transform ? .editableOnly : .anything, appIds: [])
     }
@@ -157,6 +159,8 @@ private struct SelectionActionEditor: View {
     @State private var provider: TranslateProvider = .google
     @State private var isShell = true
     @State private var replace = false
+    @State private var aiTask: AITaskChoice = .custom
+    @State private var aiInstruction = ""
     @State private var sample = "  Some sample text\nwith two lines  "
 
     var body: some View {
@@ -215,6 +219,13 @@ private struct SelectionActionEditor: View {
         case .workflow:
             Picker("Workflow", selection: $text) { Text("Choose…").tag(""); ForEach(workflows.workflows) { Text($0.name).tag($0.id) } }
             Text("The selected text is the workflow's input.").font(.caption).foregroundStyle(.secondary)
+        case .intelligence:
+            Picker("Task", selection: $aiTask) { ForEach(AITaskChoice.allCases) { Text($0.title).tag($0) } }
+            if aiTask == .custom {
+                TextField("What should it do with the text?", text: $aiInstruction, axis: .vertical).lineLimit(2...4)
+                Text("For example: “turn this into a haiku” or “list the action items”. Up to 600 characters.").font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Handled by Apple Intelligence's on-device model. The text stays on this Mac. The result is shown in a small window where you can copy it or, for rewrites in an editable field, replace the selection.").font(.caption).foregroundStyle(.secondary)
         default:
             Text(action.kind.summary).font(.callout).foregroundStyle(.secondary)
         }
@@ -228,6 +239,9 @@ private struct SelectionActionEditor: View {
         case .script(let l, let s, let r): isShell = l == .shell; text = s; replace = r
         case .shortcut(let n, let r): text = n; replace = r
         case .workflow(let id): text = id
+        case .intelligence(let task):
+            aiTask = AITaskChoice(task)
+            if case .custom(let instruction) = task { aiInstruction = instruction }
         default: break
         }
     }
@@ -240,6 +254,7 @@ private struct SelectionActionEditor: View {
         case .script: action.kind = .script(language: isShell ? .shell : .appleScript, source: text, replaceWithOutput: replace)
         case .shortcut: action.kind = .shortcut(name: text, replaceWithOutput: replace)
         case .workflow: action.kind = .workflow(workflowId: text)
+        case .intelligence: action.kind = .intelligence(task: aiTask.task(instruction: aiInstruction))
         default: break
         }
         store.upsert(action)
@@ -495,4 +510,40 @@ private struct SharingTab: View {
             message = "Added \(added.count)"
         } catch { store.lastError = error.userMessage }
     }
+}
+
+/// The tasks Apple Intelligence can be given, as the editor lists them.
+enum AITaskChoice: String, CaseIterable, Identifiable {
+    case summarize, keyPoints, fixGrammar, friendlier, professional, concise, explain, reply, custom
+    var id: String { rawValue }
+
+    init(_ task: IntelligenceTask) {
+        switch task {
+        case .summarize: self = .summarize
+        case .keyPoints: self = .keyPoints
+        case .fixGrammar: self = .fixGrammar
+        case .friendlier: self = .friendlier
+        case .professional: self = .professional
+        case .concise: self = .concise
+        case .explain: self = .explain
+        case .reply: self = .reply
+        case .custom: self = .custom
+        }
+    }
+
+    func task(instruction: String) -> IntelligenceTask {
+        switch self {
+        case .summarize: return .summarize
+        case .keyPoints: return .keyPoints
+        case .fixGrammar: return .fixGrammar
+        case .friendlier: return .friendlier
+        case .professional: return .professional
+        case .concise: return .concise
+        case .explain: return .explain
+        case .reply: return .reply
+        case .custom: return .custom(instruction: instruction)
+        }
+    }
+
+    var title: String { intelligenceTitle(task: task(instruction: "x")) }
 }

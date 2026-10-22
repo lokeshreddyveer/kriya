@@ -21,7 +21,7 @@ enum SettingsPaneGroup: CaseIterable, Identifiable {
 
 /// Declared in sidebar order, so "next pane" and the Cmd-number shortcuts follow what the person sees.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, clipboard, selection, capture, links, shelf, apps, launcher, automation, actions, profiles
+    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, clipboard, selection, capture, links, shelf, apps, launcher, intelligence, automation, actions, profiles
     case menuBar, power, general, permissions, backup, diagnostics, about
 
     var id: String { rawValue }
@@ -33,6 +33,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .displays: return "Displays & Corners"
         case .shelf: return "File Shelf"
         case .launcher: return "Launcher"
+        case .intelligence: return "Apple Intelligence"
         case .capture: return "Screen Capture"
         case .apps: return "Apps"
         case .menuBar: return "Menu Bar Window"
@@ -66,6 +67,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .displays: return "display"
         case .shelf: return "tray"
         case .launcher: return "magnifyingglass.circle"
+        case .intelligence: return "sparkles"
         case .capture: return "camera.viewfinder"
         case .apps: return "square.grid.3x3.square"
         case .menuBar: return "menubar.rectangle"
@@ -98,7 +100,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .mouse, .pointer, .keyboard, .shortcutMap, .devices: return .input
         case .windows, .workspaces, .buttons: return .windows
         case .finder, .clipboard, .selection, .links, .capture: return .filesAndText
-        case .automation, .actions, .profiles, .launcher: return .automate
+        case .automation, .actions, .profiles, .launcher, .intelligence: return .automate
         case .displays: return .windows
         case .shelf, .apps: return .filesAndText
         case .menuBar, .power, .general, .permissions, .backup, .diagnostics, .about: return .system
@@ -143,6 +145,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .shelf: return "drag drop files temporary tray dropover stage hold"
         case .apps: return "uninstall remove leftovers cleaner orphan update installed applications trash"
         case .launcher: return "search spotlight raycast alfred palette command apps files windows clipboard calculator timer emoji alias pin recent fuzzy shortcut"
+        case .intelligence: return "apple intelligence ai on-device model summarize rewrite proofread grammar tone explain reply writing tools foundation models ask"
         case .capture: return "screenshot screen capture ocr text recognition redact blur hide annotate arrow markup region window delay snip"
         case .menuBar: return "popover menu bar icon window quick actions tiles theme colour tint compact search layout customize"
         case .power: return "sleep wake awake caffeinate keep awake prevent display lid battery"
@@ -267,6 +270,7 @@ struct SettingsRootView: View {
         case .shelf: ShelfPane(shelf: shelf)
         case .apps: AppsPane()
         case .launcher: LauncherPane()
+        case .intelligence: IntelligencePane()
         case .capture: CapturePane(store: capture.settings)
         case .features: FeaturesPane()
         case .permissions: PermissionsPane()

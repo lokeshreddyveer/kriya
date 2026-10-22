@@ -259,6 +259,7 @@ struct Sparkline: Shape {
 // MARK: - Overview
 
 private struct DiagnosticsOverviewTab: View {
+    @EnvironmentObject private var intelligence: AppleIntelligence
     @EnvironmentObject private var permissions: PermissionManager
     @EnvironmentObject private var config: ConfigStore
     @EnvironmentObject private var crashGuard: CrashGuard
@@ -384,7 +385,7 @@ private struct DiagnosticsOverviewTab: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "Kriya diagnostic report.txt"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let report = DiagnosticReport.make(config: config, devices: devices, services: services, events: events, permissions: permissions)
+        let report = DiagnosticReport.make(config: config, devices: devices, services: services, events: events, permissions: permissions, intelligence: intelligence)
         do {
             try report.write(to: url, atomically: true, encoding: .utf8)
             message = "Saved \(url.lastPathComponent)."
@@ -396,7 +397,7 @@ private struct DiagnosticsOverviewTab: View {
 
 /// The text of a diagnostic report: versions, what is on, and the log. Names, file paths, addresses and keys are removed.
 enum DiagnosticReport {
-    static func make(config: ConfigStore, devices: DeviceRegistry, services: ServiceManager, events: EventMonitor, permissions: PermissionManager? = nil) -> String {
+    static func make(config: ConfigStore, devices: DeviceRegistry, services: ServiceManager, events: EventMonitor, permissions: PermissionManager? = nil, intelligence: AppleIntelligence? = nil) -> String {
         var out: [String] = []
         out.append("Kriya diagnostic report")
         out.append("Created: \(Date().formatted(date: .complete, time: .standard))")
@@ -413,6 +414,7 @@ enum DiagnosticReport {
             out.append("Permissions:")
             for permission in Permission.allCases { out.append("  \(permission.title): \(permissions.status(permission))") }
         }
+        if let intelligence { out.append("Apple Intelligence: \(intelligence.availability.title)") }
         let secure = SecureInput.current()
         out.append("Secure input: \(secure.enabled ? "on" + (secure.appName.map { " (\($0))" } ?? "") : "off")")
         out.append("")
