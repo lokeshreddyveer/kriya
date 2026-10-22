@@ -136,7 +136,11 @@ final class ActionExecutor {
         lock.lock()
         let handler = commands[command]
         lock.unlock()
-        guard let handler else { return .failure("The command \(command) is not available.") }
+        guard let handler else {
+            InteractionTrace.shared.note("Command", "\(command): not available")
+            return .failure("The command \(command) is not available.")
+        }
+        InteractionTrace.shared.note("Command", command)
         await MainActor.run { handler() }
         return .success
     }

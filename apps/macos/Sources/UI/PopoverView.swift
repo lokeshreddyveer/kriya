@@ -108,7 +108,7 @@ struct PopoverView: View {
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search actions, settings and windows", text: $query)
+            TextField("Search apps, actions, settings and more", text: $query)
                 .textFieldStyle(.plain)
                 .focused($searchFocused)
                 .onSubmit { hits.first?.run() }
@@ -180,25 +180,20 @@ struct PopoverView: View {
         let text = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !text.isEmpty else { return [] }
         var list: [Hit] = []
+        // The quick-action tiles keep their own behaviour (some close this window), so they are matched here.
         for tile in PopoverCatalog.tiles where tile.title.lowercased().contains(text) {
             list.append(Hit(id: "tile-\(tile.id)", symbol: tile.symbol, title: tile.title, detail: "Action") {
                 commands.run(tile.command)
                 if tile.closes { close() }
             })
         }
-        for layout in windowLayouts() where layout.title.lowercased().contains(text) {
-            list.append(Hit(id: "layout-\(layout.command)", symbol: "rectangle.split.2x2", title: layout.title, detail: "Window") {
-                windowController.run(command: layout.command)
-            })
-        }
-        for action in library.actions where action.name.lowercased().contains(text) {
-            list.append(Hit(id: "action-\(action.id)", symbol: "bolt", title: action.name, detail: "Saved action") {
-                commands.run(action.id)
+        // Everything else comes from the same search as the launcher: apps, settings, saved actions, window layouts, a
+        // calculator and more, ranked by how well they match and how often you use them.
+        for entry in commands.search(text) where !list.contains(where: { $0.title == entry.title }) {
+            list.append(Hit(id: "found-\(entry.id)", symbol: entry.symbol, title: entry.title, detail: entry.category.label) {
+                commands.choose(entry)
                 close()
             })
-        }
-        for pane in SettingsPane.allCases where pane.matches(text) {
-            list.append(Hit(id: "pane-\(pane.rawValue)", symbol: pane.symbol, title: pane.title, detail: "Settings") { openSettings(pane) })
         }
         return Array(list.prefix(9))
     }
@@ -273,9 +268,11 @@ final class FeaturePause: ObservableObject {
     }
 }
 
-/// Lets the menu-bar window run any command by name.
+/// Lets the menu-bar window run any command by name, and search everything the launcher can find.
 final class QuickCommands: ObservableObject {
     let run: (String) -> Void
+    var search: (String) -> [PaletteEntry] = { _ in [] }
+    var choose: (PaletteEntry) -> Void = { $0.run() }
     init(run: @escaping (String) -> Void) { self.run = run }
 }
 

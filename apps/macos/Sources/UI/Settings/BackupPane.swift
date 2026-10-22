@@ -8,6 +8,8 @@ struct BackupPane: View {
 
     @State private var message: String?
     @State private var messageIsError = false
+    @State private var phrase = ""
+    @State private var again = ""
 
     private var fileType: UTType {
         UTType(filenameExtension: BackupManager.fileExtension) ?? .json
@@ -24,6 +26,22 @@ struct BackupPane: View {
                 Text("Your settings")
             } footer: {
                 Text("A backup holds your settings, app profiles, saved actions, rules and device names. It does not include permissions, which stay with macOS. Restoring saves your current settings first, so you can undo it below.")
+            }
+
+            Section {
+                if backup.isProtected {
+                    Label("Backups are protected with your passphrase.", systemImage: "lock.shield.fill").foregroundStyle(Theme.ok)
+                    Button("Stop Protecting Backups…", role: .destructive) { confirmStopProtecting() }.controlSize(.small)
+                } else {
+                    SecureField("Passphrase (at least 8 characters)", text: $phrase)
+                    SecureField("Type it again", text: $again)
+                    Button("Protect Backups") { protect() }
+                        .disabled(phrase.count < BackupCrypto.minimumLength || phrase != again)
+                }
+            } header: { Text("Protection") } footer: {
+                Text(backup.isProtected
+                     ? "Every backup, including the automatic ones and the iCloud Drive copy, is sealed so it cannot be read without the passphrase. The passphrase is kept in your Keychain on this Mac. To restore on another Mac you type it. If you lose it, protected backups cannot be opened by anyone, including Kriya."
+                     : "A backup holds your saved actions, scripts, shortcuts and rules in plain text. A passphrase seals it, so a copy in iCloud Drive or on a drive cannot be read by anyone who finds it.")
             }
 
             Section {
@@ -51,7 +69,7 @@ struct BackupPane: View {
                 Text("iCloud Drive")
             } footer: {
                 Text(backup.iCloudAvailable
-                     ? "Keeps one copy of your settings per Mac in iCloud Drive, updated every hour. To move to another Mac, turn this on in both and restore the other Mac's copy here. Clipboard history is never included. The copy is not encrypted and includes your saved actions, scripts and shortcuts, so turn this on only if you are comfortable with that in your iCloud Drive."
+                     ? "Keeps one copy of your settings per Mac in iCloud Drive, updated every hour. To move to another Mac, turn this on in both and restore the other Mac's copy here. Clipboard history is never included. Unless backups are protected with a passphrase (above), the copy is not encrypted and includes your saved actions, scripts and shortcuts, so turn this on only if you are comfortable with that in your iCloud Drive."
                      : "Turn on iCloud Drive in System Settings to use this.")
             }
 
@@ -131,10 +149,45 @@ struct BackupPane: View {
         confirmRestore(url)
     }
 
-    private func confirmRestore(_ url: URL) {
+    private func protect() {
+        do {
+            try backup.protect(with: phrase)
+            phrase = ""; again = ""
+            show("Backups are protected.", error: false)
+        } catch {
+            show(error.userMessage, error: true)
+        }
+    }
+
+    private func confirmStopProtecting() {
+        let alert = NSAlert()
+        alert.messageText = "Stop protecting backups?"
+        alert.informativeText = "New backups will be saved in plain text again. Backups already protected still need the passphrase to open."
+        alert.addButton(withTitle: "Stop Protecting")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { backup.stopProtecting() }
+    }
+
+    /// Asks for the passphrase of a protected backup.
+    private func askPassphrase(again retry: Bool) -> String? {
+        let alert = NSAlert()
+        alert.messageText = retry ? "That passphrase did not work" : "This backup is protected"
+        alert.informativeText = "Type the passphrase it was protected with."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty else { return nil }
+        return field.stringValue
+    }
+
+    private func confirmRestore(_ url: URL, passphrase: String? = nil) {
         let summary: BackupSummary
         do {
-            summary = try backup.inspect(url)
+            summary = try backup.inspect(url, passphrase: passphrase)
+        } catch let error as BackupCryptoError where error == .needsPassphrase || error == .wrongPassphrase {
+            if let typed = askPassphrase(again: error == .wrongPassphrase) { confirmRestore(url, passphrase: typed) }
+            return
         } catch {
             show(error.userMessage, error: true)
             return
@@ -151,7 +204,7 @@ struct BackupPane: View {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
-            try backup.restore(from: url)
+            try backup.restore(from: url, passphrase: passphrase)
             show("Settings restored.", error: false)
         } catch {
             show(error.userMessage, error: true)

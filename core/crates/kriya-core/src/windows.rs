@@ -830,6 +830,20 @@ pub struct LayoutEntry {
     pub frame: Rect,
 }
 
+/// What to do with open windows a layout does not place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum UnplacedPolicy {
+    /// Leave them where they are.
+    #[default]
+    Leave,
+    Minimize,
+    /// Hide the app, unless one of its windows was placed.
+    Hide,
+    /// Close the window. Apps may ask to save first.
+    Close,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct SavedLayout {
     pub id: String,
@@ -839,6 +853,12 @@ pub struct SavedLayout {
     pub is_auto: bool,
     pub created_at: i64,
     pub entries: Vec<LayoutEntry>,
+    /// Added later: a layout saved before then leaves other windows alone and does not open apps.
+    #[serde(default)]
+    pub unplaced: UnplacedPolicy,
+    /// Open the apps in the layout that are not running, and place their windows when they appear.
+    #[serde(default)]
+    pub launch_missing: bool,
 }
 
 impl SavedLayout {

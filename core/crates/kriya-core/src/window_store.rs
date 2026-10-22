@@ -11,8 +11,8 @@ use crate::error::CoreError;
 use crate::store::Store;
 use crate::windows::{
     added_default_shortcuts, check_shortcuts, default_shortcuts, CustomSize, LayoutEntry,
-    PlacementRule, SavedLayout, ShortcutBinding, WindowConfig, CUSTOM_PREFIX, LAYOUT_PREFIX,
-    SHORTCUT_LIST_VERSION,
+    PlacementRule, SavedLayout, ShortcutBinding, UnplacedPolicy, WindowConfig, CUSTOM_PREFIX,
+    LAYOUT_PREFIX, SHORTCUT_LIST_VERSION,
 };
 
 const MAX_LAYOUT_ENTRIES: usize = 300;
@@ -121,6 +121,8 @@ impl Store {
             is_auto: true,
             created_at: now,
             entries: entries.into_iter().take(MAX_LAYOUT_ENTRIES).collect(),
+            unplaced: UnplacedPolicy::Leave,
+            launch_missing: false,
         };
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;
@@ -520,6 +522,8 @@ mod tests {
             is_auto: false,
             created_at: 1,
             entries: vec![entry("a")],
+            unplaced: UnplacedPolicy::Leave,
+            launch_missing: false,
         }
     }
 
@@ -696,6 +700,26 @@ mod tests {
             .unwrap()
             .iter()
             .any(|b| b.command == "window.layout.l1"));
+    }
+
+    #[test]
+    fn a_layouts_policy_for_other_windows_is_kept_and_an_old_layout_reads_as_leave() {
+        let store = open();
+        store
+            .save_layout(&SavedLayout {
+                unplaced: UnplacedPolicy::Minimize,
+                launch_missing: true,
+                ..layout("L", "Focus")
+            })
+            .unwrap();
+        let saved = store.saved_layouts(false).unwrap();
+        assert_eq!(saved[0].unplaced, UnplacedPolicy::Minimize);
+        assert!(saved[0].launch_missing);
+        // A layout written before these existed has neither field.
+        let old = r#"{"id":"O","name":"Old","display_key":"d","is_auto":false,"created_at":1,"entries":[]}"#;
+        let read: SavedLayout = serde_json::from_str(old).unwrap();
+        assert_eq!(read.unplaced, UnplacedPolicy::Leave);
+        assert!(!read.launch_missing);
     }
 
     #[test]

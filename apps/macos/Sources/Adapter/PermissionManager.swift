@@ -24,7 +24,7 @@ enum Permission: String, CaseIterable, Identifiable {
         switch self {
         case .accessibility: return "Lets Kriya move and resize windows, press keys for you, and read the window buttons."
         case .inputMonitoring: return "Lets Kriya see mouse buttons, scrolling and gestures so it can change how they behave."
-        case .screenRecording: return "Only needed for window previews. Kriya never records your screen."
+        case .screenRecording: return "Needed for window previews, and for screenshots when you ask for one. Kriya never records your screen on its own."
         case .automation: return "Lets Kriya's scripts control other apps. macOS asks once for each app a script controls."
         }
     }

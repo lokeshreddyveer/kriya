@@ -280,6 +280,8 @@ private struct QuickRow: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous).fill(tint.opacity(0.16))
             if item.kind == .files, let first = item.files.first {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: first)).resizable().scaledToFit().padding(5)
+            } else if item.sensitive {
+                Image(systemName: "lock.fill").font(.system(size: 14, weight: .medium)).foregroundStyle(tint)
             } else {
                 Image(systemName: item.kind.symbol).font(.system(size: 14, weight: .medium)).foregroundStyle(tint)
             }
@@ -299,9 +301,13 @@ private struct QuickRow: View {
         case .image:
             Text(item.title ?? "Image").font(.system(size: 13, weight: .medium)).lineLimit(1)
         default:
-            Text(item.title ?? item.preview)
-                .font(looksLikeCode ? .system(size: 12, design: .monospaced) : .system(size: 13))
-                .lineLimit(isSelected ? 1 : 2)
+            if item.sensitive {
+                Text("•••••••• Sensitive").font(.system(size: 13, weight: .medium)).lineLimit(1)
+            } else {
+                Text(item.title ?? item.preview)
+                    .font(looksLikeCode ? .system(size: 12, design: .monospaced) : .system(size: 13))
+                    .lineLimit(isSelected ? 1 : 2)
+            }
         }
     }
 
@@ -358,14 +364,21 @@ private struct QuickRow: View {
             }
             .font(.system(size: 11)).foregroundStyle(.secondary)
         default:
-            let full = String((blob?.plain ?? item.preview).prefix(1500))
-            Text(full)
-                .font(looksLikeCode ? .system(size: 11, design: .monospaced) : .system(size: 12))
-                .foregroundStyle(.secondary)
-                .lineLimit(7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            if item.sensitive {
+                Label("Hidden. Press Return to paste it.", systemImage: "eye.slash")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                let full = String((blob?.plain ?? item.preview).prefix(1500))
+                Text(full)
+                    .font(looksLikeCode ? .system(size: 11, design: .monospaced) : .system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
         }
     }
 }

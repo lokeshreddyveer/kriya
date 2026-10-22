@@ -2,6 +2,24 @@ import SwiftUI
 
 struct DevicesPane: View {
     @EnvironmentObject private var devices: DeviceRegistry
+    @EnvironmentObject private var mouse: MouseStore
+    @EnvironmentObject private var remap: RemapStore
+    @State private var front = NSWorkspace.shared.frontmostApplication
+    @State private var secure = SecureInput.current()
+    @State private var events: [String] = []
+    @State private var testing = false
+
+    private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    private var context: [DeviceContextLine] {
+        // Kriya's own window is in front while this pane is open, so the app that was in front before it is used.
+        let app = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
+        return DeviceContext.explain(
+            devices: connected.map { ($0.id, $0.displayName) }, presets: mouse.presets, assignments: mouse.assignments,
+            defaultPresetID: mouse.config.defaultPresetId, frontAppID: app?.bundleIdentifier, frontAppName: app?.localizedName ?? "Kriya",
+            remapRules: remap.config.rules, remapEnabled: remap.config.enabled, secureInput: secure, appName: AppChoice.name(for:)
+        )
+    }
 
     private var connected: [InputDevice] { devices.devices.filter(\.isConnected) }
     private var remembered: [InputDevice] { devices.devices.filter { !$0.isConnected } }
@@ -34,6 +52,40 @@ struct DevicesPane: View {
                     Text("Kriya remembers a device's name and settings, so they come back when it reconnects.")
                 }
             }
+
+            Section {
+                ForEach(context) { line in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: line.symbol).frame(width: 22).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(line.title)
+                            Text(line.detail).font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } header: { Text("What applies right now") } footer: {
+                Text("For each device, the mouse settings in effect for the app in front. A choice for a device in an app beats one for the app, which beats one for the device, which beats the default. Change them in the Mouse pane.")
+            }
+
+            Section {
+                InputTester { event in
+                    withAnimation(.smooth(duration: 0.12)) { events = Array(([event] + events).prefix(8)) }
+                }
+                .frame(height: 96)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [5, 3])))
+                .overlay(Text("Click here, then press buttons, scroll or type").font(.callout).foregroundStyle(.tertiary).allowsHitTesting(false))
+                ForEach(Array(events.enumerated()), id: \.offset) { index, text in
+                    Text(text).font(.system(.callout, design: .monospaced)).foregroundStyle(index == 0 ? Color.primary : Color.secondary)
+                }
+                if !events.isEmpty { Button("Clear") { events.removeAll() }.controlSize(.small) }
+            } header: { Text("Test a device") } footer: {
+                Text("Shows what the mouse, trackpad or keyboard sends, as macOS reports it, while the pointer is over the square. It sees nothing outside it, and nothing is kept.")
+            }
+        }
+        .onReceive(ticker) { _ in
+            front = NSWorkspace.shared.frontmostApplication
+            secure = SecureInput.current()
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.3), value: devices.devices)

@@ -164,7 +164,7 @@ final class BackupManagerTests: XCTestCase {
 
     override func setUpWithError() throws {
         world = try TestWorld()
-        backup = BackupManager(core: world.core, folder: world.folder.appendingPathComponent("Backups", isDirectory: true))
+        backup = BackupManager(core: world.core, folder: world.folder.appendingPathComponent("Backups", isDirectory: true), passphrases: MemoryPassphraseStore())
         try FileManager.default.createDirectory(at: world.folder.appendingPathComponent("Backups"), withIntermediateDirectories: true)
     }
 
@@ -367,7 +367,7 @@ final class WindowManagementTests: XCTestCase {
         defer { world.cleanUp() }
         let store = WindowStore(core: world.core)
         let entry = LayoutEntry(appId: "com.example", title: "Doc", displayId: "d", frame: Rect(x: 0, y: 0, width: 0.5, height: 1))
-        store.saveLayout(SavedLayout(id: "L1", name: "Writing", displayKey: "d", isAuto: false, createdAt: 1, entries: [entry]))
+        store.saveLayout(SavedLayout(id: "L1", name: "Writing", displayKey: "d", isAuto: false, createdAt: 1, entries: [entry], unplaced: .leave, launchMissing: false))
         XCTAssertEqual(store.layouts.map(\.name), ["Writing"])
         XCTAssertEqual(store.title(forCommand: store.layoutCommand(store.layouts[0])), "Layout: Writing")
         store.deleteLayout("L1")

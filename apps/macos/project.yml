@@ -11,8 +11,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.2.7"
-    CURRENT_PROJECT_VERSION: "14"
+    MARKETING_VERSION: "0.2.8"
+    CURRENT_PROJECT_VERSION: "15"
     ENABLE_HARDENED_RUNTIME: YES
     GENERATE_INFOPLIST_FILE: NO
     # One binary for Apple Silicon and Intel.
@@ -33,6 +33,10 @@ targets:
       - path: Sources
       - path: Shared
       - path: Resources
+      # The browser extensions, copied out for "Load unpacked" from the Browsers tab of Link Routing.
+      - path: Extensions
+        type: folder
+        buildPhase: resources
       - path: Generated/kriya_core.swift
     dependencies:
       - package: Sparkle

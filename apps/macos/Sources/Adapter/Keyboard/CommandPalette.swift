@@ -1,39 +1,98 @@
 import AppKit
 import SwiftUI
 
+/// Something else you can do with a result, shown with ⌘K.
+struct PaletteAction: Identifiable {
+    let id = UUID()
+    let title: String
+    let symbol: String
+    let run: () -> Void
+}
+
 struct PaletteEntry: Identifiable {
     let id: String
     let title: String
     let subtitle: String?
     let symbol: String
+    var category: LauncherCategory = .command
+    /// Other words that should find it.
+    var keywords: [String] = []
+    /// A file whose icon stands for the result (apps, files).
+    var iconPath: String?
+    /// Whether choosing it is remembered, so it rises with use. Clipboard items and sums are not.
+    var rememberable = true
+    /// Set for results that came from what was typed; they skip the fuzzy match and rank by this.
+    var queryScore: Int?
+    var actions: [PaletteAction] = []
     let run: () -> Void
+
+    var candidate: LauncherCandidate {
+        LauncherCandidate(id: id, title: title, subtitle: subtitle ?? "", keywords: keywords, category: category, queryScore: queryScore, rememberable: rememberable)
+    }
 }
 
 final class PaletteModel: ObservableObject {
-    @Published var query = "" { didSet { rank() } }
+    @Published var query = "" { didSet { rank(resetSelection: true) } }
     @Published private(set) var results: [PaletteEntry] = []
     @Published var selected = 0
+    @Published var showingActions = false
+    @Published var actionIndex = 0
 
+    let prefs: LauncherPrefs
     private var all: [PaletteEntry] = []
-    private let defaults = UserDefaults.standard
+    /// Results that depend on what was typed: a sum, a timer, files, clipboard items.
+    var queryProviders: [(String) -> [PaletteEntry]] = []
+    /// Set by the window: how many things ⌘K offers for the current result.
+    var actionCount = 0
+
+    init(prefs: LauncherPrefs) { self.prefs = prefs }
 
     func load(_ entries: [PaletteEntry]) {
         all = entries
-        query = ""
-        rank()
+        showingActions = false
+        if query.isEmpty { rank(resetSelection: true) } else { query = "" }
     }
 
-    private func rank() {
-        let items = all.map { SwitcherItem(id: $0.id, appName: $0.subtitle ?? "", title: $0.title, lastUsed: Int64(defaults.integer(forKey: "paletteUse.\($0.id)"))) }
-        let order = windowRankSwitcher(items: items, query: query)
-        let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    /// Ranks again, keeping the selection where it was (more results arrived, or a choice changed).
+    func refresh() { rank(resetSelection: false) }
+
+    /// Replaces what can be found (open windows were gathered after the window opened) and ranks again in place.
+    func reloadEntries(_ entries: [PaletteEntry]) {
+        all = entries
+        rank(resetSelection: false)
+    }
+
+    private func rank(resetSelection: Bool) {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        let dynamic = text.isEmpty ? [] : queryProviders.flatMap { $0(text) }
+        let combined = all + dynamic
+        let order = LauncherEngine.rank(combined.map(\.candidate), query: query, prefs: prefs.data)
+        let byID = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         results = order.compactMap { byID[$0] }
-        selected = 0
+        if resetSelection {
+            selected = 0
+            showingActions = false
+        } else {
+            selected = min(selected, max(results.count - 1, 0))
+        }
     }
 
-    func remember(_ entry: PaletteEntry) { defaults.set(Int(Date().timeIntervalSince1970), forKey: "paletteUse.\(entry.id)") }
+    /// Ranks `entries` for a search made elsewhere (the menu-bar window), without touching what is open here.
+    func search(_ text: String, in entries: [PaletteEntry], limit: Int) -> [PaletteEntry] {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return [] }
+        let combined = entries + queryProviders.flatMap { $0(trimmed) }
+        let order = LauncherEngine.rank(combined.map(\.candidate), query: trimmed, prefs: prefs.data, limit: limit)
+        let byID = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return order.compactMap { byID[$0] }
+    }
 
     func move(_ delta: Int) {
+        if showingActions {
+            guard actionCount > 0 else { return }
+            actionIndex = (actionIndex + delta + actionCount) % actionCount
+            return
+        }
         guard !results.isEmpty else { return }
         selected = (selected + delta + results.count) % results.count
     }
@@ -41,22 +100,33 @@ final class PaletteModel: ObservableObject {
     var current: PaletteEntry? { results.indices.contains(selected) ? results[selected] : nil }
 }
 
-/// A search box over everything Kriya can do: insert a snippet, run an action or workflow, move a window, switch a
-/// feature on or off, open a settings pane. Reached by one shortcut, driven entirely from the keyboard.
+/// A search box over everything: apps, windows, files, clipboard history, settings, commands, saved actions, workflows, a
+/// calculator, timers and emoji. One shortcut opens it and the keyboard drives it. What it finds is ranked by how well it
+/// matches, what you pinned, a short name you gave it, and what you use most.
 final class CommandPalette: NSObject, NSWindowDelegate {
     private final class Panel: NSPanel {
         override var canBecomeKey: Bool { true }
     }
 
-    private let model = PaletteModel()
+    let prefs: LauncherPrefs
+    let model: PaletteModel
     private var panel: Panel?
     private var context: ServiceContext?
     private weak var keyboard: KeyboardService?
     private var providers: [() -> [PaletteEntry]] = []
+    private var cached: (entries: [PaletteEntry], at: Date)?
 
     /// Opens a settings pane, and switches a feature on or off (asking for its permissions). Set by the app.
     var openSettings: (SettingsPane) -> Void = { _ in }
     var toggleFeature: (FeatureId, Bool) -> Void = { _, _ in }
+    /// Called each time the palette opens, so things that take a moment to gather (open windows) can be fetched ahead.
+    var willShow: () -> Void = {}
+
+    init(prefs: LauncherPrefs = LauncherPrefs()) {
+        self.prefs = prefs
+        model = PaletteModel(prefs: prefs)
+        super.init()
+    }
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -70,9 +140,23 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         providers.append(provider)
     }
 
+    /// Results that depend on what was typed.
+    func addQueryProvider(_ provider: @escaping (String) -> [PaletteEntry]) {
+        model.queryProviders.append(provider)
+    }
+
     func toggle() { isVisible ? close() : show() }
 
+    /// Something that was still being gathered is ready: show it without moving the selection.
+    func entriesChanged() {
+        guard isVisible else { return }
+        cached = nil
+        model.reloadEntries(entries())
+    }
+
     func show() {
+        willShow()
+        cached = nil
         model.load(entries())
         let panel = self.panel ?? makePanel()
         self.panel = panel
@@ -88,11 +172,70 @@ final class CommandPalette: NSObject, NSWindowDelegate {
 
     func close() { panel?.orderOut(nil) }
 
-    private func choose(_ entry: PaletteEntry) {
-        model.remember(entry)
+    fileprivate func run(_ entry: PaletteEntry, action: PaletteAction? = nil) {
+        if entry.rememberable { prefs.record(entry.id) }
         close()
         // Let the panel go before the command runs, so a paste or a keystroke reaches the app underneath.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { entry.run() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { (action?.run ?? entry.run)() }
+    }
+
+    /// Searches for the menu-bar window. The list is reused for a short while, since building it reads apps and settings.
+    func search(_ text: String, limit: Int = 9) -> [PaletteEntry] {
+        model.search(text, in: cachedEntries(), limit: limit)
+    }
+
+    /// Chooses a result found by `search`, as if it had been chosen here.
+    func choose(_ entry: PaletteEntry) {
+        if entry.rememberable { prefs.record(entry.id) }
+        entry.run()
+    }
+
+    private func cachedEntries() -> [PaletteEntry] {
+        if let cached, Date().timeIntervalSince(cached.at) < 20 { return cached.entries }
+        let fresh = entries()
+        cached = (fresh, Date())
+        return fresh
+    }
+
+    // MARK: Things to do with a result
+
+    /// What ⌘K offers for a result: what it brought, then pinning and a short name.
+    fileprivate func actions(for entry: PaletteEntry) -> [PaletteAction] {
+        var list = entry.actions
+        guard entry.rememberable else { return list }
+        let pinned = prefs.isPinned(entry.id)
+        list.append(PaletteAction(title: pinned ? "Unpin from the Top" : "Pin to the Top", symbol: pinned ? "pin.slash" : "pin") { [weak self] in
+            self?.prefs.togglePin(entry.id, title: entry.title)
+        })
+        let alias = prefs.alias(for: entry.id)
+        list.append(PaletteAction(title: alias == nil ? "Give It a Short Name…" : "Change Its Short Name (\(alias ?? ""))…", symbol: "character.cursor.ibeam") { [weak self] in
+            self?.askForAlias(entry)
+        })
+        return list
+    }
+
+    fileprivate func togglePin(_ entry: PaletteEntry) {
+        guard entry.rememberable else { return }
+        prefs.togglePin(entry.id, title: entry.title)
+        model.refresh()
+    }
+
+    private func askForAlias(_ entry: PaletteEntry) {
+        let alert = NSAlert()
+        alert.messageText = "Short name for “\(entry.title)”"
+        alert.informativeText = "Type this in the launcher and it comes first. Leave it empty to remove the name."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = prefs.alias(for: entry.id) ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if !prefs.setAlias(field.stringValue, for: entry.id, title: entry.title) {
+            let tooLong = NSAlert()
+            tooLong.messageText = "That name is too long"
+            tooLong.informativeText = "Use up to 20 characters."
+            tooLong.runModal()
+        }
     }
 
     // MARK: What it lists
@@ -102,33 +245,33 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         var list: [PaletteEntry] = []
 
         for snippet in keyboard.store.snippets where snippet.enabled {
-            list.append(PaletteEntry(id: "snippet:\(snippet.id)", title: "Insert: \(snippet.title)", subtitle: snippet.abbreviation, symbol: snippet.favorite ? "star" : "text.insert") { [weak keyboard] in
+            list.append(PaletteEntry(id: "snippet:\(snippet.id)", title: "Insert: \(snippet.title)", subtitle: snippet.abbreviation, symbol: snippet.favorite ? "star" : "text.insert", category: .snippet) { [weak keyboard] in
                 keyboard?.run(.snippet(snippetId: snippet.id))
             })
         }
         for saved in context.library.actions {
-            list.append(PaletteEntry(id: "action:\(saved.id)", title: saved.name, subtitle: "Action", symbol: saved.action.symbol) { [weak keyboard] in
+            list.append(PaletteEntry(id: "action:\(saved.id)", title: saved.name, subtitle: "Action", symbol: saved.action.symbol, category: .action) { [weak keyboard] in
                 keyboard?.run(.action(actionId: saved.id))
             })
         }
         for layout in windowLayouts() {
-            list.append(PaletteEntry(id: layout.command, title: "Window: \(layout.title)", subtitle: "Windows", symbol: "rectangle.split.2x1") { [weak keyboard] in
+            list.append(PaletteEntry(id: layout.command, title: "Window: \(layout.title)", subtitle: "Windows", symbol: "rectangle.split.2x1", category: .layout) { [weak keyboard] in
                 keyboard?.run(.command(command: layout.command))
             })
         }
         for extra in windowExtraCommands() {
-            list.append(PaletteEntry(id: extra.command, title: "Window: \(extra.title)", subtitle: "Windows", symbol: "macwindow") { [weak keyboard] in
+            list.append(PaletteEntry(id: extra.command, title: "Window: \(extra.title)", subtitle: "Windows", symbol: "macwindow", category: .layout) { [weak keyboard] in
                 keyboard?.run(.command(command: extra.command))
             })
         }
         for feature in FeatureId.all {
             let on = context.config.isEnabled(feature)
-            list.append(PaletteEntry(id: "feature:\(feature.key)", title: "\(on ? "Turn off" : "Turn on") \(feature.title)", subtitle: "Features", symbol: feature.symbol) { [weak self] in
+            list.append(PaletteEntry(id: "feature:\(feature.key)", title: "\(on ? "Turn off" : "Turn on") \(feature.title)", subtitle: "Features", symbol: feature.symbol, category: .feature) { [weak self] in
                 self?.toggleFeature(feature, !on)
             })
         }
         for pane in SettingsPane.allCases {
-            list.append(PaletteEntry(id: "pane:\(pane.rawValue)", title: "Open Settings: \(pane.title)", subtitle: "Settings", symbol: pane.symbol) { [weak self] in
+            list.append(PaletteEntry(id: "pane:\(pane.rawValue)", title: "Open Settings: \(pane.title)", subtitle: "Settings", symbol: pane.symbol, category: .setting) { [weak self] in
                 self?.openSettings(pane)
             })
         }
@@ -145,7 +288,7 @@ final class CommandPalette: NSObject, NSWindowDelegate {
     }
 
     private func makePanel() -> Panel {
-        let panel = Panel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 440), styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless], backing: .buffered, defer: false)
+        let panel = Panel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -153,57 +296,241 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: PaletteView(model: model, onChoose: { [weak self] in self?.choose($0) }, onClose: { [weak self] in self?.close() }))
+        panel.contentView = NSHostingView(rootView: PaletteView(palette: self, model: model))
         return panel
     }
 
     func windowDidResignKey(_ notification: Notification) { close() }
 }
 
+// MARK: - The window
+
+private enum PaletteIcons {
+    private static var cache: [String: NSImage] = [:]
+
+    static func icon(at path: String) -> NSImage {
+        if let hit = cache[path] { return hit }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        image.size = NSSize(width: 28, height: 28)
+        if cache.count > 400 { cache.removeAll() }
+        cache[path] = image
+        return image
+    }
+}
+
 private struct PaletteView: View {
+    let palette: CommandPalette
     @ObservedObject var model: PaletteModel
-    let onChoose: (PaletteEntry) -> Void
-    let onClose: () -> Void
+    @ObservedObject private var prefs: LauncherPrefs
     @FocusState private var focused: Bool
+
+    init(palette: CommandPalette, model: PaletteModel) {
+        self.palette = palette
+        self.model = model
+        _prefs = ObservedObject(wrappedValue: palette.prefs)
+    }
+
+    private var actions: [PaletteAction] { model.current.map { palette.actions(for: $0) } ?? [] }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "command").foregroundStyle(Theme.accent)
-                TextField("Type a command", text: $model.query)
+                Image(systemName: "magnifyingglass").foregroundStyle(Theme.accent).font(.title3)
+                TextField("Search apps, windows, files, commands…", text: $model.query)
                     .textFieldStyle(.plain).font(.title3).focused($focused)
-                    .onSubmit { if let current = model.current { onChoose(current) } }
+                    .onSubmit { submit() }
+                if !model.query.isEmpty {
+                    Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
+                }
             }
             .padding(14)
-            Divider()
-            ScrollViewReader { proxy in
-                List(Array(model.results.enumerated()), id: \.element.id) { index, entry in
-                    HStack(spacing: 12) {
-                        Image(systemName: entry.symbol).frame(width: 22).foregroundStyle(.secondary)
-                        Text(entry.title).lineLimit(1)
-                        Spacer()
-                        if let subtitle = entry.subtitle { Text(subtitle).font(.caption).foregroundStyle(.tertiary).lineLimit(1) }
+            Divider().opacity(0.6)
+            ZStack(alignment: .bottomTrailing) {
+                list
+                if model.showingActions, let entry = model.current { actionMenu(for: entry) }
+            }
+            Divider().opacity(0.6)
+            footer
+        }
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.22), lineWidth: 1))
+        .onAppear { focused = true }
+        .onChange(of: model.showingActions) { _, on in
+            if on { model.actionCount = actions.count; model.actionIndex = 0 }
+        }
+        .onKeyPress(phases: [.down, .repeat]) { press in handle(press) }
+        .animation(.smooth(duration: 0.16), value: model.showingActions)
+    }
+
+    // MARK: Results
+
+    private var list: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(model.results.enumerated()), id: \.element.id) { index, entry in
+                        row(entry, index: index)
+                            .id(entry.id)
+                            .onTapGesture { palette.run(entry) }
                     }
-                    .padding(.vertical, 2)
-                    .id(entry.id)
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(index == model.selected ? Theme.accent.opacity(0.25) : .clear).padding(.horizontal, 6))
-                    .contentShape(Rectangle())
-                    .onTapGesture { onChoose(entry) }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .onChange(of: model.selected) { _, new in
-                    if model.results.indices.contains(new) { withAnimation(.smooth(duration: 0.12)) { proxy.scrollTo(model.results[new].id) } }
-                }
-                .overlay { if model.results.isEmpty { Text("No matching commands").foregroundStyle(.secondary) } }
+                .padding(6)
+            }
+            .scrollIndicators(.hidden)
+            .onChange(of: model.selected) { _, new in
+                if model.results.indices.contains(new) { withAnimation(.smooth(duration: 0.12)) { proxy.scrollTo(model.results[new].id) } }
+            }
+            .overlay { if model.results.isEmpty { emptyState } }
+        }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: model.query.isEmpty ? "sparkle.magnifyingglass" : "magnifyingglass").font(.system(size: 28, weight: .light)).foregroundStyle(.tertiary)
+            Text(model.query.isEmpty ? "Start typing" : "Nothing matches").foregroundStyle(.secondary)
+            if model.query.isEmpty {
+                Text("Apps, windows, files, clipboard, settings and commands. Try a sum like 12*8, “timer 5m”, or an emoji name. Pin what you use most (⌘P) and it shows here.")
+                    .font(.caption).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 380)
             }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.separator))
-        .onAppear { focused = true }
-        .onKeyPress(.downArrow) { model.move(1); return .handled }
-        .onKeyPress(.upArrow) { model.move(-1); return .handled }
-        .onKeyPress(.escape) { onClose(); return .handled }
+    }
+
+    private func row(_ entry: PaletteEntry, index: Int) -> some View {
+        let on = index == model.selected
+        let pinned = prefs.isPinned(entry.id)
+        let alias = prefs.alias(for: entry.id)
+        return HStack(spacing: 12) {
+            icon(entry)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.title).font(.system(size: 14)).lineLimit(1)
+                if let subtitle = entry.subtitle, !subtitle.isEmpty {
+                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 6)
+            if pinned { Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(Theme.warn) }
+            if let alias {
+                Text(alias).font(.system(size: 10, design: .rounded)).padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.primary.opacity(0.08), in: Capsule())
+            }
+            Text(entry.category.label).font(.system(size: 10)).foregroundStyle(.tertiary)
+            if index < 9 { Text("⌘\(index + 1)").font(.system(size: 10, design: .rounded)).foregroundStyle(on ? .secondary : .tertiary) }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(on ? Theme.accent.opacity(0.22) : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(on ? Theme.accent.opacity(0.5) : Color.clear, lineWidth: 1))
+        .contentShape(Rectangle())
+        .animation(.smooth(duration: 0.12), value: on)
+    }
+
+    @ViewBuilder
+    private func icon(_ entry: PaletteEntry) -> some View {
+        if let path = entry.iconPath {
+            Image(nsImage: PaletteIcons.icon(at: path)).resizable().frame(width: 28, height: 28)
+        } else {
+            Image(systemName: entry.symbol).font(.system(size: 14))
+                .frame(width: 28, height: 28)
+                .foregroundStyle(Theme.accent)
+                .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+    }
+
+    // MARK: Actions menu and footer
+
+    private func actionMenu(for entry: PaletteEntry) -> some View {
+        let items = actions
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(entry.title).font(.caption).foregroundStyle(.secondary).lineLimit(1).padding(.horizontal, 8).padding(.top, 4)
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, action in
+                HStack(spacing: 8) {
+                    Image(systemName: action.symbol).frame(width: 16)
+                    Text(action.title)
+                    Spacer(minLength: 0)
+                }
+                .font(.callout)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(index == model.actionIndex ? Theme.accent.opacity(0.25) : Color.clear))
+                .contentShape(Rectangle())
+                .onTapGesture { runAction(action, for: entry) }
+            }
+            if items.isEmpty { Text("Nothing else to do with this.").font(.callout).foregroundStyle(.secondary).padding(8) }
+        }
+        .padding(6).frame(width: 300)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.2), lineWidth: 1))
+        .shadow(radius: 8, y: 2)
+        .padding(10)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            hint("↩", "Open")
+            hint("⌘K", "More")
+            hint("⌘P", "Pin")
+            hint("⎋", "Close")
+            Spacer(minLength: 4)
+            if !model.query.isEmpty { Text("\(model.results.count) result\(model.results.count == 1 ? "" : "s")").font(.caption2).foregroundStyle(.tertiary) }
+        }
+        .font(.caption).foregroundStyle(.secondary)
+        .padding(.horizontal, 12).padding(.vertical, 7)
+    }
+
+    private func hint(_ key: String, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Text(key).font(.system(size: 10, design: .rounded)).padding(.horizontal, 4).padding(.vertical, 1)
+                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            Text(text)
+        }
+    }
+
+    // MARK: Keys
+
+    private func submit() {
+        guard let entry = model.current else { return }
+        if model.showingActions {
+            let items = actions
+            if items.indices.contains(model.actionIndex) { runAction(items[model.actionIndex], for: entry) }
+        } else {
+            palette.run(entry)
+        }
+    }
+
+    private func runAction(_ action: PaletteAction, for entry: PaletteEntry) {
+        model.showingActions = false
+        // Pinning changes the list in place; everything else acts on the result and closes the window.
+        if action.title.contains("Pin") {
+            action.run()
+            model.refresh()
+        } else {
+            palette.run(entry, action: action)
+        }
+    }
+
+    private func handle(_ press: KeyPress) -> KeyPress.Result {
+        switch press.key {
+        case .downArrow: model.move(1); return .handled
+        case .upArrow: model.move(-1); return .handled
+        case .escape:
+            if model.showingActions { model.showingActions = false } else { palette.close() }
+            return .handled
+        default:
+            guard press.modifiers.contains(.command) else { return .ignored }
+            let key = press.characters.lowercased()
+            if key == "k" {
+                model.showingActions.toggle()
+                return .handled
+            }
+            if key == "p" {
+                if let entry = model.current { palette.togglePin(entry) }
+                return .handled
+            }
+            if let digit = Int(key), (1...9).contains(digit) {
+                if model.results.indices.contains(digit - 1) { palette.run(model.results[digit - 1]) }
+                return .handled
+            }
+            return .ignored
+        }
     }
 }

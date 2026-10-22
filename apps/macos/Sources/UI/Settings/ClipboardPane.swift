@@ -8,12 +8,15 @@ struct ClipboardPane: View {
     @EnvironmentObject private var config: ConfigStore
     @EnvironmentObject private var services: ServiceManager
 
+    @ObservedObject private var lock = ClipboardLock.shared
     @State private var tab: Tab = .history
 
     enum Tab: String, CaseIterable, Identifiable {
-        case history = "History", snippets = "Snippets", settings = "Settings"
+        case history = "History", snippets = "Snippets", privacy = "Privacy", settings = "Settings"
         var id: String { rawValue }
     }
+
+    private var showsLock: Bool { lock.isEnabled && !lock.isOpen && (tab == .history || tab == .snippets) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +29,11 @@ struct ClipboardPane: View {
                     if !config.isEnabled(.clipboard) { Button("Turn On") { services.setFeature(.clipboard, enabled: true) }.controlSize(.small) }
                 }
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
+            } else if clip.vault.isLocked {
+                Banner(symbol: "lock.trianglebadge.exclamationmark.fill", tint: Theme.danger, title: "History is locked", message: "It is encrypted, and its key is not on this Mac. Nothing new is saved until you start again (Privacy tab).") {
+                    Button("Privacy…") { tab = .privacy }.controlSize(.small)
+                }
+                .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             } else if clip.config.paused {
                 Banner(symbol: "pause.circle.fill", tint: Theme.warn, title: "Recording is paused", message: "Copies are not being saved until you resume.") {
                     Button("Resume") { service.setPaused(false) }.controlSize(.small)
@@ -33,17 +41,23 @@ struct ClipboardPane: View {
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             }
             Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
-                .paneTabBar(maxWidth: 360).paneHeader()
+                .paneTabBar(maxWidth: 440).paneHeader()
             Group {
                 switch tab {
                 case .history: ClipBrowser(snippetsOnly: false)
                 case .snippets: ClipBrowser(snippetsOnly: true)
+                case .privacy: ClipPrivacyTab()
                 case .settings: ClipSettingsTab()
                 }
             }
             .id(tab)
             .transition(.opacity)
+            .overlay {
+                if showsLock { ClipLockedView().transition(.opacity) }
+            }
         }
+        .animation(.smooth(duration: 0.2), value: showsLock)
+        .onAppear { if lock.needsUnlock { lock.ensureUnlocked(reason: "Open your clipboard history") { _ in } } }
         .animation(.smooth(duration: 0.22), value: tab)
         .animation(.smooth(duration: 0.25), value: clip.config.paused)
         .overlay(alignment: .bottom) {
@@ -273,6 +287,184 @@ private struct SnippetEditor: View {
     }
 }
 
+// MARK: - Privacy
+
+/// Shown over the history while the lock is on and has not been opened.
+private struct ClipLockedView: View {
+    @ObservedObject private var lock = ClipboardLock.shared
+    @State private var trying = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "lock.fill").font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)
+            Text("Clipboard history is locked").font(.title3.weight(.semibold))
+            Text("Use Touch ID or your Mac's password to open it.").font(.callout).foregroundStyle(.secondary)
+            Button {
+                trying = true
+                lock.ensureUnlocked(reason: "Open your clipboard history") { _ in trying = false }
+            } label: { Label("Unlock", systemImage: "touchid") }
+                .controlSize(.large).disabled(trying)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
+    }
+}
+
+private struct ClipPrivacyTab: View {
+    @EnvironmentObject private var clip: ClipboardStore
+    @ObservedObject private var lock = ClipboardLock.shared
+    @State private var confirmPurge = false
+    @State private var note: String?
+
+    private var config: ClipConfig { clip.config }
+
+    var body: some View {
+        Form {
+            VaultSection(vault: clip.vault)
+
+            Section {
+                Toggle("Save them, encrypted and labelled “sensitive”", isOn: Binding(get: { !config.skipSecrets }, set: { v in clip.updateConfig { $0.skipSecrets = !v } }))
+                    .disabled(!clip.vault.isEncrypted)
+                Picker("Remove sensitive items after", selection: Binding(get: { Int(config.sensitiveRetentionMinutes) }, set: { v in clip.updateConfig { $0.sensitiveRetentionMinutes = UInt32(v) } })) {
+                    Text("Never").tag(0); Text("1 minute").tag(1); Text("5 minutes").tag(5); Text("15 minutes").tag(15); Text("1 hour").tag(60); Text("1 day").tag(1440)
+                }
+                .disabled(config.skipSecrets)
+                Button("Remove Sensitive Items Now…", role: .destructive) { confirmPurge = true }
+                if let note { Text(note).font(.callout).foregroundStyle(.secondary).transition(.opacity) }
+            } header: { Text("Passwords, keys and card numbers") } footer: {
+                Text(config.skipSecrets
+                    ? "Right now text that looks like a password, key or card number is left out, and never saved. Turn on encryption to be able to keep them."
+                    : "These are saved only because the history is encrypted. They show as hidden dots, and are removed on the schedule above. Kriya never deletes them on its own unless you choose a time. Pinned items and snippets are kept.")
+            }
+
+            Section {
+                if config.excludedAppIds.isEmpty { Text("No excluded apps.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(config.excludedAppIds, id: \.self) { id in
+                    HStack {
+                        Text(AppChoice.name(for: id))
+                        Spacer()
+                        Button(role: .destructive) { clip.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    }
+                }
+                Button { if let id = AppChoice.choose(prompt: "Exclude"), !config.excludedAppIds.contains(id) { clip.updateConfig { $0.excludedAppIds.append(id) } } } label: { Label("Exclude an App", systemImage: "plus") }
+                    .controlSize(.small)
+            } header: { Text("Excluded apps") } footer: {
+                Text("Copies from these apps are never recorded, and neither are copies an app marks as secret (password managers do). Password managers are excluded to start with.")
+            }
+
+            Section {
+                Toggle("Ask for Touch ID or my password to open the history", isOn: Binding(
+                    get: { lock.isEnabled },
+                    set: { on in
+                        if on { lock.enable(reason: "Turn on the clipboard history lock") { ok in if !ok { note = "The lock stayed off, because the Mac did not confirm who you are." } } }
+                        else { lock.isEnabled = false }
+                    }
+                ))
+                Picker("Ask again after", selection: $lock.timeoutMinutes) {
+                    Text("1 minute").tag(1); Text("5 minutes").tag(5); Text("15 minutes").tag(15); Text("1 hour").tag(60)
+                }
+                .disabled(!lock.isEnabled)
+            } header: { Text("Lock") } footer: {
+                Text("The history also locks when the Mac sleeps or the screen locks. The lock covers what Kriya shows you; the saved file itself is protected by encryption.")
+            }
+
+            Section {
+                Label("Nothing you copy is ever written to Kriya's log, the diagnostics report or an export. They record that a copy was saved or left out, never what it said.", systemImage: "hand.raised")
+                    .font(.callout).foregroundStyle(.secondary)
+            } header: { Text("What stays out of the logs") }
+        }
+        .formStyle(.grouped)
+        .animation(.smooth(duration: 0.2), value: note)
+        .confirmationDialog("Remove sensitive items?", isPresented: $confirmPurge, titleVisibility: .visible) {
+            Button("Remove Them", role: .destructive) {
+                let removed = clip.purgeSensitive()
+                note = removed == 0 ? "There were none to remove." : "Removed \(removed) sensitive item\(removed == 1 ? "" : "s")."
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every item labelled sensitive is deleted and its space overwritten. Pinned items and snippets stay.")
+        }
+    }
+}
+
+/// Turning encryption on and off, and what to do when the key is gone.
+private struct VaultSection: View {
+    @ObservedObject var vault: ClipboardVault
+    @EnvironmentObject private var clip: ClipboardStore
+    @State private var asking: Question?
+    @State private var problem: String?
+
+    private enum Question: Identifiable {
+        case turnOn, turnOff, startAgain
+        var id: Int { hashValue }
+    }
+
+    var body: some View {
+        Section {
+            HStack(spacing: 10) {
+                Image(systemName: icon).foregroundStyle(tint).font(.title3)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline)
+                    Text(detail).font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if vault.isWorking { ProgressView().controlSize(.small) }
+            }
+            .animation(.smooth(duration: 0.2), value: vault.status)
+            Toggle("Encrypt clipboard history", isOn: Binding(get: { vault.isEncrypted }, set: { on in asking = on ? .turnOn : .turnOff }))
+                .disabled(vault.isWorking || vault.isLocked)
+            if vault.isLocked {
+                Button("Delete the Locked History and Start Again…", role: .destructive) { asking = .startAgain }.disabled(vault.isWorking)
+            }
+            if let problem { Text(problem).font(.callout).foregroundStyle(Theme.danger).transition(.opacity) }
+        } header: { Text("Encryption") } footer: {
+            Text("The key is made on this Mac and kept in your Keychain, for this Mac only. It is never sent anywhere, and never put in a backup. If the key is ever lost the saved history cannot be read, which is the point.")
+        }
+        .animation(.smooth(duration: 0.2), value: problem)
+        .confirmationDialog(question.title, isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }), titleVisibility: .visible) {
+            Button(question.button, role: asking == .turnOn ? nil : .destructive) { run() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text(question.message) }
+    }
+
+    private var question: (title: String, message: String, button: String) {
+        switch asking {
+        case .turnOff: return ("Turn encryption off?", "Everything saved is opened and stored as plain text again, and the key is removed from your Keychain.", "Turn Off")
+        case .startAgain: return ("Delete the locked history?", "Everything saved while it was encrypted is deleted, because it cannot be opened without the key. Encryption is turned off, and recording starts again.", "Delete and Start Again")
+        default: return ("Encrypt the clipboard history?", "\(clip.stats?.items ?? 0) saved item\((clip.stats?.items ?? 0) == 1 ? "" : "s") will be encrypted now, and so will everything you copy from here on. The old readable copies are overwritten on disk.", "Encrypt")
+        }
+    }
+
+    private func run() {
+        problem = nil
+        let finished: (String?) -> Void = { failure in
+            problem = failure
+            clip.reload()
+        }
+        switch asking {
+        case .turnOff: vault.turnOff(completion: finished)
+        case .startAgain: vault.startAgain(completion: finished)
+        default: vault.turnOn(completion: finished)
+        }
+    }
+
+    private var icon: String { vault.isLocked ? "lock.trianglebadge.exclamationmark.fill" : (vault.isEncrypted ? "lock.shield.fill" : "lock.open") }
+    private var tint: Color { vault.isLocked ? Theme.danger : (vault.isEncrypted ? Theme.ok : .secondary) }
+
+    private var title: String {
+        if vault.isWorking { return vault.isEncrypted ? "Working…" : "Encrypting…" }
+        if vault.isLocked { return "Locked: the key is missing" }
+        return vault.isEncrypted ? "Encrypted" : "Not encrypted"
+    }
+
+    private var detail: String {
+        guard let status = vault.status else { return "Checking…" }
+        if vault.isLocked { return "\(status.sealedItems) saved item\(status.sealedItems == 1 ? "" : "s") cannot be opened on this Mac." }
+        if vault.isEncrypted { return "\(status.sealedItems) saved item\(status.sealedItems == 1 ? "" : "s"), sealed with AES-256." }
+        return "What you copy is stored readable, in a file only you can open."
+    }
+}
+
 // MARK: - Settings
 
 private struct ClipSettingsTab: View {
@@ -310,20 +502,8 @@ private struct ClipSettingsTab: View {
             }
 
             Section {
-                Toggle("Skip text that looks like a password, key or card number", isOn: Binding(get: { config.skipSecrets }, set: { v in clip.updateConfig { $0.skipSecrets = v } }))
-                if config.excludedAppIds.isEmpty { Text("No excluded apps.").font(.callout).foregroundStyle(.secondary) }
-                ForEach(config.excludedAppIds, id: \.self) { id in
-                    HStack {
-                        Text(AppChoice.name(for: id))
-                        Spacer()
-                        Button(role: .destructive) { clip.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
-                    }
-                }
-                Button { if let id = AppChoice.choose(prompt: "Exclude"), !config.excludedAppIds.contains(id) { clip.updateConfig { $0.excludedAppIds.append(id) } } } label: { Label("Exclude an App", systemImage: "plus") }
-                    .controlSize(.small)
-            } header: { Text("Privacy") } footer: {
-                Text("Copies from these apps are never recorded, and neither are copies an app marks as secret (password managers do). Password managers are excluded to start with. Everything is stored only on this Mac, in a private file, and is never sent anywhere.")
-            }
+                Text("Encryption, passwords and keys, excluded apps and the lock are on the Privacy tab.").font(.callout).foregroundStyle(.secondary)
+            } header: { Text("Privacy") }
 
             Section {
                 shortcutRow("Open the clipboard window", key: \.quickKey, mods: \.quickModifiers)

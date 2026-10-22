@@ -95,6 +95,13 @@ final class EventMonitor: ObservableObject {
         reconfigure()
     }
 
+    /// Who is listening, in the order events are offered to them, and whether each one can change an event or only watch.
+    func orderedSubscribers() -> [(owner: String, canChange: Bool)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return subscriptions.map { ($0.owner, $0.mode == .active) }
+    }
+
     var subscriberCount: Int {
         lock.lock()
         defer { lock.unlock() }

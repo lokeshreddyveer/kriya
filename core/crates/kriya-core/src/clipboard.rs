@@ -99,6 +99,8 @@ pub struct ClipConfig {
     pub strip_modifiers: u64,
     /// Paste into the app in front after choosing an item (needs Accessibility). Otherwise it is only copied.
     pub auto_paste: bool,
+    /// Items labelled sensitive are removed this many minutes after they were copied. 0 keeps them like any other item.
+    pub sensitive_retention_minutes: u32,
 }
 
 impl Default for ClipConfig {
@@ -125,6 +127,7 @@ impl Default for ClipConfig {
             strip_key: None,
             strip_modifiers: 0,
             auto_paste: true,
+            sensitive_retention_minutes: 0,
         }
     }
 }
@@ -133,6 +136,7 @@ impl ClipConfig {
     pub fn sanitized(mut self) -> Self {
         self.max_items = self.max_items.clamp(20, 10_000);
         self.retention_days = self.retention_days.min(3650);
+        self.sensitive_retention_minutes = self.sensitive_retention_minutes.min(7 * 24 * 60);
         self.max_item_mb = self.max_item_mb.clamp(1, 500);
         self.max_total_mb = self.max_total_mb.clamp(16, 50_000);
         let mut seen = HashSet::new();
@@ -213,6 +217,8 @@ pub enum ClipSkipReason {
     TooLarge,
     TypeTurnedOff,
     Empty,
+    /// The history is encrypted and its key is not available, so nothing can be saved safely.
+    VaultLocked,
 }
 
 impl NewClip {

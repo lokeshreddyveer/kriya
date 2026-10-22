@@ -399,6 +399,12 @@ private struct LayoutsTab: View {
     @State private var name = ""
     @State private var restoring: String?
     @State private var message: String?
+    @State private var designing: DesignerTarget?
+
+    private struct DesignerTarget: Identifiable {
+        let id = UUID()
+        let layout: SavedLayout?
+    }
 
     private var thisSetup: [SavedLayout] { store.layouts.filter { $0.displayKey == displays.setKey } }
     private var otherSetups: [SavedLayout] { store.layouts.filter { $0.displayKey != displays.setKey } }
@@ -408,13 +414,14 @@ private struct LayoutsTab: View {
             Section {
                 HStack {
                     Button { name = ""; naming = true } label: { Label("Save Current Windows…", systemImage: "square.and.arrow.down") }
+                    Button { designing = DesignerTarget(layout: nil) } label: { Label("Draw a Layout…", systemImage: "rectangle.dashed") }
                     Spacer()
                     Text("\(displays.displays.count) display\(displays.displays.count == 1 ? "" : "s") connected")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 if let message { Label(message, systemImage: "checkmark.circle.fill").foregroundStyle(Theme.ok).transition(.opacity) }
             } footer: {
-                Text("A layout remembers where every open window is, on which display. Restore it in one click or with a shortcut. Kriya also keeps its own snapshot for each set of displays and brings it back when that set is connected again.")
+                Text("A layout remembers where windows go, on which display. Save the windows you have open, or draw boxes and give each an app. A layout can also minimize, hide or close the windows it does not place, and open apps that are not running. Restore it in one click or with a shortcut. Kriya also keeps its own snapshot for each set of displays and brings it back when that set is connected again.")
             }
 
             Section("For the displays connected now") {
@@ -432,6 +439,13 @@ private struct LayoutsTab: View {
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.layouts)
         .animation(.smooth(duration: 0.25), value: message)
+        .sheet(item: $designing) { target in
+            LayoutDesignerView(existing: target.layout, displays: displays.displays, displayKey: displays.setKey, onSave: { layout in
+                store.saveLayout(layout)
+                designing = nil
+                message = store.lastError == nil ? "Saved “\(layout.name)”." : nil
+            }, onCancel: { designing = nil })
+        }
         .alert("Save layout", isPresented: $naming) {
             TextField("Name", text: $name)
             Button("Save") { save() }
@@ -444,11 +458,17 @@ private struct LayoutsTab: View {
             Image(systemName: "rectangle.3.group").foregroundStyle(.secondary).frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(layout.name).font(.headline)
-                Text("\(layout.entries.count) window\(layout.entries.count == 1 ? "" : "s") · \(Date(timeIntervalSince1970: TimeInterval(layout.createdAt)).shortDescription)")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(detail(of: layout)).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            if let shortcut = store.shortcuts.first(where: { $0.command == store.layoutCommand(layout) }) {
+                Text(KeyNames.describe(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers))
+                    .font(.system(.caption, design: .rounded)).padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .help("The shortcut that restores this layout")
+            }
             if restoring == layout.id { ProgressView().controlSize(.small) }
+            Button("Edit") { designing = DesignerTarget(layout: layout) }.controlSize(.small)
             Button("Restore") { restore(layout) }.controlSize(.small)
             Button(role: .destructive) { store.deleteLayout(layout.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
         }
@@ -461,11 +481,34 @@ private struct LayoutsTab: View {
         message = store.lastError == nil ? "Saved “\(trimmed)”." : nil
     }
 
+    private func detail(of layout: SavedLayout) -> String {
+        var parts = ["\(layout.entries.count) window\(layout.entries.count == 1 ? "" : "s")", Date(timeIntervalSince1970: TimeInterval(layout.createdAt)).shortDescription]
+        switch layout.unplaced {
+        case .leave: break
+        case .minimize: parts.append("minimizes the rest")
+        case .hide: parts.append("hides other apps")
+        case .close: parts.append("closes the rest")
+        }
+        if layout.launchMissing { parts.append("opens missing apps") }
+        return parts.joined(separator: " · ")
+    }
+
     private func restore(_ layout: SavedLayout) {
+        if layout.unplaced == .close {
+            let alert = NSAlert()
+            alert.messageText = "Close the other windows?"
+            alert.informativeText = "“\(layout.name)” closes every open window it does not place. Apps with unsaved work will ask to save first."
+            alert.addButton(withTitle: "Restore and Close")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
         restoring = layout.id
         controller.restore(layout) { outcome in
             restoring = nil
-            message = "Restored “\(layout.name)”: \(outcome.placed) window\(outcome.placed == 1 ? "" : "s") placed" + (outcome.missing > 0 ? ", \(outcome.missing) not open." : ".")
+            var text = "Restored “\(layout.name)”: \(outcome.placed) window\(outcome.placed == 1 ? "" : "s") placed"
+            if outcome.tidied > 0 { text += ", \(outcome.tidied) other\(outcome.tidied == 1 ? "" : "s") tidied" }
+            if outcome.opened > 0 { text += ", \(outcome.opened) app\(outcome.opened == 1 ? "" : "s") opening" }
+            message = text + (outcome.missing > outcome.opened ? ", \(outcome.missing - outcome.opened) not open." : ".")
         }
     }
 }

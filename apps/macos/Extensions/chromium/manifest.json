@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Kriya",
+  "version": "0.1.0",
+  "description": "Send links, the page you are on, and selected text to Kriya on this Mac.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs5nLBrfrE4VlmXcTJc8Ha/R/oDj6EodSlS1FhFErfv4lHi/wKMZyHu/5GQtqj8f+OpOQel0RgtZGogKWcLYYUEt/tN55tj27joxM3dO2DVs2QR8DmnZLRVq/yrLYdDxTnJRssZzdYzKeKSrhOMCGlTdMOMKMJAgd4Q9CgjKkeQy69RUv4AHjGM1n6lCFyocydX97VOsHED3hnXkkku5y6JEAW3L8KuzPRo+nSomNkTN9bu0JogODIaj9DVfeeWOYsYudh+HL312YnzNVvUFWK0p0CDhMP4G0r4Ky5Zzb5rA9w7FONWIfg7mtgSjrF7PT2eqSjTJx2pwNj8kzhBOCVQIDAQAB",
+  "minimum_chrome_version": "110",
+  "permissions": ["contextMenus", "nativeMessaging", "activeTab"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Open this page through Kriya" }
+}

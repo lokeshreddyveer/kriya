@@ -1,0 +1,150 @@
+import Foundation
+
+/// How a capture is taken.
+enum CaptureMode: String, CaseIterable, Identifiable, Codable {
+    case region, window, screen
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .region: return "Region"
+        case .window: return "Window"
+        case .screen: return "Full screen"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .region: return "viewfinder"
+        case .window: return "macwindow"
+        case .screen: return "display"
+        }
+    }
+}
+
+/// What to do with a capture once it is taken.
+enum CaptureAction: String, CaseIterable, Identifiable, Codable {
+    /// Deliver the picture as the settings say.
+    case normal
+    /// Read the text in it and copy only the text.
+    case text
+    /// Hide private-looking text first, then deliver.
+    case redacted
+    var id: String { rawValue }
+}
+
+struct CaptureShortcut: Codable, Equatable, Identifiable {
+    var command: String
+    var keyCode: UInt16
+    var modifiers: UInt64
+    var id: String { command }
+}
+
+struct CaptureSettings: Codable, Equatable {
+    var copyImage = true
+    var saveToFolder = true
+    /// Empty means the default folder in Pictures.
+    var folderPath = ""
+    var openEditor = false
+    var redactAutomatically = false
+    var delaySeconds = 0
+    var playSound = false
+    /// Names or words to hide wherever they appear when private text is hidden, on top of emails, numbers and keys.
+    var redactWords: [String] = []
+    var shortcuts: [CaptureShortcut] = []
+
+    /// The commands that start a capture, by name. The same names work from mouse rules, workflows and the launcher.
+    static let commands: [(command: String, title: String, mode: CaptureMode, action: CaptureAction)] = [
+        ("capture.region", "Capture a region", .region, .normal),
+        ("capture.window", "Capture a window", .window, .normal),
+        ("capture.screen", "Capture the whole screen", .screen, .normal),
+        ("capture.text", "Copy text from a region (OCR)", .region, .text),
+        ("capture.redacted", "Capture a region and hide private text", .region, .redacted),
+    ]
+
+    static var defaultFolder: URL {
+        FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0].appendingPathComponent("Kriya Captures", isDirectory: true)
+    }
+
+    var folder: URL { folderPath.isEmpty ? Self.defaultFolder : URL(fileURLWithPath: folderPath, isDirectory: true) }
+}
+
+/// The capture settings, kept in the app's preferences.
+final class CaptureSettingsStore: ObservableObject {
+    @Published private(set) var settings: CaptureSettings
+
+    private let defaults: UserDefaults
+    private let key = "captureSettings.v1"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if let data = defaults.data(forKey: key), let decoded = try? JSONDecoder().decode(CaptureSettings.self, from: data) {
+            settings = decoded
+        } else {
+            settings = CaptureSettings()
+        }
+        sanitize()
+    }
+
+    func update(_ change: (inout CaptureSettings) -> Void) {
+        var next = settings
+        change(&next)
+        next.delaySeconds = min(max(next.delaySeconds, 0), 30)
+        next.redactWords = Array(Set(next.redactWords.map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count >= 2 && $0.count <= 60 })).sorted().prefix(100).map { $0 }
+        guard next != settings else { return }
+        settings = next
+        if let data = try? JSONEncoder().encode(next) { defaults.set(data, forKey: key) }
+    }
+
+    /// A shortcut with no modifier keys would take over normal typing, and two commands cannot share keys.
+    private func sanitize() {
+        var seen = Set<String>()
+        settings.shortcuts = settings.shortcuts.filter { shortcut in
+            guard shortcut.modifiers != 0, CaptureSettings.commands.contains(where: { $0.command == shortcut.command }) else { return false }
+            return seen.insert("\(shortcut.keyCode):\(shortcut.modifiers)").inserted
+        }
+    }
+
+    func shortcut(for command: String) -> CaptureShortcut? { settings.shortcuts.first { $0.command == command } }
+
+    func setShortcut(_ command: String, keyCode: UInt16?, modifiers: UInt64) {
+        update { settings in
+            settings.shortcuts.removeAll { $0.command == command }
+            if let keyCode, modifiers != 0 {
+                settings.shortcuts.removeAll { $0.keyCode == keyCode && $0.modifiers == modifiers }
+                settings.shortcuts.append(CaptureShortcut(command: command, keyCode: keyCode, modifiers: modifiers))
+            }
+        }
+    }
+}
+
+/// The arguments for the system's own screenshot tool, kept apart so they can be checked.
+enum ScreenCaptureArguments {
+    static func make(mode: CaptureMode, delay: Int, sound: Bool, output: URL) -> [String] {
+        var arguments: [String] = []
+        switch mode {
+        case .region: arguments += ["-i", "-s"]
+        case .window: arguments += ["-i", "-w"]
+        case .screen: break
+        }
+        if !sound { arguments.append("-x") }
+        if delay > 0 { arguments += ["-T", String(min(delay, 30))] }
+        arguments += ["-t", "png", output.path]
+        return arguments
+    }
+
+    /// A file name that sorts by time and cannot clash: "Kriya Capture 2026-10-22 14.05.09.png".
+    static func fileName(for date: Date, existing: (String) -> Bool = { _ in false }) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let base = "Kriya Capture \(formatter.string(from: date))"
+        var name = "\(base).png"
+        var counter = 2
+        while existing(name) {
+            name = "\(base) \(counter).png"
+            counter += 1
+        }
+        return name
+    }
+}

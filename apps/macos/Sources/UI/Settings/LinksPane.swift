@@ -66,19 +66,20 @@ struct LinksPane: View {
     @State private var tab: Tab = .rules
 
     enum Tab: String, CaseIterable, Identifiable {
-        case rules = "Rules", options = "Options", log = "Log & Test"
+        case rules = "Rules", options = "Options", browsers = "Browsers", log = "Log & Test"
         var id: String { rawValue }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
-                .paneTabBar(maxWidth: 320)
+                .paneTabBar(maxWidth: 420)
                 .paneHeader()
             Group {
                 switch tab {
                 case .rules: RulesTab()
                 case .options: OptionsTab()
+                case .browsers: BrowsersTab()
                 case .log: LogTab()
                 }
             }
@@ -86,6 +87,104 @@ struct LinksPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+    }
+}
+
+// MARK: - Browser extensions
+
+/// Connecting a browser extension to Kriya: one file per browser tells it how to start the host, and the extension itself is
+/// loaded from a folder.
+private struct BrowsersTab: View {
+    @EnvironmentObject private var bridge: BrowserBridge
+    @State private var browsers = NativeHostInstaller.installedBrowsers()
+    @State private var installed = Set<String>()
+    @State private var folder: URL?
+    @State private var message: String?
+
+    private var executable: String { Bundle.main.executablePath ?? "" }
+
+    var body: some View {
+        Form {
+            Section {
+                Text("With the extension, a right-click on a link, a page or some selected text can send it to Kriya. A link goes through your rules, so it opens in the browser and profile you chose. Selected text opens the selection bar. The extension reads no page content, uses no network and loads no code.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } header: { Text("Kriya in your browser") }
+
+            Section {
+                if browsers.isEmpty { Text("No supported browser was found.").foregroundStyle(.secondary) }
+                ForEach(browsers) { browser in
+                    HStack {
+                        Image(systemName: installed.contains(browser.id) ? "checkmark.circle.fill" : "circle.dashed")
+                            .foregroundStyle(installed.contains(browser.id) ? Theme.ok : .secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(browser.name)
+                            Text(installed.contains(browser.id) ? "Connection installed" : "Not connected").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if installed.contains(browser.id) {
+                            Button("Remove") { NativeHostInstaller.remove(browser); refresh() }.controlSize(.small)
+                        } else {
+                            Button("Install Connection") { install(browser) }.controlSize(.small)
+                        }
+                    }
+                }
+            } header: { Text("Step 1: connect a browser") } footer: {
+                Text("This writes one small file in that browser's own folder, naming Kriya as the program it may start and the one extension allowed to use it. Nothing else is changed.")
+            }
+
+            Section {
+                HStack {
+                    Button("Show the Extension Folder") { showFolder() }
+                    Spacer()
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Chrome, Edge, Brave, Vivaldi: open chrome://extensions, turn on Developer mode, choose Load unpacked, and pick the “chromium” folder.")
+                    Text("Firefox: open about:debugging, choose This Firefox, Load Temporary Add-on, and pick the manifest.json in the “firefox” folder. Firefox only keeps it permanently once Mozilla has signed it, which has not been done.")
+                    Text("Safari is not covered: it needs a Safari extension built into the app.")
+                }
+                .font(.callout).foregroundStyle(.secondary)
+            } header: { Text("Step 2: load the extension") }
+
+            Section {
+                LabeledContent("Requests handled", value: "\(bridge.handled)")
+                if bridge.refused > 0 { LabeledContent("Refused", value: "\(bridge.refused)") }
+                if let last = bridge.lastRequest { LabeledContent("Last request", value: last.shortDescription) }
+                else { Text("Nothing has come from a browser yet.").font(.callout).foregroundStyle(.secondary) }
+            } header: { Text("Activity") } footer: {
+                Text("Only the count and time are kept. What was sent is never written down.")
+            }
+
+            if let message {
+                Section { Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger).transition(.opacity) }
+            }
+        }
+        .formStyle(.grouped)
+        .animation(.smooth(duration: 0.2), value: message)
+        .onAppear { refresh() }
+    }
+
+    private func refresh() {
+        browsers = NativeHostInstaller.installedBrowsers()
+        installed = Set(browsers.filter { NativeHostInstaller.isInstalled($0, executable: executable) }.map(\.id))
+    }
+
+    private func install(_ browser: BrowserChoice) {
+        do {
+            try NativeHostInstaller.install(browser, executable: executable)
+            message = nil
+        } catch {
+            message = "Could not connect \(browser.name): \(error.localizedDescription)"
+        }
+        refresh()
+    }
+
+    private func showFolder() {
+        guard let target = NativeHostInstaller.prepareExtensions(into: AppPaths.live.support) else {
+            message = "The extension files could not be found in this copy of Kriya."
+            return
+        }
+        message = nil
+        NSWorkspace.shared.activateFileViewerSelecting([target])
     }
 }
 

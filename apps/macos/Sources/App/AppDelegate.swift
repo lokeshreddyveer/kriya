@@ -85,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func route(_ url: URL, in env: AppEnvironment, source: String?) {
         if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
             env.links.open(url, sourceAppID: source)
+        } else if url.scheme?.lowercased() == "kriya", url.host?.lowercased() == "browser" {
+            env.bridge.handle(url)
         } else {
             env.finder.handle(url: url)
         }
@@ -107,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         env.traffic.flushPendingSaves()
         env.backup.flushICloud()
         env.remap.stopAndWait()
+        env.capture.stop()
         env.inventory.stopWatching()
         env.hotCorners.stop()
         env.fileShelf.stop()

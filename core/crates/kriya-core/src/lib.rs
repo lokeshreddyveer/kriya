@@ -38,6 +38,7 @@ pub mod template;
 pub mod text_tools;
 pub mod traffic;
 mod traffic_store;
+mod vault;
 pub mod window_extras;
 mod window_store;
 pub mod windows;
@@ -50,7 +51,7 @@ pub use backup::BackupSummary;
 pub use clipboard::{ClipConfig, ClipKind, ClipSkipReason, NewClip};
 pub use clipboard_db::{
     ClipBlob, ClipCollection, ClipFilter, ClipItem, ClipRecordOutcome, ClipRecordStatus, ClipStats,
-    SnippetImportSummary,
+    SnippetImportSummary, VaultStatus,
 };
 pub use drag_tools::{
     ButtonScrollBinding, DoubleClickBinding, DragMove, DragToolsConfig, GlideStep, Velocity,
@@ -95,7 +96,7 @@ pub use traffic::{
 pub use window_extras::{Direction, FocusCandidate, GridBlock, StashEdge};
 pub use windows::{
     CustomSize, FrameHistory, LayoutEntry, PlacementRule, Point, Rect, SavedLayout,
-    ShortcutBinding, SwitcherItem, WindowConfig, WindowLayout,
+    ShortcutBinding, SwitcherItem, UnplacedPolicy, WindowConfig, WindowLayout,
 };
 pub use workflow::{
     ConditionGroup, ConditionItem, ConditionKind, ConditionMode, ConditionTemplate, Corner, Edge,
@@ -1501,6 +1502,36 @@ impl KriyaCore {
     pub fn clip_cleanup(&self, now: i64) -> Result<u32, CoreError> {
         let config = self.store.clip_config()?;
         self.clips.cleanup(&config, now)
+    }
+
+    /// Where the encrypted history stands.
+    pub fn clip_vault_status(&self) -> Result<VaultStatus, CoreError> {
+        self.clips.vault_status()
+    }
+
+    /// Hands over the 32-byte key kept in the Keychain (or None to forget it).
+    pub fn clip_vault_set_key(&self, key: Option<Vec<u8>>) -> Result<VaultStatus, CoreError> {
+        self.clips.vault_set_key(key)
+    }
+
+    /// Encrypts the history already saved and turns encryption on.
+    pub fn clip_vault_enable(&self) -> Result<u32, CoreError> {
+        self.clips.vault_enable()
+    }
+
+    /// Opens the history back into plain storage and turns encryption off.
+    pub fn clip_vault_disable(&self) -> Result<u32, CoreError> {
+        self.clips.vault_disable()
+    }
+
+    /// Removes all history and turns encryption off, for when the key is gone.
+    pub fn clip_vault_reset(&self) -> Result<u32, CoreError> {
+        self.clips.vault_reset()
+    }
+
+    /// Removes items labelled sensitive (pinned items and snippets stay).
+    pub fn clip_purge_sensitive(&self) -> Result<u32, CoreError> {
+        self.clips.purge_sensitive()
     }
 
     pub fn clip_export_snippets(&self, ids: Vec<String>) -> Result<String, CoreError> {

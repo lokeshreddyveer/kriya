@@ -8,11 +8,19 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::clipboard::{
-    clean_tags, content_hash, make_preview, make_search_text, should_skip, ClipConfig, ClipKind,
-    ClipSkipReason, NewClip,
+    clean_tags, content_hash, looks_sensitive, make_preview, make_search_text, should_skip,
+    ClipConfig, ClipKind, ClipSkipReason, NewClip,
 };
 use crate::error::CoreError;
 use crate::store::Store;
+use crate::vault::{is_sealed_blob, is_sealed_text, Vault, TEXT_PREFIX};
+use rusqlite::types::Value;
+
+/// A column that may be empty and holds bytes (text or a blob, whichever way it was stored).
+type MaybeBytes = Option<Vec<u8>>;
+
+/// What a locked item shows in place of its text.
+const LOCKED_PREVIEW: &str = "Locked: the encryption key is not available";
 
 const MAX_SNIPPET_BYTES: usize = 1024 * 1024;
 const MAX_TITLE_CHARS: usize = 100;
@@ -20,7 +28,8 @@ const MAX_IMPORT_BYTES: usize = 5 * 1024 * 1024;
 const MAX_IMPORT_SNIPPETS: usize = 5000;
 pub const SNIPPET_FILE_KIND: &str = "clip_snippets";
 
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE collections (
         id         TEXT PRIMARY KEY NOT NULL,
         name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -60,7 +69,16 @@ const MIGRATIONS: &[&str] = &[r#"
         tag     TEXT NOT NULL,
         PRIMARY KEY (clip_id, tag)
     );
-"#];
+"#,
+    r#"
+    ALTER TABLE clips ADD COLUMN sensitive INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE vault_meta (
+        id       INTEGER PRIMARY KEY CHECK (id = 1),
+        enabled  INTEGER NOT NULL DEFAULT 0,
+        verifier BLOB
+    );
+"#,
+];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct ClipItem {
@@ -83,6 +101,20 @@ pub struct ClipItem {
     pub image_height: Option<u32>,
     pub files: Vec<String>,
     pub has_rich: bool,
+    /// Looked like a password, key or token when it was copied. Such items are only ever stored encrypted.
+    #[serde(default)]
+    pub sensitive: bool,
+}
+
+/// Where the encrypted history stands.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct VaultStatus {
+    /// History is stored encrypted.
+    pub enabled: bool,
+    /// The key is loaded and, when history is encrypted, is the right one.
+    pub key_ready: bool,
+    pub sealed_items: u32,
+    pub plain_items: u32,
 }
 
 /// The full content of an item, fetched only when it is needed (an image can be large).
@@ -160,21 +192,28 @@ struct SnippetEntry {
     collection: Option<String>,
 }
 
-type SnippetRow = (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
-
 pub struct ClipStore {
     conn: Mutex<Connection>,
+    vault: Mutex<VaultState>,
     pub recovered_from_corruption: bool,
     pub ephemeral: bool,
 }
 
+/// Whether history is stored encrypted, and the key if it is loaded. Always taken after the connection, never before it.
+struct VaultState {
+    enabled: bool,
+    key: Option<Vault>,
+}
+
+/// A row as the database holds it: text that may still be sealed.
+struct RawRow {
+    item: ClipItem,
+    files_json: String,
+    search_text: String,
+}
+
 const ITEM_COLUMNS: &str = "c.id, c.kind, c.preview, c.title, c.source_app, c.created_at, c.last_used_at, c.use_count, c.pinned, \
-                            c.favorite, c.collection_id, c.byte_size, c.image_w, c.image_h, c.files_json, c.has_rich";
+                            c.favorite, c.collection_id, c.byte_size, c.image_w, c.image_h, c.files_json, c.has_rich, c.sensitive";
 
 impl ClipStore {
     /// Opens `dir/clipboard.sqlite`. A damaged file is set aside, not deleted.
@@ -212,8 +251,18 @@ impl ClipStore {
     }
 
     fn wrap(conn: Connection, recovered: bool, ephemeral: bool) -> ClipStore {
+        let enabled = conn
+            .query_row("SELECT enabled FROM vault_meta WHERE id = 1", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .optional()
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+            != 0;
         ClipStore {
             conn: Mutex::new(conn),
+            vault: Mutex::new(VaultState { enabled, key: None }),
             recovered_from_corruption: recovered,
             ephemeral,
         }
@@ -257,6 +306,380 @@ impl ClipStore {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    // ---- the vault: sealing and opening values ----------------------------------------------------------------
+
+    fn vault_state(&self) -> MutexGuard<'_, VaultState> {
+        self.vault.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// (history is encrypted, the key is loaded). Copied out, so the lock is not held while it is used.
+    fn flags(&self) -> (bool, bool) {
+        let state = self.vault_state();
+        (state.enabled, state.key.is_some())
+    }
+
+    fn seal_text_col(&self, value: &str, id: &str, column: &str) -> String {
+        let state = self.vault_state();
+        match (&state.key, state.enabled) {
+            (Some(vault), true) => vault.seal_text(value, &format!("{id}:{column}")),
+            _ => value.to_string(),
+        }
+    }
+
+    fn seal_opt_text_col(&self, value: Option<&str>, id: &str, column: &str) -> Option<String> {
+        value.map(|v| self.seal_text_col(v, id, column))
+    }
+
+    /// The value for the `plain` column: text, or sealed bytes when history is encrypted.
+    fn plain_value(&self, text: Option<&str>, id: &str) -> Value {
+        let Some(text) = text else { return Value::Null };
+        let state = self.vault_state();
+        match (&state.key, state.enabled) {
+            (Some(vault), true) => {
+                Value::Blob(vault.seal_blob(text.as_bytes(), &format!("{id}:plain")))
+            }
+            _ => Value::Text(text.to_string()),
+        }
+    }
+
+    fn blob_value(&self, bytes: Option<&[u8]>, id: &str, column: &str) -> Value {
+        let Some(bytes) = bytes else {
+            return Value::Null;
+        };
+        let state = self.vault_state();
+        match (&state.key, state.enabled) {
+            (Some(vault), true) => Value::Blob(vault.seal_blob(bytes, &format!("{id}:{column}"))),
+            _ => Value::Blob(bytes.to_vec()),
+        }
+    }
+
+    /// The text, or None when it is sealed and cannot be opened.
+    fn open_text_col(&self, value: &str, id: &str, column: &str) -> Option<String> {
+        if !is_sealed_text(value) {
+            return Some(value.to_string());
+        }
+        let state = self.vault_state();
+        state
+            .key
+            .as_ref()?
+            .open_text(value, &format!("{id}:{column}"))
+    }
+
+    fn open_blob_col(&self, bytes: Vec<u8>, id: &str, column: &str) -> Option<Vec<u8>> {
+        if !is_sealed_blob(&bytes) {
+            return Some(bytes);
+        }
+        let state = self.vault_state();
+        state
+            .key
+            .as_ref()?
+            .open_blob(&bytes, &format!("{id}:{column}"))
+    }
+
+    /// The fingerprint used to spot the same copy twice. Keyed while history is encrypted.
+    fn fingerprint(&self, new: &NewClip) -> String {
+        let plain = content_hash(new);
+        let state = self.vault_state();
+        match (&state.key, state.enabled) {
+            (Some(vault), true) => vault.fingerprint(&plain),
+            _ => plain,
+        }
+    }
+
+    /// Turns a row from the database into an item, opening what is sealed. The second value is the searchable text.
+    fn reveal(&self, raw: RawRow) -> (ClipItem, String) {
+        let RawRow {
+            mut item,
+            files_json,
+            search_text,
+        } = raw;
+        let id = item.id.clone();
+        item.preview = self
+            .open_text_col(&item.preview, &id, "preview")
+            .unwrap_or_else(|| LOCKED_PREVIEW.to_string());
+        item.title = item
+            .title
+            .take()
+            .and_then(|t| self.open_text_col(&t, &id, "title"));
+        item.files = self
+            .open_text_col(&files_json, &id, "files")
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        let haystack = self
+            .open_text_col(&search_text, &id, "search")
+            .unwrap_or_default();
+        (item, haystack)
+    }
+
+    /// The history cannot be changed while it is encrypted and the key is missing.
+    fn ensure_writable(&self) -> Result<(), CoreError> {
+        let (enabled, key) = self.flags();
+        if enabled && !key {
+            return Err(CoreError::invalid(
+                "the clipboard history is locked: its encryption key is not available",
+            ));
+        }
+        Ok(())
+    }
+
+    // ---- the vault: turning it on and off ---------------------------------------------------------------------
+
+    pub fn vault_status(&self) -> Result<VaultStatus, CoreError> {
+        let (enabled, key_ready) = self.flags();
+        let conn = self.conn();
+        let total: i64 = conn.query_row("SELECT COUNT(*) FROM clips", [], |r| r.get(0))?;
+        let sealed: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM clips WHERE substr(preview, 1, ?1) = ?2",
+            params![TEXT_PREFIX.chars().count() as i64, TEXT_PREFIX],
+            |r| r.get(0),
+        )?;
+        Ok(VaultStatus {
+            enabled,
+            key_ready,
+            sealed_items: sealed.max(0) as u32,
+            plain_items: (total - sealed).max(0) as u32,
+        })
+    }
+
+    /// Gives the core the key (or takes it away with None). When history is already encrypted, a key that is not the
+    /// right one is not kept, and the history stays locked.
+    pub fn vault_set_key(&self, key: Option<Vec<u8>>) -> Result<VaultStatus, CoreError> {
+        let verifier: Option<Vec<u8>> = self
+            .conn()
+            .query_row("SELECT verifier FROM vault_meta WHERE id = 1", [], |r| {
+                r.get::<_, Option<Vec<u8>>>(0)
+            })
+            .optional()?
+            .flatten();
+        {
+            let mut state = self.vault_state();
+            match key {
+                None => state.key = None,
+                Some(bytes) => {
+                    let candidate = Vault::new(&bytes)?;
+                    if state.enabled {
+                        state.key = match verifier {
+                            Some(v) if candidate.matches_verifier(&v) => Some(candidate),
+                            _ => None,
+                        };
+                    } else {
+                        state.key = Some(candidate);
+                    }
+                }
+            }
+        }
+        self.vault_status()
+    }
+
+    /// Encrypts everything already saved and turns encryption on. Needs the key. Returns how many items were sealed.
+    pub fn vault_enable(&self) -> Result<u32, CoreError> {
+        let conn = self.conn();
+        let mut state = self.vault_state();
+        if state.enabled {
+            return Ok(0);
+        }
+        let Some(vault) = state.key.as_ref() else {
+            return Err(CoreError::invalid("the encryption key is not available"));
+        };
+        let tx = conn.unchecked_transaction()?;
+        let rows: Vec<(String, String, Option<String>, String, String, String)> = {
+            let mut stmt =
+                tx.prepare("SELECT id, preview, title, files_json, search_text, hash FROM clips")?;
+            let mapped = stmt.query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            })?;
+            mapped.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut sealed = 0u32;
+        for (id, preview, title, files, search, hash) in &rows {
+            let seal = |value: &str, column: &str| {
+                if is_sealed_text(value) {
+                    value.to_string()
+                } else {
+                    vault.seal_text(value, &format!("{id}:{column}"))
+                }
+            };
+            tx.execute(
+                "UPDATE clips SET preview = ?2, title = ?3, files_json = ?4, search_text = ?5, hash = ?6 WHERE id = ?1",
+                params![
+                    id,
+                    seal(preview, "preview"),
+                    title.as_deref().map(|t| seal(t, "title")),
+                    seal(files, "files"),
+                    seal(search, "search"),
+                    vault.fingerprint(hash),
+                ],
+            )?;
+            sealed += 1;
+        }
+        let blobs: Vec<(String, MaybeBytes, MaybeBytes, MaybeBytes)> = {
+            let mut stmt = tx.prepare("SELECT id, plain, rich, image FROM clip_blobs")?;
+            let mapped = stmt.query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    read_bytes(r, 1)?,
+                    read_bytes(r, 2)?,
+                    read_bytes(r, 3)?,
+                ))
+            })?;
+            mapped.collect::<Result<Vec<_>, _>>()?
+        };
+        for (id, plain, rich, image) in blobs {
+            let seal = |value: Option<Vec<u8>>, column: &str| match value {
+                None => Value::Null,
+                Some(bytes) if is_sealed_blob(&bytes) => Value::Blob(bytes),
+                Some(bytes) => Value::Blob(vault.seal_blob(&bytes, &format!("{id}:{column}"))),
+            };
+            tx.execute(
+                "UPDATE clip_blobs SET plain = ?2, rich = ?3, image = ?4 WHERE id = ?1",
+                params![
+                    id,
+                    seal(plain, "plain"),
+                    seal(rich, "rich"),
+                    seal(image, "image")
+                ],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO vault_meta (id, enabled, verifier) VALUES (1, 1, ?1) \
+             ON CONFLICT(id) DO UPDATE SET enabled = 1, verifier = excluded.verifier",
+            params![vault.verifier()],
+        )?;
+        tx.commit()?;
+        state.enabled = true;
+        drop(state);
+        // Overwrite the places the readable copies were in.
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+        Ok(sealed)
+    }
+
+    /// Decrypts everything and turns encryption off. Needs the key. Returns how many items were opened.
+    pub fn vault_disable(&self) -> Result<u32, CoreError> {
+        let conn = self.conn();
+        let mut state = self.vault_state();
+        if !state.enabled {
+            return Ok(0);
+        }
+        let Some(vault) = state.key.as_ref() else {
+            return Err(CoreError::invalid("the encryption key is not available"));
+        };
+        let tx = conn.unchecked_transaction()?;
+        let rows: Vec<(String, String, Option<String>, String, String)> = {
+            let mut stmt =
+                tx.prepare("SELECT id, preview, title, files_json, search_text FROM clips")?;
+            let mapped = stmt.query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })?;
+            mapped.collect::<Result<Vec<_>, _>>()?
+        };
+        let unreadable = || CoreError::invalid("some history could not be opened with this key");
+        let open = |value: &str, id: &str, column: &str| -> Result<String, CoreError> {
+            if !is_sealed_text(value) {
+                return Ok(value.to_string());
+            }
+            vault
+                .open_text(value, &format!("{id}:{column}"))
+                .ok_or_else(unreadable)
+        };
+        let open_bytes = |value: Option<Vec<u8>>,
+                          id: &str,
+                          column: &str|
+         -> Result<Option<Vec<u8>>, CoreError> {
+            match value {
+                None => Ok(None),
+                Some(bytes) if is_sealed_blob(&bytes) => vault
+                    .open_blob(&bytes, &format!("{id}:{column}"))
+                    .map(Some)
+                    .ok_or_else(unreadable),
+                Some(bytes) => Ok(Some(bytes)),
+            }
+        };
+        let mut opened = 0u32;
+        for (id, preview, title, files, search) in &rows {
+            let files_json = open(files, id, "files")?;
+            let blob: (MaybeBytes, MaybeBytes, MaybeBytes) = tx
+                .query_row(
+                    "SELECT plain, rich, image FROM clip_blobs WHERE id = ?1",
+                    params![id],
+                    |r| Ok((read_bytes(r, 0)?, read_bytes(r, 1)?, read_bytes(r, 2)?)),
+                )
+                .optional()?
+                .unwrap_or((None, None, None));
+            let plain = open_bytes(blob.0, id, "plain")?;
+            let rich = open_bytes(blob.1, id, "rich")?;
+            let image = open_bytes(blob.2, id, "image")?;
+            let text = plain
+                .as_ref()
+                .and_then(|b| String::from_utf8(b.clone()).ok());
+            let hash = content_hash(&NewClip {
+                text: text.clone(),
+                rich: rich.clone(),
+                image: image.clone(),
+                files: serde_json::from_str(&files_json).unwrap_or_default(),
+                ..NewClip::default()
+            });
+            tx.execute(
+                "UPDATE clips SET preview = ?2, title = ?3, files_json = ?4, search_text = ?5, hash = ?6 WHERE id = ?1",
+                params![
+                    id,
+                    open(preview, id, "preview")?,
+                    title.as_deref().map(|t| open(t, id, "title")).transpose()?,
+                    files_json,
+                    open(search, id, "search")?,
+                    hash,
+                ],
+            )?;
+            tx.execute(
+                "UPDATE clip_blobs SET plain = ?2, rich = ?3, image = ?4 WHERE id = ?1",
+                params![id, text, rich, image],
+            )?;
+            opened += 1;
+        }
+        tx.execute(
+            "UPDATE vault_meta SET enabled = 0, verifier = NULL WHERE id = 1",
+            [],
+        )?;
+        tx.commit()?;
+        state.enabled = false;
+        drop(state);
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+        Ok(opened)
+    }
+
+    /// For when the key is lost: removes all history and turns encryption off, so recording can start again.
+    pub fn vault_reset(&self) -> Result<u32, CoreError> {
+        let conn = self.conn();
+        let mut state = self.vault_state();
+        let removed = conn.execute("DELETE FROM clips", [])?;
+        conn.execute(
+            "UPDATE vault_meta SET enabled = 0, verifier = NULL WHERE id = 1",
+            [],
+        )?;
+        state.enabled = false;
+        state.key = None;
+        drop(state);
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+        Ok(removed as u32)
+    }
+
+    /// Removes the items labelled sensitive. Pinned items and snippets are kept. Removed content is overwritten on disk.
+    pub fn purge_sensitive(&self) -> Result<u32, CoreError> {
+        let conn = self.conn();
+        let removed = conn.execute(
+            "DELETE FROM clips WHERE sensitive = 1 AND pinned = 0 AND favorite = 0",
+            [],
+        )?;
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+        Ok(removed as u32)
+    }
+
     // ---- recording ------------------------------------------------------------------------------------------
 
     /// Records a copy, unless the rules say to leave it out. The same copy twice becomes one item moved to the top.
@@ -285,7 +708,25 @@ impl ClipStore {
                 skipped: Some(ClipSkipReason::Empty),
             });
         };
-        let hash = content_hash(&new);
+        let (vault_on, key_ready) = self.flags();
+        if vault_on && !key_ready {
+            return Ok(ClipRecordOutcome {
+                status: ClipRecordStatus::Skipped,
+                id: None,
+                skipped: Some(ClipSkipReason::VaultLocked),
+            });
+        }
+        let sensitive = matches!(kind, ClipKind::Text | ClipKind::RichText | ClipKind::Url)
+            && new.text.as_deref().is_some_and(looks_sensitive);
+        // Something that looks like a secret is only ever written encrypted.
+        if sensitive && !vault_on {
+            return Ok(ClipRecordOutcome {
+                status: ClipRecordStatus::Skipped,
+                id: None,
+                skipped: Some(ClipSkipReason::LooksSensitive),
+            });
+        }
+        let hash = self.fingerprint(&new);
         let conn = self.conn();
         let existing: Option<String> = conn
             .query_row("SELECT id FROM clips WHERE hash = ?1", params![hash], |r| {
@@ -306,31 +747,39 @@ impl ClipStore {
         let id = new_id(&hash, now);
         let tx = conn.unchecked_transaction()?;
         tx.execute(
-            "INSERT INTO clips (id, kind, preview, source_app, created_at, last_used_at, byte_size, image_w, image_h, files_json, has_rich, hash, search_text)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO clips (id, kind, preview, source_app, created_at, last_used_at, byte_size, image_w, image_h, files_json, has_rich, hash, search_text, sensitive)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 kind.as_str(),
-                make_preview(&new),
+                self.seal_text_col(&make_preview(&new), &id, "preview"),
                 new.source_app,
                 now,
                 new.byte_size() as i64,
                 new.image_width,
                 new.image_height,
-                serde_json::to_string(&new.files)?,
+                self.seal_text_col(&serde_json::to_string(&new.files)?, &id, "files"),
                 i64::from(new.rich.is_some()),
                 hash,
-                make_search_text(&new, None),
+                self.seal_text_col(&make_search_text(&new, None), &id, "search"),
+                i64::from(sensitive),
             ],
         )?;
         let plain = if matches!(kind, ClipKind::Image | ClipKind::Files) {
             None
         } else {
-            new.text.clone()
+            new.text.as_deref()
         };
         tx.execute(
             "INSERT INTO clip_blobs (id, plain, rich, rich_format, image, image_format) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, plain, new.rich, new.rich_format, new.image, new.image_format],
+            params![
+                id,
+                self.plain_value(plain, &id),
+                self.blob_value(new.rich.as_deref(), &id, "rich"),
+                new.rich_format,
+                self.blob_value(new.image.as_deref(), &id, "image"),
+                new.image_format
+            ],
         )?;
         tx.commit()?;
         drop(conn);
@@ -352,16 +801,25 @@ impl ClipStore {
         filter: &ClipFilter,
         limit: u32,
     ) -> Result<Vec<ClipItem>, CoreError> {
+        let words: Vec<String> = query
+            .split_whitespace()
+            .take(12)
+            .map(str::to_lowercase)
+            .collect();
+        // Sealed text cannot be searched by the database, so while history is encrypted the words are matched here.
+        let in_memory = !words.is_empty() && self.flags().0;
         let mut clauses: Vec<String> = Vec::new();
         let mut args: Vec<String> = Vec::new();
-        for word in query.split_whitespace().take(12) {
-            let pattern = format!("%{}%", escape_like(&word.to_lowercase()));
-            clauses.push(
-                "(c.search_text LIKE ? ESCAPE '\\' OR lower(COALESCE(c.title, '')) LIKE ? ESCAPE '\\' \
-                 OR EXISTS (SELECT 1 FROM clip_tags t WHERE t.clip_id = c.id AND t.tag LIKE ? ESCAPE '\\'))"
-                    .to_string(),
-            );
-            args.extend([pattern.clone(), pattern.clone(), pattern]);
+        if !in_memory {
+            for word in &words {
+                let pattern = format!("%{}%", escape_like(word));
+                clauses.push(
+                    "(c.search_text LIKE ? ESCAPE '\\' OR lower(COALESCE(c.title, '')) LIKE ? ESCAPE '\\' \
+                     OR EXISTS (SELECT 1 FROM clip_tags t WHERE t.clip_id = c.id AND t.tag LIKE ? ESCAPE '\\'))"
+                        .to_string(),
+                );
+                args.extend([pattern.clone(), pattern.clone(), pattern]);
+            }
         }
         if !filter.kinds.is_empty() {
             clauses.push(format!(
@@ -391,27 +849,48 @@ impl ClipStore {
         } else {
             format!("WHERE {}", clauses.join(" AND "))
         };
-        let sql = format!(
-            "SELECT {ITEM_COLUMNS} FROM clips c {where_sql} ORDER BY c.pinned DESC, c.last_used_at DESC, c.id LIMIT {}",
+        let sql_limit = if in_memory {
+            5000
+        } else {
             limit.clamp(1, 5000)
+        };
+        let sql = format!(
+            "SELECT {ITEM_COLUMNS}, c.search_text FROM clips c {where_sql} ORDER BY c.pinned DESC, c.last_used_at DESC, c.id LIMIT {sql_limit}"
         );
         let conn = self.conn();
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(args.iter()), item_from_row)?;
-        let mut items = rows.collect::<Result<Vec<_>, _>>()?;
+        let rows = stmt.query_map(params_from_iter(args.iter()), raw_row)?;
+        let raws = rows.collect::<Result<Vec<_>, _>>()?;
+        let (mut items, haystacks): (Vec<ClipItem>, Vec<String>) =
+            raws.into_iter().map(|raw| self.reveal(raw)).unzip();
         attach_tags(&conn, &mut items)?;
+        if in_memory {
+            let mut kept = Vec::new();
+            for (item, haystack) in items.into_iter().zip(haystacks) {
+                let title = item.title.as_deref().unwrap_or("").to_lowercase();
+                let tags: Vec<String> = item.tags.iter().map(|t| t.to_lowercase()).collect();
+                let all_found = words.iter().all(|w| {
+                    haystack.contains(w.as_str())
+                        || title.contains(w.as_str())
+                        || tags.iter().any(|t| t.contains(w.as_str()))
+                });
+                if all_found {
+                    kept.push(item);
+                }
+            }
+            kept.truncate(limit.clamp(1, 5000) as usize);
+            items = kept;
+        }
         Ok(items)
     }
 
     pub fn item(&self, id: &str) -> Result<Option<ClipItem>, CoreError> {
         let conn = self.conn();
         let sql = format!("SELECT {ITEM_COLUMNS} FROM clips c WHERE c.id = ?1");
-        let found = conn
-            .query_row(&sql, params![id], item_from_row)
-            .optional()?;
+        let found = conn.query_row(&sql, params![id], raw_row).optional()?;
         match found {
-            Some(item) => {
-                let mut one = vec![item];
+            Some(raw) => {
+                let mut one = vec![self.reveal(raw).0];
                 attach_tags(&conn, &mut one)?;
                 Ok(one.pop())
             }
@@ -420,12 +899,34 @@ impl ClipStore {
     }
 
     pub fn blob(&self, id: &str) -> Result<Option<ClipBlob>, CoreError> {
-        Ok(self
+        let row = self
             .conn()
-            .query_row("SELECT plain, rich, rich_format, image, image_format FROM clip_blobs WHERE id = ?1", params![id], |r| {
-                Ok(ClipBlob { plain: r.get(0)?, rich: r.get(1)?, rich_format: r.get(2)?, image: r.get(3)?, image_format: r.get(4)? })
-            })
-            .optional()?)
+            .query_row(
+                "SELECT plain, rich, rich_format, image, image_format FROM clip_blobs WHERE id = ?1",
+                params![id],
+                |r| {
+                    Ok((
+                        read_bytes(r, 0)?,
+                        read_bytes(r, 1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        read_bytes(r, 3)?,
+                        r.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((plain, rich, rich_format, image, image_format)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(ClipBlob {
+            plain: plain
+                .and_then(|b| self.open_blob_col(b, id, "plain"))
+                .and_then(|b| String::from_utf8(b).ok()),
+            rich: rich.and_then(|b| self.open_blob_col(b, id, "rich")),
+            rich_format,
+            image: image.and_then(|b| self.open_blob_col(b, id, "image")),
+            image_format,
+        }))
     }
 
     pub fn stats(&self) -> Result<ClipStats, CoreError> {
@@ -470,19 +971,25 @@ impl ClipStore {
         title: Option<String>,
     ) -> Result<(), CoreError> {
         let title = clean_title(title)?;
+        self.ensure_writable()?;
         self.change(
             id,
             "UPDATE clips SET favorite = ?2, title = ?3 WHERE id = ?1",
-            params![id, i64::from(favorite), title],
+            params![
+                id,
+                i64::from(favorite),
+                self.seal_opt_text_col(title.as_deref(), id, "title")
+            ],
         )
     }
 
     pub fn set_title(&self, id: &str, title: Option<String>) -> Result<(), CoreError> {
         let title = clean_title(title)?;
+        self.ensure_writable()?;
         self.change(
             id,
             "UPDATE clips SET title = ?2 WHERE id = ?1",
-            params![id, title],
+            params![id, self.seal_opt_text_col(title.as_deref(), id, "title")],
         )
     }
 
@@ -575,11 +1082,12 @@ impl ClipStore {
         if text.len() > MAX_SNIPPET_BYTES {
             return Err(CoreError::invalid("the snippet is too long"));
         }
+        self.ensure_writable()?;
         let new = NewClip {
             text: Some(text.to_string()),
             ..NewClip::default()
         };
-        let hash = content_hash(&new);
+        let hash = self.fingerprint(&new);
         let conn = self.conn();
         if let Some(c) = &collection {
             let exists: Option<i64> = conn
@@ -597,7 +1105,8 @@ impl ClipStore {
             })
             .optional()?;
         if let Some(id) = existing {
-            conn.execute("UPDATE clips SET favorite = 1, title = COALESCE(?2, title), collection_id = COALESCE(?3, collection_id) WHERE id = ?1", params![id, title, collection])?;
+            let sealed_title = self.seal_opt_text_col(title.as_deref(), &id, "title");
+            conn.execute("UPDATE clips SET favorite = 1, title = COALESCE(?2, title), collection_id = COALESCE(?3, collection_id) WHERE id = ?1", params![id, sealed_title, collection])?;
             return Ok(id);
         }
         let kind = new.kind().unwrap_or(ClipKind::Text);
@@ -606,11 +1115,21 @@ impl ClipStore {
         tx.execute(
             "INSERT INTO clips (id, kind, preview, title, source_app, created_at, last_used_at, byte_size, files_json, has_rich, hash, search_text, favorite, collection_id)
              VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?5, ?6, '[]', 0, ?7, ?8, 1, ?9)",
-            params![id, kind.as_str(), make_preview(&new), title, now, text.len() as i64, hash, make_search_text(&new, None), collection],
+            params![
+                id,
+                kind.as_str(),
+                self.seal_text_col(&make_preview(&new), &id, "preview"),
+                self.seal_opt_text_col(title.as_deref(), &id, "title"),
+                now,
+                text.len() as i64,
+                hash,
+                self.seal_text_col(&make_search_text(&new, None), &id, "search"),
+                collection
+            ],
         )?;
         tx.execute(
             "INSERT INTO clip_blobs (id, plain) VALUES (?1, ?2)",
-            params![id, text],
+            params![id, self.plain_value(Some(text), &id)],
         )?;
         tx.commit()?;
         Ok(id)
@@ -624,6 +1143,7 @@ impl ClipStore {
         text: Option<String>,
     ) -> Result<(), CoreError> {
         let title = clean_title(title)?;
+        self.ensure_writable()?;
         let conn = self.conn();
         let kind: Option<String> = conn
             .query_row("SELECT kind FROM clips WHERE id = ?1", params![id], |r| {
@@ -636,7 +1156,7 @@ impl ClipStore {
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "UPDATE clips SET title = ?2 WHERE id = ?1",
-            params![id, title],
+            params![id, self.seal_opt_text_col(title.as_deref(), id, "title")],
         )?;
         if let Some(text) = text {
             if !matches!(ClipKind::parse(&kind), Some(ClipKind::Text | ClipKind::Url)) {
@@ -651,7 +1171,7 @@ impl ClipStore {
                 text: Some(text.clone()),
                 ..NewClip::default()
             };
-            let hash = content_hash(&new);
+            let hash = self.fingerprint(&new);
             let clash: Option<String> = tx
                 .query_row(
                     "SELECT id FROM clips WHERE hash = ?1 AND id != ?2",
@@ -666,11 +1186,18 @@ impl ClipStore {
             }
             tx.execute(
                 "UPDATE clips SET kind = ?2, preview = ?3, hash = ?4, search_text = ?5, byte_size = ?6 WHERE id = ?1",
-                params![id, new.kind().unwrap_or(ClipKind::Text).as_str(), make_preview(&new), hash, make_search_text(&new, None), text.len() as i64],
+                params![
+                    id,
+                    new.kind().unwrap_or(ClipKind::Text).as_str(),
+                    self.seal_text_col(&make_preview(&new), id, "preview"),
+                    hash,
+                    self.seal_text_col(&make_search_text(&new, None), id, "search"),
+                    text.len() as i64
+                ],
             )?;
             tx.execute(
                 "UPDATE clip_blobs SET plain = ?2 WHERE id = ?1",
-                params![id, text],
+                params![id, self.plain_value(Some(text.as_str()), id)],
             )?;
         }
         tx.commit()?;
@@ -735,6 +1262,13 @@ impl ClipStore {
     pub fn cleanup(&self, config: &ClipConfig, now: i64) -> Result<u32, CoreError> {
         let conn = self.conn();
         let mut removed = 0usize;
+        if config.sensitive_retention_minutes > 0 {
+            let cutoff = now - i64::from(config.sensitive_retention_minutes) * 60;
+            removed += conn.execute(
+                "DELETE FROM clips WHERE sensitive = 1 AND pinned = 0 AND favorite = 0 AND created_at < ?1",
+                params![cutoff],
+            )?;
+        }
         if config.retention_days > 0 {
             let cutoff = now - i64::from(config.retention_days) * 86_400;
             removed += conn.execute(
@@ -775,16 +1309,23 @@ impl ClipStore {
         let mut snippets = Vec::new();
         let mut collection_names: Vec<String> = Vec::new();
         for id in ids {
-            let row: Option<SnippetRow> = conn
+            let row: Option<(Option<String>, MaybeBytes, Option<String>)> = conn
                 .query_row(
-                    "SELECT c.title, b.plain, (SELECT name FROM collections WHERE id = c.collection_id), c.kind FROM clips c JOIN clip_blobs b ON b.id = c.id WHERE c.id = ?1",
+                    "SELECT c.title, b.plain, (SELECT name FROM collections WHERE id = c.collection_id) FROM clips c JOIN clip_blobs b ON b.id = c.id WHERE c.id = ?1",
                     params![id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    |r| Ok((r.get(0)?, read_bytes(r, 1)?, r.get(2)?)),
                 )
                 .optional()?;
-            let Some((title, Some(text), collection, _)) = row else {
+            let Some((title, Some(plain), collection)) = row else {
                 continue;
             };
+            let Some(text) = self
+                .open_blob_col(plain, id, "plain")
+                .and_then(|b| String::from_utf8(b).ok())
+            else {
+                continue;
+            };
+            let title = title.and_then(|t| self.open_text_col(&t, id, "title"));
             let mut stmt =
                 conn.prepare("SELECT tag FROM clip_tags WHERE clip_id = ?1 ORDER BY tag")?;
             let tags = stmt
@@ -866,7 +1407,7 @@ impl ClipStore {
                 }
                 None => None,
             };
-            let hash = content_hash(&NewClip {
+            let hash = self.fingerprint(&NewClip {
                 text: Some(entry.text.clone()),
                 ..NewClip::default()
             });
@@ -915,10 +1456,25 @@ fn clean_title(title: Option<String>) -> Result<Option<String>, CoreError> {
     Ok(Some(t.to_string()))
 }
 
-fn item_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ClipItem> {
+/// A text or blob column as bytes, whichever way it is stored.
+fn read_bytes(r: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<Option<Vec<u8>>> {
+    use rusqlite::types::ValueRef;
+    Ok(match r.get_ref(idx)? {
+        ValueRef::Text(bytes) | ValueRef::Blob(bytes) => Some(bytes.to_vec()),
+        _ => None,
+    })
+}
+
+/// A row as stored. Text that is sealed is opened later, by `reveal`.
+fn raw_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawRow> {
     let kind: String = r.get(1)?;
     let files_json: String = r.get(14)?;
-    Ok(ClipItem {
+    let search_text = if r.as_ref().column_count() > 17 {
+        r.get::<_, String>(17)?
+    } else {
+        String::new()
+    };
+    let item = ClipItem {
         id: r.get(0)?,
         kind: ClipKind::parse(&kind).unwrap_or(ClipKind::Text),
         preview: r.get(2)?,
@@ -934,8 +1490,14 @@ fn item_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ClipItem> {
         byte_size: r.get::<_, i64>(11)?.max(0) as u64,
         image_width: r.get(12)?,
         image_height: r.get(13)?,
-        files: serde_json::from_str(&files_json).unwrap_or_default(),
+        files: Vec::new(),
         has_rich: r.get::<_, i64>(15)? != 0,
+        sensitive: r.get::<_, i64>(16)? != 0,
+    };
+    Ok(RawRow {
+        item,
+        files_json,
+        search_text,
     })
 }
 
@@ -1023,6 +1585,269 @@ mod tests {
 
     fn all(store: &ClipStore) -> Vec<ClipItem> {
         store.search("", &ClipFilter::default(), 1000).unwrap()
+    }
+
+    // ---- the encrypted vault ------------------------------------------------------------------------------------------
+
+    fn key(n: u8) -> Vec<u8> {
+        vec![n; 32]
+    }
+
+    fn vault_store() -> ClipStore {
+        let s = store();
+        s.vault_set_key(Some(key(9))).unwrap();
+        s.vault_enable().unwrap();
+        s
+    }
+
+    fn find(s: &ClipStore, words: &str) -> Vec<ClipItem> {
+        s.search(words, &ClipFilter::default(), 50).unwrap()
+    }
+
+    #[test]
+    fn history_is_sealed_in_the_file_and_still_reads_and_searches() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = ClipStore::open(dir.path(), 1).unwrap();
+        s.record(text("meeting notes about the budget"), 10, &cfg())
+            .unwrap();
+        s.vault_set_key(Some(key(1))).unwrap();
+        assert_eq!(s.vault_enable().unwrap(), 1);
+        s.record(text("second budget thought"), 20, &cfg()).unwrap();
+        let status = s.vault_status().unwrap();
+        assert!(status.enabled && status.key_ready);
+        assert_eq!((status.sealed_items, status.plain_items), (2, 0));
+        for name in ["clipboard.sqlite", "clipboard.sqlite-wal"] {
+            if let Ok(bytes) = std::fs::read(dir.path().join(name)) {
+                let text = String::from_utf8_lossy(&bytes);
+                assert!(!text.contains("budget"), "{name} holds readable text");
+                assert!(!text.contains("thought"), "{name} holds readable text");
+            }
+        }
+        let found = find(&s, "budget");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].preview, "second budget thought");
+        assert_eq!(
+            s.blob(&found[0].id).unwrap().unwrap().plain.as_deref(),
+            Some("second budget thought")
+        );
+        assert_eq!(find(&s, "notes").len(), 1);
+        assert_eq!(find(&s, "budget thought").len(), 1, "every word must match");
+        assert!(find(&s, "zebra").is_empty());
+    }
+
+    #[test]
+    fn a_locked_history_refuses_to_save_and_shows_placeholders() {
+        let s = vault_store();
+        s.record(text("keep this safe"), 10, &cfg()).unwrap();
+        s.vault_set_key(None).unwrap();
+        let status = s.vault_status().unwrap();
+        assert!(status.enabled && !status.key_ready);
+        let items = all(&s);
+        assert_eq!(items.len(), 1);
+        assert!(items[0].preview.starts_with("Locked"));
+        assert_eq!(s.blob(&items[0].id).unwrap().unwrap().plain, None);
+        let refused = s.record(text("new thing"), 20, &cfg()).unwrap();
+        assert_eq!(refused.skipped, Some(ClipSkipReason::VaultLocked));
+        assert!(s.add_snippet(None, "x", None, 30).is_err());
+        assert!(
+            !s.vault_set_key(Some(key(8))).unwrap().key_ready,
+            "the wrong key"
+        );
+        assert!(s.vault_set_key(Some(key(9))).unwrap().key_ready);
+        assert_eq!(all(&s)[0].preview, "keep this safe");
+    }
+
+    #[test]
+    fn duplicates_are_still_found_and_turning_it_off_restores_plain_history() {
+        let s = store();
+        let first = s.record(text("alpha"), 1, &cfg()).unwrap();
+        s.vault_set_key(Some(key(3))).unwrap();
+        s.vault_enable().unwrap();
+        let again = s.record(text("alpha"), 2, &cfg()).unwrap();
+        assert_eq!(again.status, ClipRecordStatus::Duplicate);
+        assert_eq!(again.id, first.id);
+        s.record(text("beta"), 3, &cfg()).unwrap();
+        assert_eq!(s.vault_disable().unwrap(), 2);
+        let status = s.vault_status().unwrap();
+        assert!(!status.enabled);
+        assert_eq!((status.sealed_items, status.plain_items), (0, 2));
+        assert_eq!(
+            s.record(text("beta"), 4, &cfg()).unwrap().status,
+            ClipRecordStatus::Duplicate
+        );
+        assert_eq!(all(&s)[0].preview, "beta");
+        let raw: String = s
+            .conn()
+            .query_row(
+                "SELECT preview FROM clips WHERE id = ?1",
+                params![first.id.unwrap()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "alpha");
+    }
+
+    #[test]
+    fn images_files_and_rich_text_round_trip_through_the_vault() {
+        let s = vault_store();
+        let picture = vec![137, 80, 78, 71, 1, 2, 3];
+        let image = NewClip {
+            image: Some(picture.clone()),
+            image_format: Some("png".into()),
+            image_width: Some(2),
+            image_height: Some(2),
+            ..NewClip::default()
+        };
+        let image_id = s.record(image, 1, &cfg()).unwrap().id.unwrap();
+        let files = NewClip {
+            files: vec!["/Users/me/hidden plan.pdf".into()],
+            ..NewClip::default()
+        };
+        let files_id = s.record(files, 2, &cfg()).unwrap().id.unwrap();
+        let rich = NewClip {
+            text: Some("bold words".into()),
+            rich: Some(b"{\\rtf1 bold words}".to_vec()),
+            rich_format: Some("rtf".into()),
+            ..NewClip::default()
+        };
+        let rich_id = s.record(rich, 3, &cfg()).unwrap().id.unwrap();
+        let check = |s: &ClipStore| {
+            assert_eq!(
+                s.blob(&image_id).unwrap().unwrap().image,
+                Some(picture.clone())
+            );
+            assert_eq!(
+                s.item(&files_id).unwrap().unwrap().files,
+                vec!["/Users/me/hidden plan.pdf".to_string()]
+            );
+            let blob = s.blob(&rich_id).unwrap().unwrap();
+            assert_eq!(blob.rich.as_deref(), Some(&b"{\\rtf1 bold words}"[..]));
+            assert_eq!(blob.plain.as_deref(), Some("bold words"));
+        };
+        check(&s);
+        assert_eq!(find(&s, "hidden").len(), 1, "a file is found by its name");
+        s.vault_disable().unwrap();
+        check(&s);
+        assert_eq!(find(&s, "hidden").len(), 1);
+    }
+
+    #[test]
+    fn secrets_are_labelled_and_only_ever_stored_sealed() {
+        let keep = ClipConfig {
+            skip_secrets: false,
+            ..cfg()
+        };
+        let s = store();
+        let plain_mode = s.record(text("4111111111111111"), 1, &keep).unwrap();
+        assert_eq!(
+            plain_mode.skipped,
+            Some(ClipSkipReason::LooksSensitive),
+            "never written readable"
+        );
+        s.vault_set_key(Some(key(2))).unwrap();
+        s.vault_enable().unwrap();
+        let stored = s.record(text("4111111111111111"), 2, &keep).unwrap();
+        assert_eq!(stored.status, ClipRecordStatus::Stored);
+        let secret_id = stored.id.unwrap();
+        assert!(s.item(&secret_id).unwrap().unwrap().sensitive);
+        let normal_id = s
+            .record(text("lunch at noon"), 3, &keep)
+            .unwrap()
+            .id
+            .unwrap();
+        assert!(!s.item(&normal_id).unwrap().unwrap().sensitive);
+        let pinned_id = s
+            .record(text("5500005555555559"), 4, &keep)
+            .unwrap()
+            .id
+            .unwrap();
+        s.set_pinned(&pinned_id, true).unwrap();
+        assert_eq!(s.purge_sensitive().unwrap(), 1, "the pinned one is kept");
+        assert!(s.item(&secret_id).unwrap().is_none());
+        assert!(s.item(&normal_id).unwrap().is_some());
+        assert!(s.item(&pinned_id).unwrap().is_some());
+    }
+
+    #[test]
+    fn sensitive_items_can_expire_sooner() {
+        let rule = ClipConfig {
+            skip_secrets: false,
+            sensitive_retention_minutes: 5,
+            ..cfg()
+        };
+        let s = vault_store();
+        let secret = s
+            .record(text("4111111111111111"), 1000, &rule)
+            .unwrap()
+            .id
+            .unwrap();
+        let normal = s.record(text("a note"), 1001, &rule).unwrap().id.unwrap();
+        s.cleanup(&rule, 1000 + 299).unwrap();
+        assert!(s.item(&secret).unwrap().is_some(), "not yet five minutes");
+        s.cleanup(&rule, 1000 + 301).unwrap();
+        assert!(s.item(&secret).unwrap().is_none());
+        assert!(
+            s.item(&normal).unwrap().is_some(),
+            "other items follow the normal rules"
+        );
+    }
+
+    #[test]
+    fn a_lost_key_can_be_dealt_with_by_starting_again() {
+        let s = vault_store();
+        s.record(text("old and unreadable"), 1, &cfg()).unwrap();
+        s.vault_set_key(None).unwrap();
+        assert!(s.vault_disable().is_err(), "cannot open it without the key");
+        assert_eq!(s.vault_reset().unwrap(), 1);
+        let status = s.vault_status().unwrap();
+        assert!(!status.enabled && status.sealed_items == 0 && status.plain_items == 0);
+        let fresh = s.record(text("a new start"), 5, &cfg()).unwrap();
+        assert_eq!(fresh.status, ClipRecordStatus::Stored);
+        assert_eq!(all(&s)[0].preview, "a new start");
+    }
+
+    #[test]
+    fn a_sealed_value_moved_to_another_row_does_not_open() {
+        let s = vault_store();
+        let a = s
+            .record(text("first value"), 1, &cfg())
+            .unwrap()
+            .id
+            .unwrap();
+        let b = s
+            .record(text("second value"), 2, &cfg())
+            .unwrap()
+            .id
+            .unwrap();
+        s.conn()
+            .execute(
+                "UPDATE clips SET preview = (SELECT preview FROM clips WHERE id = ?1) WHERE id = ?2",
+                params![a, b],
+            )
+            .unwrap();
+        assert!(s.item(&b).unwrap().unwrap().preview.starts_with("Locked"));
+        assert_eq!(s.item(&a).unwrap().unwrap().preview, "first value");
+    }
+
+    #[test]
+    fn snippets_work_while_encrypted() {
+        let s = vault_store();
+        let id = s
+            .add_snippet(Some("Greeting".into()), "Hello there", None, 5)
+            .unwrap();
+        assert_eq!(
+            s.item(&id).unwrap().unwrap().title.as_deref(),
+            Some("Greeting")
+        );
+        assert_eq!(find(&s, "greeting").len(), 1);
+        s.update_snippet(&id, Some("Hi".into()), Some("Hi there".into()))
+            .unwrap();
+        let json = s.export_snippets(std::slice::from_ref(&id)).unwrap();
+        assert!(json.contains("Hi there") && json.contains("\"Hi\""));
+        let other = vault_store();
+        assert_eq!(other.import_snippets(&json, 9).unwrap().added, 1);
+        assert_eq!(all(&other)[0].preview, "Hi there");
+        assert_eq!(other.import_snippets(&json, 10).unwrap().updated, 1);
     }
 
     #[test]

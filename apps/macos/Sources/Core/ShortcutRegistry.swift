@@ -154,16 +154,17 @@ final class ShortcutRegistry: ObservableObject {
 
     private func fire(_ id: UInt32) -> Bool {
         lock.lock()
-        var target: ((String) -> Void, String)?
-        for owned in owners.values {
+        var target: ((String) -> Void, String, String)?
+        for (owner, owned) in owners {
             if let command = owned.ids[id] {
-                target = (owned.callback, command)
+                target = (owned.callback, command, owner)
                 break
             }
         }
         lock.unlock()
         // The feature's own code runs without the lock, so it may register or release shortcuts itself.
-        guard let (callback, command) = target else { return false }
+        guard let (callback, command, owner) = target else { return false }
+        InteractionTrace.shared.note("Shortcut", "\(owner) › \(command)")
         callback(command)
         return true
     }

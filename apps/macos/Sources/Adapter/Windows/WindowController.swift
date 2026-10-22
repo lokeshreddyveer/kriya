@@ -42,6 +42,10 @@ final class WindowDiagnostics: ObservableObject {
 struct RestoreOutcome: Equatable {
     var placed = 0
     var missing = 0
+    /// Windows the layout did not place that were minimized, hidden or closed as the layout asks.
+    var tidied = 0
+    /// Apps that were not running and were opened, to be placed once their window appears.
+    var opened = 0
 }
 
 /// Moves and resizes other apps' windows. Every operation checks that there is a window, that its app is not excluded and
@@ -366,7 +370,7 @@ final class WindowController: ObservableObject {
         }
         store.saveLayout(SavedLayout(
             id: UUID().uuidString, name: name, displayKey: displays.setKey, isAuto: false,
-            createdAt: SystemInfo.nowSeconds, entries: entries
+            createdAt: SystemInfo.nowSeconds, entries: entries, unplaced: .leave, launchMissing: false
         ))
         diagnostics.note("Saved layout “\(name)” with \(entries.count) windows")
     }
@@ -384,28 +388,79 @@ final class WindowController: ObservableObject {
             )
             var outcome = RestoreOutcome()
             for (index, match) in matches.enumerated() {
-                guard let match else { continue }
-                let entry = layout.entries[Int(match)]
-                let display = known.first { $0.id == entry.displayId } ?? known.first { $0.isMain } ?? known.first
-                guard let area = display?.area else { continue }
-                let frame = windowContain(
-                    frame: Rect(
-                        x: area.x + entry.frame.x * area.width, y: area.y + entry.frame.y * area.height,
-                        width: entry.frame.width * area.width, height: entry.frame.height * area.height
-                    ),
-                    area: area
-                )
+                guard let match, let frame = Self.target(for: layout.entries[Int(match)], displays: known) else { continue }
                 let window = open[index].window
                 history.record(key: window.key, frame: open[index].frame)
                 let ok = AXWindow.withoutEnhancedInterface(pid: window.pid) { window.setFrame(frame) }
                 if ok { outcome.placed += 1 }
             }
-            outcome.missing = max(0, layout.entries.count - matches.compactMap { $0 }.count)
+            let matchedEntries = Set(matches.compactMap { $0 }.map(Int.init))
+            outcome.missing = max(0, layout.entries.count - matchedEntries.count)
+
+            // What the layout asks for the windows it did not place.
+            let placedWindows = Set(matches.enumerated().compactMap { $0.element == nil ? nil : $0.offset })
+            let unplaced = open.enumerated().filter { !placedWindows.contains($0.offset) }.map(\.element)
+            let placedApps = Set(placedWindows.map { open[$0].appID })
+            switch layout.unplaced {
+            case .leave:
+                break
+            case .minimize:
+                for item in unplaced where item.window.minimize() { outcome.tidied += 1 }
+            case .close:
+                for item in unplaced where item.window.close() { outcome.tidied += 1 }
+            case .hide:
+                // An app is hidden whole, so only one with none of its windows placed.
+                let apps = Set(unplaced.map(\.appID)).subtracting(placedApps)
+                DispatchQueue.main.sync {
+                    for id in apps { if NSRunningApplication.runningApplications(withBundleIdentifier: id).first?.hide() == true { outcome.tidied += 1 } }
+                }
+            }
+
+            // Apps that are not running are opened, and their windows placed as they appear.
+            let toOpen = layout.launchMissing ? layout.entries.indices.filter { !matchedEntries.contains($0) } : []
             DispatchQueue.main.async {
-                self?.diagnostics.note("Restored “\(layout.name)”: \(outcome.placed) placed")
-                self?.lastApplied.removeAll()
+                guard let self else { return }
+                for index in toOpen {
+                    let entry = layout.entries[index]
+                    guard NSRunningApplication.runningApplications(withBundleIdentifier: entry.appId).isEmpty,
+                          let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: entry.appId) else { continue }
+                    outcome.opened += 1
+                    NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+                    self.placeWhenWindowAppears(entry: entry, displays: known)
+                }
+                self.diagnostics.note("Restored “\(layout.name)”: \(outcome.placed) placed, \(outcome.tidied) tidied, \(outcome.opened) opened")
+                self.lastApplied.removeAll()
                 completion?(outcome)
             }
+        }
+    }
+
+    /// Where a layout entry puts a window, in screen coordinates. The display it was made for, or the main one if that
+    /// is not connected, and always inside the usable area.
+    static func target(for entry: LayoutEntry, displays known: [DisplayInfo]) -> Rect? {
+        let display = known.first { $0.id == entry.displayId } ?? known.first { $0.isMain } ?? known.first
+        guard let area = display?.area else { return nil }
+        return windowContain(
+            frame: Rect(
+                x: area.x + entry.frame.x * area.width, y: area.y + entry.frame.y * area.height,
+                width: entry.frame.width * area.width, height: entry.frame.height * area.height
+            ),
+            area: area
+        )
+    }
+
+    /// Waits for a window of a just-opened app and puts it where the layout says. Gives up after about ten seconds.
+    private func placeWhenWindowAppears(entry: LayoutEntry, displays known: [DisplayInfo], attempt: Int = 0) {
+        guard attempt < 16 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self else { return }
+            guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: entry.appId).first,
+                  let window = AXWindow.windows(ofApp: app.processIdentifier).first(where: { $0.isStandard && !$0.isMinimized }),
+                  let frame = Self.target(for: entry, displays: known) else {
+                self.placeWhenWindowAppears(entry: entry, displays: known, attempt: attempt + 1)
+                return
+            }
+            AXWindow.withoutEnhancedInterface(pid: window.pid) { window.setFrame(frame) }
         }
     }
 

@@ -16,6 +16,22 @@ final class FakeProbe: PermissionProbe {
     }
 }
 
+/// Stand-ins for the Keychain, so no test ever reads or writes the real one.
+final class MemoryVaultKeyStore: VaultKeyStore {
+    var key: Data?
+    private(set) var saves = 0
+    func load() -> Data? { key }
+    func save(_ key: Data) -> Bool { self.key = key; saves += 1; return true }
+    func delete() { key = nil }
+}
+
+final class MemoryPassphraseStore: BackupPassphraseStore {
+    var phrase: String?
+    func load() -> String? { phrase }
+    func save(_ passphrase: String) -> Bool { phrase = passphrase; return true }
+    func delete() { phrase = nil }
+}
+
 /// A feature that only counts how often it was started and stopped.
 final class FakeModule: FeatureModule {
     let feature: FeatureId
@@ -57,7 +73,7 @@ struct TestWorld {
         let profiles = ProfileStore(core: core)
         let library = ActionLibrary(core: core)
         let windows = WindowStore(core: core)
-        let clipboardService = ClipboardService(store: ClipboardStore(core: core))
+        let clipboardService = ClipboardService(store: ClipboardStore(core: core, keyStore: MemoryVaultKeyStore()))
         return ServiceContext(
             config: config, permissions: permissions, events: events, devices: devices, profiles: profiles,
             library: library, executor: ActionExecutor(permissions: permissions),

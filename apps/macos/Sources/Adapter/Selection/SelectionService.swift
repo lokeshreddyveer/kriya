@@ -366,6 +366,17 @@ final class SelectionService: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delay), execute: work)
     }
 
+    /// Shows the bar for text that came from somewhere else, such as a browser extension, next to the pointer.
+    func showText(_ text: String) {
+        guard isRunning, profiles?.isFeatureActive(.selectionBar) ?? true else { return }
+        pointer = DisplayManager.mouseLocation()
+        let (actions, config) = store.current
+        guard selectionLengthOk(config: config, text: text) else { return }
+        let snapshot = SelectionSnapshot(text: text, editable: false, element: nil, bounds: nil, appID: nil, pid: 0)
+        let ids = selectionActionsFor(actions: actions, config: config, appId: nil, editable: false, text: text)
+        present(snapshot, ids: ids)
+    }
+
     func showManually() {
         pointer = DisplayManager.mouseLocation()
         check(manual: true)

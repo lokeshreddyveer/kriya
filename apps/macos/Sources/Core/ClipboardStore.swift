@@ -38,6 +38,7 @@ extension ClipSkipReason {
         case .tooLarge: return "Too large"
         case .typeTurnedOff: return "That type is turned off"
         case .empty: return "Empty"
+        case .vaultLocked: return "History is locked"
         }
     }
 }
@@ -58,9 +59,12 @@ final class ClipboardStore: ObservableObject {
     private let core: KriyaCore
     private let lock = NSLock()
     private var snapshot = defaultClipConfig()   // guarded by lock
+    /// Encryption of the saved history. Created first, so the key is with the core before anything is recorded or read.
+    let vault: ClipboardVault
 
-    init(core: KriyaCore) {
+    init(core: KriyaCore, keyStore: VaultKeyStore = KeychainVaultKeyStore()) {
         self.core = core
+        vault = ClipboardVault(core: core, keyStore: keyStore)
         reload()
     }
 
@@ -171,6 +175,14 @@ final class ClipboardStore: ObservableObject {
         var removed = 0
         perform { removed = Int(try core.clipClear(keepPinned: keepPinned, keepSnippets: keepSnippets)) }
         Log.info("Clipboard", "History cleared (\(removed) items)")
+        return removed
+    }
+
+    /// Removes items labelled sensitive. Pinned items and snippets stay.
+    func purgeSensitive() -> Int {
+        var removed = 0
+        perform { removed = Int(try core.clipPurgeSensitive()) }
+        Log.info("Clipboard", "Sensitive items removed (\(removed))")
         return removed
     }
 

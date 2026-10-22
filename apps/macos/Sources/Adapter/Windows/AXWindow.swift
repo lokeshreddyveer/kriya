@@ -149,6 +149,20 @@ struct AXWindow {
         AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
     }
 
+    @discardableResult
+    func minimize() -> Bool {
+        AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success
+    }
+
+    /// Asks the window to close, the way its close button does, so an app with unsaved work can ask first.
+    @discardableResult
+    func close() -> Bool {
+        var button: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXCloseButtonAttribute as CFString, &button) == .success, let button else { return false }
+        // swiftlint:disable:next force_cast
+        return AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success
+    }
+
     /// Brings the window to the front and gives its app focus.
     func raise() {
         if isMinimized { unminimize() }

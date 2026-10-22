@@ -104,6 +104,12 @@ final class QuickAccessPanel: NSObject, NSWindowDelegate {
     func toggle() { isVisible ? close() : show() }
 
     func show() {
+        ClipboardLock.shared.ensureUnlocked(reason: "Open your clipboard history") { [weak self] ok in
+            if ok { self?.present() }
+        }
+    }
+
+    private func present() {
         model.open()
         let panel = self.panel ?? makePanel()
         self.panel = panel
@@ -156,8 +162,9 @@ struct ClipRow: View {
         HStack(spacing: 10) {
             Image(systemName: item.kind.symbol).frame(width: 20).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title ?? item.preview).lineLimit(2).font(.callout)
+                Text(item.sensitive ? "•••••••• Sensitive" : (item.title ?? item.preview)).lineLimit(2).font(.callout)
                 HStack(spacing: 6) {
+                    if item.sensitive { Image(systemName: "lock.fill") }
                     if let app = item.sourceApp { Text(AppChoice.name(for: app)) }
                     Text(Date(timeIntervalSince1970: TimeInterval(item.lastUsedAt)), style: .relative)
                     ForEach(item.tags.prefix(3), id: \.self) { Text("#\($0)").foregroundStyle(Theme.accent) }
@@ -177,6 +184,8 @@ struct ClipRow: View {
 struct ClipPreview: View {
     let item: ClipItem?
     let blob: ClipBlob?
+    /// A sensitive item stays hidden until the person asks to see it.
+    @State private var revealed: String?
 
     var body: some View {
         Group {
@@ -214,10 +223,19 @@ struct ClipPreview: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
         default:
-            ScrollView {
-                Text(String((blob?.plain ?? item.preview).prefix(6000)))
-                    .font(.system(.callout, design: item.kind == .url ? .default : .default))
-                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            if item.sensitive, revealed != item.id {
+                VStack(spacing: 10) {
+                    Image(systemName: "lock.fill").font(.system(size: 26, weight: .light)).foregroundStyle(.secondary)
+                    Text("This looks like a password, key or card number, so it is hidden.").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("Show It") { withAnimation(.smooth(duration: 0.15)) { revealed = item.id } }.controlSize(.small)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    Text(String((blob?.plain ?? item.preview).prefix(6000)))
+                        .font(.system(.callout, design: item.kind == .url ? .default : .default))
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
     }

@@ -21,7 +21,7 @@ enum SettingsPaneGroup: CaseIterable, Identifiable {
 
 /// Declared in sidebar order, so "next pane" and the Cmd-number shortcuts follow what the person sees.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, clipboard, selection, links, shelf, apps, automation, actions, profiles
+    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, clipboard, selection, capture, links, shelf, apps, launcher, automation, actions, profiles
     case menuBar, power, general, permissions, backup, diagnostics, about
 
     var id: String { rawValue }
@@ -32,6 +32,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .displays: return "Displays & Corners"
         case .shelf: return "File Shelf"
+        case .launcher: return "Launcher"
+        case .capture: return "Screen Capture"
         case .apps: return "Apps"
         case .menuBar: return "Menu Bar Window"
         case .power: return "Sleep & Power"
@@ -63,6 +65,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: return "gearshape"
         case .displays: return "display"
         case .shelf: return "tray"
+        case .launcher: return "magnifyingglass.circle"
+        case .capture: return "camera.viewfinder"
         case .apps: return "square.grid.3x3.square"
         case .menuBar: return "menubar.rectangle"
         case .power: return "bolt.circle"
@@ -93,8 +97,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .features: return .overview
         case .mouse, .pointer, .keyboard, .shortcutMap, .devices: return .input
         case .windows, .workspaces, .buttons: return .windows
-        case .finder, .clipboard, .selection, .links: return .filesAndText
-        case .automation, .actions, .profiles: return .automate
+        case .finder, .clipboard, .selection, .links, .capture: return .filesAndText
+        case .automation, .actions, .profiles, .launcher: return .automate
         case .displays: return .windows
         case .shelf, .apps: return .filesAndText
         case .menuBar, .power, .general, .permissions, .backup, .diagnostics, .about: return .system
@@ -138,6 +142,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .displays: return "resolution refresh rate hidpi scaling dim brightness profile arrangement hot corners corner"
         case .shelf: return "drag drop files temporary tray dropover stage hold"
         case .apps: return "uninstall remove leftovers cleaner orphan update installed applications trash"
+        case .launcher: return "search spotlight raycast alfred palette command apps files windows clipboard calculator timer emoji alias pin recent fuzzy shortcut"
+        case .capture: return "screenshot screen capture ocr text recognition redact blur hide annotate arrow markup region window delay snip"
         case .menuBar: return "popover menu bar icon window quick actions tiles theme colour tint compact search layout customize"
         case .power: return "sleep wake awake caffeinate keep awake prevent display lid battery"
         case .general: return "appearance dark light dock menu bar login startup updates"
@@ -182,6 +188,7 @@ final class SettingsNavigator: ObservableObject {
 struct SettingsRootView: View {
     @EnvironmentObject private var navigator: SettingsNavigator
     @EnvironmentObject private var shelf: FileShelf
+    @EnvironmentObject private var capture: ScreenCaptureService
     @State private var query = ""
     /// How wide the window is, so text and controls can grow when it does (full screen).
     @State private var windowWidth: CGFloat = 900
@@ -259,6 +266,8 @@ struct SettingsRootView: View {
         case .displays: DisplaysPane()
         case .shelf: ShelfPane(shelf: shelf)
         case .apps: AppsPane()
+        case .launcher: LauncherPane()
+        case .capture: CapturePane(store: capture.settings)
         case .features: FeaturesPane()
         case .permissions: PermissionsPane()
         case .mouse: MousePane()

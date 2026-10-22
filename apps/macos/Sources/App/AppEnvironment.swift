@@ -50,6 +50,11 @@ final class AppEnvironment {
     private var pointerMenuCancellable: AnyCancellable?
     let pointerEffects: PointerEffects
     let links: LinkRouter
+    let bridge: BrowserBridge
+    let capture: ScreenCaptureService
+    let timeline = PerformanceTimeline()
+    private let captureEditor = CaptureEditorController()
+    private(set) var launcherSources: LauncherSources?
     let clipboard: ClipboardService
     let approvals: ScriptApprovals
     let selection: SelectionService
@@ -86,6 +91,8 @@ final class AppEnvironment {
         let pointerMenu = PointerMenu(store: pointerMenuStore, library: library, executor: executor)
         let linkStore = LinkRoutingStore(core: core, logFile: paths.support.appendingPathComponent("link-log.json"))
         let links = LinkRouter(store: linkStore)
+        let bridge = BrowserBridge(support: paths.support)
+        let capture = ScreenCaptureService(settings: CaptureSettingsStore())
         let workspaceStore = WorkspaceStore(core: core)
         let pointerStore = PointerEffectsStore(core: core)
         let pointerEffects = PointerEffects(store: pointerStore, displays: windowController.displays, executor: executor)
@@ -176,6 +183,8 @@ final class AppEnvironment {
         self.pointerMenu = pointerMenu
         self.linkStore = linkStore
         self.links = links
+        self.bridge = bridge
+        self.capture = capture
         self.workspaceStore = workspaceStore
         self.workspaces = workspaces
         self.pointerStore = pointerStore
@@ -208,6 +217,8 @@ final class AppEnvironment {
 
         // Workflows can be reached from everywhere that runs commands, text, or files.
         automation.setFeature = { feature, enabled in services.setFeature(feature, enabled: enabled) }
+        bridge.openLink = { [weak links] url in DispatchQueue.main.async { links?.open(url, sourceAppID: nil) } }
+        bridge.showSelection = { [weak selection] text in DispatchQueue.main.async { selection?.showText(text) } }
         selection.runner.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "Selection bar", input: text) }
         finder.runner.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "Finder menu", input: text) }
         pointerMenu.runWorkflow = { [weak automation] id in automation?.fire(id, source: "Pointer menu") }
@@ -223,7 +234,22 @@ final class AppEnvironment {
             let screens = [("window.screen_left", "Move to the display on the left"), ("window.screen_right", "Move to the display on the right"),
                            ("window.screen_up", "Move to the display above"), ("window.screen_down", "Move to the display below")]
                 .map { (command: $0.0, title: $0.1) }
-            return spaces + spots + underPointer + screens
+            let captures = CaptureSettings.commands.map { (command: $0.command, title: $0.title) }
+            return spaces + spots + underPointer + screens + captures
+        }
+        for entry in CaptureSettings.commands {
+            executor.registerCommand(entry.command) { [weak capture] in DispatchQueue.main.async { capture?.capture(entry.mode, action: entry.action) } }
+        }
+        capture.showEditor = { [captureEditor, weak capture] image, done in
+            guard let capture else { done(image); return }
+            captureEditor.show(image, service: capture, completion: done)
+        }
+        capture.start()
+        timeline.start(events: events)
+        keyboard.palette.addProvider { [weak capture] in
+            CaptureSettings.commands.map { entry in
+                PaletteEntry(id: entry.command, title: entry.title, subtitle: "Screen capture", symbol: entry.mode.symbol, category: .command) { capture?.capture(entry.mode, action: entry.action) }
+            }
         }
         workspaces.start()
         displayTools.start()
@@ -280,9 +306,15 @@ final class AppEnvironment {
         }
         keyboard.palette.addProvider { [weak automation] in
             (automation?.store.workflows ?? []).filter(\.enabled).map { workflow in
-                PaletteEntry(id: "workflow:\(workflow.id)", title: "Run: \(workflow.name)", subtitle: "Workflow", symbol: "gearshape.2") { automation?.fire(workflow.id, source: "Command launcher") }
+                PaletteEntry(id: "workflow:\(workflow.id)", title: "Run: \(workflow.name)", subtitle: "Workflow", symbol: "gearshape.2", category: .workflow) { automation?.fire(workflow.id, source: "Command launcher") }
             }
         }
+        // Apps, open windows, files, clipboard history, macOS settings, a calculator, timers and emoji.
+        let sources = LauncherSources(inventory: inventory, clipboard: clipboard, prefs: keyboard.palette.prefs)
+        sources.register(in: keyboard.palette)
+        launcherSources = sources
+        quickCommands.search = { [weak palette = keyboard.palette] text in palette?.search(text) ?? [] }
+        quickCommands.choose = { [weak palette = keyboard.palette] entry in palette?.choose(entry) }
     }
 }
 
@@ -303,6 +335,10 @@ extension View {
             .environmentObject(env.finder.store)
             .environmentObject(env.pointerMenuStore)
             .environmentObject(env.linkStore)
+            .environmentObject(env.bridge)
+            .environmentObject(env.capture)
+            .environmentObject(env.timeline)
+            .environmentObject(env.keyboard.palette.prefs)
             .environmentObject(env.workspaceStore)
             .environmentObject(env.pointerStore)
             .environmentObject(env.dragStore)

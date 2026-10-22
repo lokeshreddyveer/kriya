@@ -448,7 +448,7 @@ private struct LauncherTab: View {
                     )).frame(width: 190, height: 26)
                 }
             } header: { Text("Command launcher") } footer: {
-                Text("A search box over everything Kriya can do: insert a snippet, run an action or workflow, move a window, switch a feature on or off, open any settings pane. Type a few letters, press Return.")
+                Text("One search box for apps, open windows, files, clipboard history, snippets, saved actions, workflows, window layouts, Kriya and macOS settings, a calculator, timers and emoji. Type a few letters, press Return. What it searches, pins and short names are in the Launcher pane.")
             }
             Section("Moving around Settings with the keyboard") {
                 row("⌘1 – ⌘9", "Open the first nine panes")

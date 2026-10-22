@@ -17,6 +17,8 @@ final class BackupManager: ObservableObject {
     @Published private(set) var automaticBackups: [BackupFileInfo] = []
     @Published private(set) var iCloudBackups: [BackupFileInfo] = []
     @Published private(set) var lastICloudBackup: Date?
+    /// Backups are sealed with a passphrase kept in the Keychain.
+    @Published private(set) var isProtected = false
     @Published var iCloudEnabled: Bool {
         didSet {
             UserDefaults.standard.set(iCloudEnabled, forKey: Self.iCloudKey)
@@ -41,14 +43,49 @@ final class BackupManager: ObservableObject {
 
     private let core: KriyaCore
     private let folder: URL
+    private let passphrases: BackupPassphraseStore
     /// Called after a restore so every store re-reads what changed.
     var onRestored: () -> Void = {}
 
-    init(core: KriyaCore, folder: URL) {
+    /// `passphrases` is where the protection passphrase lives. A test passes its own, so the real Keychain is never used.
+    init(core: KriyaCore, folder: URL, passphrases: BackupPassphraseStore = KeychainBackupPassphraseStore()) {
         self.core = core
         self.folder = folder
+        self.passphrases = passphrases
         self.iCloudEnabled = UserDefaults.standard.bool(forKey: Self.iCloudKey)
+        isProtected = passphrases.load() != nil
         refreshList()
+    }
+
+    // MARK: Protection
+
+    /// Seals every backup from now on, and seals the ones already saved here and in iCloud Drive.
+    func protect(with passphrase: String) throws {
+        guard passphrase.count >= BackupCrypto.minimumLength else { throw BackupCryptoError.tooShort }
+        guard passphrases.save(passphrase) else {
+            throw CoreError.Backup(message: "Kriya could not keep the passphrase in your Keychain, so backups were not protected")
+        }
+        isProtected = true
+        sealExistingBackups(passphrase: passphrase)
+        Log.info("Backup", "Backups are now protected with a passphrase")
+    }
+
+    /// Goes back to plain backups from now on. Backups already sealed still need the passphrase to open.
+    func stopProtecting() {
+        passphrases.delete()
+        isProtected = false
+        Log.info("Backup", "Backup protection turned off")
+    }
+
+    private func sealExistingBackups(passphrase: String) {
+        refreshList()
+        refreshICloudList()
+        for file in automaticBackups + iCloudBackups {
+            guard let data = try? Data(contentsOf: file.url), !BackupCrypto.isEncrypted(data), let text = String(data: data, encoding: .utf8),
+                  let sealed = try? BackupCrypto.seal(text, passphrase: passphrase) else { continue }
+            try? sealed.write(to: file.url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.url.path)
+        }
     }
 
     // MARK: iCloud Drive
@@ -100,18 +137,25 @@ final class BackupManager: ObservableObject {
 
     func export(to url: URL) throws {
         let json = try core.exportBackup(appVersion: SystemInfo.appVersion, now: SystemInfo.nowSeconds)
-        try json.write(to: url, atomically: true, encoding: .utf8)
+        let data: Data
+        if let phrase = passphrases.load() {
+            data = try BackupCrypto.seal(json, passphrase: phrase)
+        } else {
+            data = Data(json.utf8)
+        }
+        try data.write(to: url, options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        Log.info("Backup", "Settings backed up to \(url.lastPathComponent)")
+        Log.info("Backup", "Settings backed up to \(url.lastPathComponent)\(isProtected ? " (protected)" : "")")
     }
 
-    func inspect(_ url: URL) throws -> BackupSummary {
-        try core.inspectBackup(json: try read(url))
+    /// `passphrase` is for a backup protected with a passphrase this Mac does not hold. Without it, the stored one is used.
+    func inspect(_ url: URL, passphrase: String? = nil) throws -> BackupSummary {
+        try core.inspectBackup(json: try read(url, passphrase: passphrase))
     }
 
     @discardableResult
-    func restore(from url: URL) throws -> BackupSummary {
-        let json = try read(url)
+    func restore(from url: URL, passphrase: String? = nil) throws -> BackupSummary {
+        let json = try read(url, passphrase: passphrase)
         _ = try core.inspectBackup(json: json)     // refuse a bad file before touching anything
         try writeAutomaticBackup(reason: "before-restore")
         let summary = try core.importBackup(json: json)
@@ -149,8 +193,13 @@ final class BackupManager: ObservableObject {
         }
     }
 
-    private func read(_ url: URL) throws -> String {
+    private func read(_ url: URL, passphrase: String?) throws -> String {
         let data = try Data(contentsOf: url)
+        if BackupCrypto.isEncrypted(data) {
+            guard let phrase = passphrase ?? passphrases.load() else { throw BackupCryptoError.needsPassphrase }
+            // The stored passphrase may be an old one; ask for the right one rather than fail.
+            do { return try BackupCrypto.open(data, passphrase: phrase) } catch BackupCryptoError.wrongPassphrase where passphrase == nil { throw BackupCryptoError.needsPassphrase }
+        }
         guard let text = String(data: data, encoding: .utf8) else {
             throw CoreError.Backup(message: "the file is not a Kriya backup")
         }

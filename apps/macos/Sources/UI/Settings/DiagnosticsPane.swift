@@ -2,7 +2,264 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Finding out why something is not working: how things stand, what Kriya just did, and how the input watching is doing.
 struct DiagnosticsPane: View {
+    @State private var tab: Tab = .overview
+
+    enum Tab: String, CaseIterable, Identifiable {
+        case overview = "Overview", health = "Health", trace = "Trace", timeline = "Timeline"
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
+                .paneTabBar(maxWidth: 360)
+                .paneHeader()
+            Group {
+                switch tab {
+                case .overview: DiagnosticsOverviewTab()
+                case .health: HealthTab()
+                case .trace: TraceTab()
+                case .timeline: TimelineTab()
+                }
+            }
+            .id(tab)
+            .transition(.opacity)
+        }
+        .animation(.smooth(duration: 0.22), value: tab)
+    }
+}
+
+// MARK: - Health
+
+/// Whether Kriya has what it needs, and what could be getting in the way.
+private struct HealthTab: View {
+    @EnvironmentObject private var permissions: PermissionManager
+    @EnvironmentObject private var services: ServiceManager
+    @EnvironmentObject private var config: ConfigStore
+    @EnvironmentObject private var registry: ShortcutRegistry
+    @EnvironmentObject private var navigator: SettingsNavigator
+    @State private var secure = SecureInput.current()
+    @State private var released = false
+
+    private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(Permission.allCases) { permission in
+                    let needed = FeatureId.all.filter { $0.requiredPermissions.contains(permission) }
+                    HStack(spacing: 10) {
+                        Image(systemName: icon(permissions.status(permission))).foregroundStyle(tint(permissions.status(permission)))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(permission.title)
+                            Text(permission == .screenRecording ? "Used by Screen Capture and window previews" : (needed.isEmpty ? "Not needed by a feature" : "Used by " + needed.map(\.title).joined(separator: ", ")))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(label(permissions.status(permission))).font(.callout).foregroundStyle(.secondary)
+                        if permissions.status(permission) == .denied || permissions.status(permission) == .notDetermined {
+                            Button("Allow…") { permissions.request(permission) }.controlSize(.small)
+                        }
+                    }
+                }
+            } header: { Text("Permissions") } footer: {
+                Text("macOS keeps these. A feature that needs one it does not have cannot work, and says so in its own pane.")
+            }
+
+            Section {
+                ForEach(FeatureId.all) { feature in
+                    let missing = feature.requiredPermissions.filter { !permissions.isGranted($0) && permissions.status($0) != .onDemand }
+                    HStack {
+                        Image(systemName: feature.symbol).frame(width: 22).foregroundStyle(.secondary)
+                        Text(feature.title)
+                        Spacer()
+                        if config.isEnabled(feature), !missing.isEmpty {
+                            StateBadge(text: "Needs " + missing.map(\.title).joined(separator: ", "), color: Theme.danger)
+                        } else {
+                            StateBadge(text: config.isEnabled(feature) ? services.state(feature).label : "Off", color: config.isEnabled(feature) && services.state(feature) == .running ? Theme.ok : .secondary)
+                        }
+                    }
+                }
+            } header: { Text("Features") }
+
+            Section {
+                HStack(spacing: 10) {
+                    Image(systemName: secure.enabled ? "lock.fill" : "lock.open").foregroundStyle(secure.enabled ? Theme.warn : Theme.ok)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(secure.enabled ? "Secure input is on" : "Secure input is off")
+                        if secure.enabled {
+                            Text(secure.appName.map { "Held by \($0). " } ?? "Held by an app the system does not name. ").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                }
+                if secure.enabled {
+                    Text("While it is on, key remapping, shortcuts that read the keyboard and text expansion cannot see what you type. It usually turns off when you leave a password field or close the app that asked for it. Terminals can leave it on: look for “Secure Keyboard Entry” in the Terminal menu.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Release Stuck Modifier Keys") {
+                        ModifierReset.run()
+                        released = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { released = false }
+                    }
+                    if released { Label("Sent", systemImage: "checkmark").foregroundStyle(Theme.ok).transition(.opacity) }
+                    Spacer()
+                }
+            } header: { Text("Keyboard") } footer: {
+                Text("If ⌘, ⌥, ⌃ or ⇧ feels stuck, this lets go of all of them at once.")
+            }
+
+            Section {
+                LabeledContent("Shortcuts that clash", value: "\(registry.conflicts.count)")
+                Button("Open the Shortcut Map") { navigator.pane = .shortcutMap }.controlSize(.small)
+            } header: { Text("Conflicts") }
+        }
+        .formStyle(.grouped)
+        .animation(.smooth(duration: 0.2), value: secure)
+        .animation(.smooth(duration: 0.2), value: released)
+        .onReceive(ticker) { _ in secure = SecureInput.current() }
+    }
+
+    private func icon(_ status: PermissionStatus) -> String {
+        switch status {
+        case .granted: return "checkmark.circle.fill"
+        case .denied: return "xmark.circle.fill"
+        case .notDetermined: return "questionmark.circle"
+        case .onDemand: return "circle.dashed"
+        }
+    }
+
+    private func tint(_ status: PermissionStatus) -> Color {
+        switch status {
+        case .granted: return Theme.ok
+        case .denied: return Theme.danger
+        case .notDetermined: return Theme.warn
+        case .onDemand: return .secondary
+        }
+    }
+
+    private func label(_ status: PermissionStatus) -> String {
+        switch status {
+        case .granted: return "Allowed"
+        case .denied: return "Not allowed"
+        case .notDetermined: return "Not asked yet"
+        case .onDemand: return "Asked when needed"
+        }
+    }
+}
+
+// MARK: - Trace
+
+private struct TraceTab: View {
+    @ObservedObject private var trace = InteractionTrace.shared
+    @State private var now = Date()
+
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Form {
+            Section {
+                HStack {
+                    if trace.isOn {
+                        Button("Stop Tracing") { trace.stop() }
+                        if let end = trace.offAt { Text("Stops itself in \(max(0, Int(end.timeIntervalSince(now))))s").font(.callout).foregroundStyle(.secondary) }
+                    } else {
+                        Button("Start Tracing for 5 Minutes") { trace.start() }
+                    }
+                    Spacer()
+                    Button("Clear") { trace.clear() }.disabled(trace.entries.isEmpty)
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(SupportScrubber.scrub(trace.text()), forType: .string)
+                    }.disabled(trace.entries.isEmpty)
+                }
+            } header: { Text("What Kriya just did") } footer: {
+                Text("Trace shows which shortcut or command Kriya acted on, as it happens, so you can see why something did or did not run. It records only the name of the shortcut or command, never what you typed, selected or copied. It is off until you start it, and stops itself after five minutes.")
+            }
+
+            Section {
+                if trace.entries.isEmpty {
+                    Text(trace.isOn ? "Waiting. Press a shortcut or use a command." : "Nothing traced.").font(.callout).foregroundStyle(.secondary)
+                }
+                ForEach(trace.entries.reversed()) { entry in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(entry.time, format: .dateTime.hour().minute().second()).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(entry.source).font(.caption).padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Color.primary.opacity(0.07), in: Capsule())
+                        Text(entry.text).font(.callout)
+                        Spacer(minLength: 0)
+                    }
+                }
+            } header: { Text("Newest first") }
+        }
+        .formStyle(.grouped)
+        .animation(.smooth(duration: 0.2), value: trace.isOn)
+        .onReceive(ticker) { now = $0 }
+    }
+}
+
+// MARK: - Timeline
+
+private struct TimelineTab: View {
+    @EnvironmentObject private var timeline: PerformanceTimeline
+    @EnvironmentObject private var events: EventMonitor
+
+    var body: some View {
+        Form {
+            Section {
+                if timeline.samples.count < 2 {
+                    Text("Collecting. A point is added every \(Int(PerformanceTimeline.interval)) seconds.").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    chart("How long handling an event takes (95th percentile)", values: timeline.samples.map { Double($0.p95Microseconds) }, unit: "µs", color: Theme.accent)
+                    chart("Events handled in each interval", values: timeline.samples.map { Double($0.events) }, unit: "events", color: Theme.ok)
+                    let slow = timeline.samples.reduce(0) { $0 + $1.slowHandlers }
+                    let recoveries = timeline.samples.reduce(0) { $0 + $1.recoveries }
+                    LabeledContent("Slow handlers in this time", value: "\(slow)")
+                    LabeledContent("Times the system switched the tap off", value: "\(recoveries)")
+                }
+            } header: { Text("The last \(Int(Double(PerformanceTimeline.capacity) * PerformanceTimeline.interval / 60)) minutes") } footer: {
+                Text("A steady low line is healthy. A spike means a handler was slow at that moment. The numbers stay flat while no feature that watches input is running.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func chart(_ title: String, values: [Double], unit: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title).font(.callout)
+                Spacer()
+                Text("latest \(Int(values.last ?? 0)) \(unit), highest \(Int(values.max() ?? 0))").font(.caption).foregroundStyle(.secondary)
+            }
+            Sparkline(values: values).stroke(color, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round)).frame(height: 48)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+    }
+}
+
+/// A line through a list of numbers, scaled to fit.
+struct Sparkline: Shape {
+    let values: [Double]
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard values.count > 1 else { return path }
+        let top = max(values.max() ?? 1, 1)
+        for (index, value) in values.enumerated() {
+            let point = CGPoint(x: rect.minX + rect.width * CGFloat(index) / CGFloat(values.count - 1), y: rect.maxY - rect.height * CGFloat(value / top))
+            if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        }
+        return path
+    }
+}
+
+// MARK: - Overview
+
+private struct DiagnosticsOverviewTab: View {
+    @EnvironmentObject private var permissions: PermissionManager
     @EnvironmentObject private var config: ConfigStore
     @EnvironmentObject private var crashGuard: CrashGuard
     @EnvironmentObject private var events: EventMonitor
@@ -127,7 +384,7 @@ struct DiagnosticsPane: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "Kriya diagnostic report.txt"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let report = DiagnosticReport.make(config: config, devices: devices, services: services, events: events)
+        let report = DiagnosticReport.make(config: config, devices: devices, services: services, events: events, permissions: permissions)
         do {
             try report.write(to: url, atomically: true, encoding: .utf8)
             message = "Saved \(url.lastPathComponent)."
@@ -137,9 +394,9 @@ struct DiagnosticsPane: View {
     }
 }
 
-/// The text of a diagnostic report: versions, what is on, and the log. No file names, typed text or account details.
+/// The text of a diagnostic report: versions, what is on, and the log. Names, file paths, addresses and keys are removed.
 enum DiagnosticReport {
-    static func make(config: ConfigStore, devices: DeviceRegistry, services: ServiceManager, events: EventMonitor) -> String {
+    static func make(config: ConfigStore, devices: DeviceRegistry, services: ServiceManager, events: EventMonitor, permissions: PermissionManager? = nil) -> String {
         var out: [String] = []
         out.append("Kriya diagnostic report")
         out.append("Created: \(Date().formatted(date: .complete, time: .standard))")
@@ -151,6 +408,13 @@ enum DiagnosticReport {
         for feature in FeatureId.all {
             out.append("  \(feature.title): \(config.isEnabled(feature) ? "on" : "off"), \(services.state(feature).label)")
         }
+        if let permissions {
+            out.append("")
+            out.append("Permissions:")
+            for permission in Permission.allCases { out.append("  \(permission.title): \(permissions.status(permission))") }
+        }
+        let secure = SecureInput.current()
+        out.append("Secure input: \(secure.enabled ? "on" + (secure.appName.map { " (\($0))" } ?? "") : "off")")
         out.append("")
         out.append("Devices:")
         for device in devices.devices {
@@ -167,7 +431,8 @@ enum DiagnosticReport {
                 out.append(String(text.suffix(200_000)))
             }
         }
-        return out.joined(separator: "\n")
+        // A report is made to be shared, so what identifies the person is taken out of all of it.
+        return SupportScrubber.scrub(out.joined(separator: "\n"))
     }
 }
 
