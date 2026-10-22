@@ -87,6 +87,16 @@ final class HomebrewTests: XCTestCase {
         XCTAssertEqual(lines[3].prefix(3), "end")
     }
 
+    func testACheckWhereEverySourceFailedIsNotRecordedAsDone() {
+        XCTAssertTrue(AppInventory.shouldRecordCheck(attempts: 0, failures: 0), "nothing to ask: done")
+        XCTAssertTrue(AppInventory.shouldRecordCheck(attempts: 5, failures: 0))
+        XCTAssertTrue(AppInventory.shouldRecordCheck(attempts: 5, failures: 4), "some answered")
+        XCTAssertFalse(AppInventory.shouldRecordCheck(attempts: 5, failures: 5), "none answered")
+        XCTAssertFalse(AppInventory.shouldRecordCheck(attempts: 1, failures: 1))
+        XCTAssertTrue(AppInventory.failureNote(attempts: 3, failures: 3).contains("any update source"))
+        XCTAssertEqual(AppInventory.failureNote(attempts: 5, failures: 2), "Could not reach 2 of 5 update sources.")
+    }
+
     func testAnAppListSurvivesSavingAndReading() throws {
         let data = try HomebrewParsing.encodeList(casks: ["zoom", "firefox", "bad name", "firefox"], apps: [("Zoom", "us.zoom.xos")])
         XCTAssertEqual(try HomebrewParsing.decodeList(data), ["firefox", "zoom"], "sorted, tidy, and invalid names left out")

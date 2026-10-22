@@ -306,52 +306,88 @@ final class AppInventory: ObservableObject {
         let apps = self.apps
         Task {
             var found: [AppUpdate] = []
-            await withTaskGroup(of: AppUpdate?.self) { group in
+            var attempts = 0
+            var failures = 0
+            await withTaskGroup(of: CheckResult.self) { group in
                 for app in apps {
                     if case .sparkle(let feed) = app.source {
                         group.addTask { await Self.sparkleUpdate(for: app, feed: feed) }
                     }
                 }
-                for await update in group { if let update { found.append(update) } }
+                for await result in group {
+                    switch result {
+                    case .update(let update): attempts += 1; found.append(update)
+                    case .upToDate: attempts += 1
+                    case .failed: attempts += 1; failures += 1
+                    case .skipped: break
+                    }
+                }
             }
             let brew = await Self.brewOutdated()
-            found.append(contentsOf: brew)
+            if brew.attempted { attempts += 1 }
+            if brew.failed { failures += 1 }
+            found.append(contentsOf: brew.updates)
+            var notes: [String] = []
             let storeApps = apps.filter { $0.source == .appStore }.count
-            let note = storeApps > 0 ? "\(storeApps) App Store app\(storeApps == 1 ? "" : "s"): updates come from the App Store." : nil
+            if storeApps > 0 { notes.append("\(storeApps) App Store app\(storeApps == 1 ? "" : "s"): updates come from the App Store.") }
+            if failures > 0 { notes.append(Self.failureNote(attempts: attempts, failures: failures)) }
             let sorted = found.sorted { $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending }
+            let record = Self.shouldRecordCheck(attempts: attempts, failures: failures)
             await MainActor.run {
                 self.updates = sorted
-                self.updateNote = note
+                self.updateNote = notes.isEmpty ? nil : notes.joined(separator: " ")
                 self.isCheckingUpdates = false
-                self.lastUpdateCheck = Date()
+                // A check where every source failed is not shown as done: the time shown is the last one that worked.
+                if record { self.lastUpdateCheck = Date() }
                 self.upgradeAutomatically(sorted)
             }
         }
     }
 
-    private static func sparkleUpdate(for app: InstalledApp, feed: URL) async -> AppUpdate? {
-        guard feed.scheme == "https" || feed.scheme == "http" else { return nil }
-        var request = URLRequest(url: feed)
-        request.timeoutInterval = 12
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
-        let parser = AppcastReader(data: data)
-        guard let latest = parser.latest, !latest.isEmpty else { return nil }
-        let installed = app.version.isEmpty ? app.build : app.version
-        guard latest.compare(installed, options: .numeric) == .orderedDescending else { return nil }
-        return AppUpdate(appName: app.name, installed: installed, latest: latest, action: parser.link.map { .open($0) } ?? .open(feed))
+    enum CheckResult {
+        case update(AppUpdate)
+        case upToDate
+        case failed
+        /// Not something that can be checked (no usable address), so it counts neither way.
+        case skipped
     }
 
-    private static func brewOutdated() async -> [AppUpdate] {
-        guard let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return [] }
+    /// Whether a round of checks counts as done: at least one source answered, or there was nothing to ask.
+    static func shouldRecordCheck(attempts: Int, failures: Int) -> Bool {
+        attempts == 0 || failures < attempts
+    }
+
+    static func failureNote(attempts: Int, failures: Int) -> String {
+        failures >= attempts ? "Could not reach any update source, so nothing could be checked." : "Could not reach \(failures) of \(attempts) update sources."
+    }
+
+    private static func sparkleUpdate(for app: InstalledApp, feed: URL) async -> CheckResult {
+        guard feed.scheme == "https" || feed.scheme == "http" else { return .skipped }
+        var request = URLRequest(url: feed)
+        request.timeoutInterval = 12
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else { return .failed }
+        let parser = AppcastReader(data: data)
+        guard let latest = parser.latest, !latest.isEmpty else { return .failed }
+        let installed = app.version.isEmpty ? app.build : app.version
+        guard latest.compare(installed, options: .numeric) == .orderedDescending else { return .upToDate }
+        return .update(AppUpdate(appName: app.name, installed: installed, latest: latest, action: parser.link.map { .open($0) } ?? .open(feed)))
+    }
+
+    /// What `brew outdated` says. `attempted` is false when Homebrew is not installed, and `failed` when it was asked and
+    /// could not answer.
+    private static func brewOutdated() async -> (updates: [AppUpdate], attempted: Bool, failed: Bool) {
+        guard let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return ([], false, false) }
         guard let output = try? ToolRunner.run(brew, ["outdated", "--cask", "--json=v2"], timeout: 60),
               let data = output.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let casks = json["casks"] as? [[String: Any]] else { return [] }
-        return casks.compactMap { cask in
+              let casks = json["casks"] as? [[String: Any]] else { return ([], true, true) }
+        let list: [AppUpdate] = casks.compactMap { cask in
             guard let token = cask["name"] as? String else { return nil }
             let installed = (cask["installed_versions"] as? [String])?.first ?? (cask["installed_versions"] as? String) ?? ""
             return AppUpdate(appName: token, installed: installed, latest: (cask["current_version"] as? String) ?? "", action: .brew(token))
         }
+        return (list, true, false)
     }
 
     /// Upgrades the Homebrew apps that have an update, one at a time, unless the person ignores them or turned this off.

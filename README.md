@@ -5,6 +5,15 @@ Mouse, trackpad, window and right-click control for the Mac. A menu-bar app, sig
 
 **Status:** the app builds, is signed with a Developer ID and notarized by `scripts/release.sh`, which also runs the Rust tests. The Swift tests run with `xcodebuild test` (quit the installed Kriya first, because the test host shares its bundle identifier). The version of each release is in `apps/macos/project.yml`, `appcast.xml` and the GitHub release; test counts are not kept here, so they cannot go stale. Most features have **not yet been checked by hand in everyday use**: see "Not verified" below.
 
+## What Kriya does by itself
+
+Kriya has no check or scan buttons. These happen without you asking, and each can be turned off:
+
+- **Kriya's own updates:** it looks for a signed update when it starts and about every hour, and installs it. Turn off in Settings › General › Updates ("Look for updates automatically" and "Install them automatically").
+- **Homebrew apps:** when the Apps pane's check finds an outdated Homebrew app, Kriya upgrades it, one app at a time, and lists what it did under Apps › Updates. Turn off with "Upgrade Homebrew apps automatically" in Apps › Updates. Apps that update themselves are only listed.
+- **The apps list, leftovers and update check:** the list follows your Applications folders, leftovers are looked for again when it changes, and updates are checked every hour. These only read; nothing is removed or installed by them except the two above.
+- **Nothing else changes your files or apps by itself.** Removing an app or its leftovers, installing from the Install tab and every Finder action wait for you.
+
 Build and test: `scripts/build-core.sh` (Rust tests, bindings, universal library), `scripts/swift-build.sh` (debug build), `scripts/release.sh <version> <build>` (signed, notarized DMG).
 
 ## Layout

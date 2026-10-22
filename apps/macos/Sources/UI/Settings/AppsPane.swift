@@ -167,7 +167,9 @@ struct AppsPane: View {
                         Text("Checking…").foregroundStyle(.secondary)
                         ProgressView().controlSize(.small)
                     } else if let last = inventory.lastUpdateCheck {
-                        Text("Checked \(RelativeDateTimeFormatter().localizedString(for: last, relativeTo: Date())).").foregroundStyle(.secondary)
+                        Text("Last checked \(RelativeDateTimeFormatter().localizedString(for: last, relativeTo: Date())).").foregroundStyle(.secondary)
+                    } else {
+                        Text("Not checked yet.").foregroundStyle(.secondary)
                     }
                     Spacer()
                 }
