@@ -455,12 +455,25 @@ private struct ButtonsEditor: View {
                     Button { addRule() } label: { Label("Add Rule", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: {
-                Text("A rule replaces the button's normal click with an action: a keyboard shortcut, an app, a window action, a script or a Shortcut. The left and right buttons cannot be changed.")
+                Text("A rule replaces the button's normal click with an action: a keyboard shortcut, an app, a window action, a script or a Shortcut. The left and right buttons cannot be changed. “When held” runs the rule only if the button is kept down for a moment: let go sooner and the click goes through as usual. A button can have a click rule and a hold rule.")
+            }
+
+            if rules.wrappedValue.contains(where: { $0.trigger == .hold }) {
+                Section {
+                    SliderRow(
+                        title: "Hold time", value: Binding(get: { Double(holdMs.wrappedValue) }, set: { holdMs.wrappedValue = UInt32($0) }),
+                        range: 150...1500, format: { "\(Int($0)) ms" }, help: "How long a button is held before its hold rule runs."
+                    )
+                } header: { Text("Holding") } footer: {
+                    Text("A button with a hold rule is held back for this long to tell a hold from a click, so a plain click of that button reaches the app a moment later. The button that starts gestures cannot also have a hold rule.")
+                }
             }
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: rules.wrappedValue.count)
     }
+
+    private var holdMs: Binding<UInt32> { mouse.binding(presetID, \.holdMs) }
 
     private func row(_ index: Int) -> some View {
         let rule = rules.wrappedValue[index]
@@ -469,6 +482,11 @@ private struct ButtonsEditor: View {
                 ForEach(MouseButtons.remappable, id: \.self) { Text(MouseButtons.name($0)).tag($0) }
             }
             .labelsHidden().frame(width: 150)
+            Picker("When", selection: Binding(get: { rule.trigger }, set: { new in edit(index) { $0.trigger = new } })) {
+                Text("Clicked").tag(ButtonTrigger.click)
+                Text("Held").tag(ButtonTrigger.hold)
+            }
+            .labelsHidden().frame(width: 100)
             Picker("With", selection: Binding(get: { rule.modifiers }, set: { new in edit(index) { $0.modifiers = new } })) {
                 ForEach(KeyModifiers.choices, id: \.bits) { Text($0.title).tag($0.bits) }
             }
@@ -498,13 +516,13 @@ private struct ButtonsEditor: View {
     }
 
     private func addRule() {
-        let used = Set(rules.wrappedValue.map { ButtonKey(button: $0.button, modifiers: $0.modifiers) })
+        let used = Set(rules.wrappedValue.filter { $0.trigger == .click }.map { ButtonKey(button: $0.button, modifiers: $0.modifiers) })
         guard let button = MouseButtons.remappable.first(where: { !used.contains(ButtonKey(button: $0, modifiers: 0)) }) else { return }
         guard let action = mouse.firstActionID else {
             mouse.lastError = "Create a saved action first, under Actions."
             return
         }
-        withAnimation(.smooth) { rules.wrappedValue.append(ButtonRule(button: button, modifiers: 0, actionId: action)) }
+        withAnimation(.smooth) { rules.wrappedValue.append(ButtonRule(button: button, modifiers: 0, actionId: action, trigger: .click)) }
     }
 }
 

@@ -40,6 +40,27 @@ struct DragToolsTab: View {
             }
 
             Section {
+                Toggle("Auto-scroll", isOn: Binding(get: { config.autoScrollEnabled }, set: { v in store.update { $0.autoScrollEnabled = v } }))
+                if config.autoScrollEnabled {
+                    Picker("Click this button", selection: Binding(get: { config.autoScrollButton }, set: { v in store.update { $0.autoScrollButton = v } })) {
+                        ForEach(Self.buttons, id: \.number) { Text($0.title).tag($0.number) }
+                    }
+                    Picker("Also hold", selection: Binding(get: { config.autoScrollModifier }, set: { v in store.update { $0.autoScrollModifier = v } })) {
+                        ForEach(KeyModifiers.choices, id: \.bits) { Text($0.bits == 0 ? "No key" : $0.title).tag($0.bits) }
+                    }
+                    SliderRow(title: "Speed", value: Binding(get: { config.autoScrollSpeed }, set: { v in store.update { $0.autoScrollSpeed = v } }),
+                              range: 0.2...5, format: { String(format: "%.1f×", $0) }, help: "How fast the page moves for a given distance from where you clicked.")
+                    if config.scrollEnabled, config.scrollButton == config.autoScrollButton, config.scrollModifier == config.autoScrollModifier {
+                        Label("Drag to scroll uses this button and these keys too, so it wins and auto-scroll will not start. Pick another button or add a key.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout).foregroundStyle(Theme.warn)
+                    }
+                    if !permissions.isGranted(.inputMonitoring) { inputMonitoringNote }
+                }
+            } header: { Text("Auto-scroll") } footer: {
+                Text("Click the button and the page scrolls by itself: move the pointer down to read on, up to go back, sideways for sideways, and further away to go faster. A small mark shows where you clicked. Click again, press Escape or turn the wheel to stop. The click that starts or stops it is not given to the app. The left and right buttons need a key held.")
+            }
+
+            Section {
                 Picker("Hold to move a window", selection: Binding(get: { config.followModifier }, set: { v in store.update { $0.followModifier = v } })) {
                     ForEach(KeyModifiers.choices, id: \.bits) { Text($0.bits == 0 ? "Off" : $0.title).tag($0.bits) }
                 }

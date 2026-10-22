@@ -162,7 +162,7 @@ final class WindowStore: ObservableObject {
             return "Size: \(size.name)"
         }
         if command.hasPrefix("window.layout."), let layout = layouts.first(where: { "window.layout.\($0.id.lowercased())" == command }) {
-            return "Layout: \(layout.name)"
+            return layout.isGroup ? "Group: \(layout.name)" : "Layout: \(layout.name)"
         }
         return command
     }

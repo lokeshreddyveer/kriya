@@ -281,7 +281,7 @@ struct LayoutDesignerView: View {
         onSave(SavedLayout(
             id: existing?.id ?? UUID().uuidString, name: name.trimmingCharacters(in: .whitespaces),
             displayKey: existing?.displayKey ?? displayKey, isAuto: false, createdAt: SystemInfo.nowSeconds,
-            entries: entries, unplaced: unplaced, launchMissing: launchMissing
+            entries: entries, unplaced: unplaced, launchMissing: launchMissing, isGroup: existing?.isGroup ?? false
         ))
     }
 

@@ -165,7 +165,7 @@ private struct WorkspaceEditor: View {
                     Toggle("Hide every other app", isOn: $workspace.hideOthers)
                     Picker("Arrange windows", selection: Binding(get: { workspace.layoutId ?? "" }, set: { workspace.layoutId = $0.isEmpty ? nil : $0 })) {
                         Text("Leave them where they are").tag("")
-                        ForEach(windows.layouts.filter { !$0.isAuto }) { Text($0.name).tag($0.id) }
+                        ForEach(windows.layouts.filter { !$0.isAuto && !$0.isGroup }) { Text($0.name).tag($0.id) }
                     }
                 } footer: {
                     Text("Layouts are saved under Windows › Layouts. The windows are arranged a moment after the apps have opened.")

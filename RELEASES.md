@@ -7,6 +7,7 @@ on the machine that built it; it is too large for this repository.
 
 | Version | Build | DMG SHA-256 | Swift tests | Notes |
 |---|---|---|---|---|
+| 0.2.11 | 18 | `6592a76189b4cfb666d61412469d240e2f0ec66487b828aaa4e7c6462f153053` | 328 passed, 0 failed | Hold rules for mouse buttons, auto-scroll, device battery/last-used status and device names in Trace and the tester; Finder file-operation history with undo and recent/favorite Move/Copy folders; Pointer Spotlight and a four-group Pointer pane; layout restore report with replacement windows and window groups. Rust: 406 passed |
 | 0.2.10 | 17 | `ba76dbd1d06f95773d1474ba4c6f3ce223d5bf3422cc39e068bd2a870fb14209` | 258 passed, 0 failed | Movable quick paste window with a right-click menu; Apple Intelligence reads the whole selection and says when a text is too short. Rust: 396 passed |
 | 0.2.9 | 16 | `4ab5c50a1ad090f8827a954f12cbba6d9359e20e38c8d58550e55c2e620afd94` | 246 passed, 0 failed | Apple Intelligence (on-device only): selection bar actions, launcher ask and clipboard actions, settings pane. Rust: 396 passed |
 | 0.2.8 | 15 | `d4f20bf5f51f61129bccf5984859ba6e9eead86255e6874eca189d758770ee6c` | 229 passed, 0 failed | Encrypted clipboard and protected backups, unified launcher, interaction map, layout editor, screen capture with text recognition and redaction, browser extensions, diagnostics. Rust: 389 passed |

@@ -41,7 +41,7 @@ struct FinderPane: View {
 
             Group {
                 switch tab {
-                case .actions: ActionsTab()
+                case .actions: ActionsTab(history: finder.runner.history, runner: finder.runner)
                 case .templates: TemplatesTab()
                 case .apps: AppsSettingsTab()
                 case .pointer: PointerMenuTab()
@@ -70,10 +70,16 @@ struct FinderPane: View {
 
 private struct ActionsTab: View {
     @EnvironmentObject private var store: FinderStore
+    @ObservedObject var history: FileOperationHistory
+    let runner: FileActionRunner
     @State private var editing: FinderItem?
 
     var body: some View {
         List {
+            // With something to undo, the history comes first, where it is seen; empty, it waits below the actions.
+            if !history.operations.isEmpty {
+                RecentOperationsSection(history: history, runner: runner)
+            }
             Section {
                 ForEach(store.items) { item in
                     HStack(spacing: 12) {
@@ -102,9 +108,97 @@ private struct ActionsTab: View {
             } footer: {
                 Text("Drag to reorder. The menu in Finder follows this order. Actions that change files ask first; nothing is ever overwritten.")
             }
+            if history.operations.isEmpty {
+                RecentOperationsSection(history: history, runner: runner)
+            }
         }
         .animation(.smooth(duration: 0.25), value: store.items)
         .sheet(item: $editing) { ItemEditor(item: $0) }
+    }
+}
+
+/// What the file actions did lately, each with Undo, a way to see the items and the reason for anything that failed.
+private struct RecentOperationsSection: View {
+    @ObservedObject var history: FileOperationHistory
+    let runner: FileActionRunner
+    @State private var open: UUID?
+
+    var body: some View {
+        Section {
+            if history.operations.isEmpty {
+                Text("Nothing yet. Moves, copies, renames, archives and new files you make from the menu show up here.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(history.operations) { operation in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Image(systemName: symbol(operation)).frame(width: 22).foregroundStyle(tint(operation))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(operation.title).font(.headline).lineLimit(2)
+                            Text(subtitle(operation)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        if operation.canUndo { Button("Undo") { runner.undo(operation.id) }.controlSize(.small) }
+                        if !operation.affectedPaths.isEmpty && operation.undoState != .undone {
+                            Button("Show") { runner.reveal(operation.id) }.controlSize(.small)
+                        }
+                        if !operation.failures.isEmpty || operation.undoNote != nil {
+                            Button { toggle(operation.id) } label: {
+                                Image(systemName: "chevron.right").rotationEffect(.degrees(open == operation.id ? 90 : 0))
+                            }.buttonStyle(.borderless).help("Details")
+                        }
+                        Button { withAnimation(.smooth) { history.remove(operation.id) } } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.borderless).foregroundStyle(.tertiary).help("Remove from this list")
+                    }
+                    if open == operation.id {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(Array(operation.failures.enumerated()), id: \.offset) { _, line in
+                                Label(line, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Theme.warn)
+                            }
+                            if let note = operation.undoNote {
+                                Text(note).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .textSelection(.enabled)
+                        .padding(.leading, 32).transition(.opacity)
+                    }
+                }
+                .padding(.vertical, 3)
+            }
+        } header: {
+            HStack {
+                Text("Recent file operations")
+                Spacer()
+                if !history.operations.isEmpty { Button("Clear") { withAnimation(.smooth) { history.clear() } }.controlSize(.small) }
+            }
+        } footer: {
+            Text("Undo puts moved and renamed items back where they were, and moves things an action made to the Trash. It never overwrites: an item goes back only if its old place is free. Kept for two weeks.")
+        }
+        .animation(.smooth(duration: 0.22), value: history.operations)
+        .animation(.smooth(duration: 0.22), value: open)
+    }
+
+    private func toggle(_ id: UUID) { open = open == id ? nil : id }
+
+    private func symbol(_ operation: FileOperation) -> String {
+        if operation.undoState == .undone { return "arrow.uturn.backward.circle" }
+        return operation.failures.isEmpty ? "checkmark.circle" : "exclamationmark.triangle"
+    }
+
+    private func tint(_ operation: FileOperation) -> Color {
+        if operation.undoState == .undone { return .secondary }
+        return operation.failures.isEmpty ? Theme.accent : Theme.warn
+    }
+
+    private func subtitle(_ operation: FileOperation) -> String {
+        var parts = [operation.date.formatted(.relative(presentation: .named))]
+        switch operation.undoState {
+        case .undone: parts.append("undone")
+        case .partly: parts.append("partly undone")
+        case .available: break
+        }
+        if !operation.failures.isEmpty { parts.append("\(operation.failures.count) failed") }
+        return parts.joined(separator: " · ")
     }
 }
 

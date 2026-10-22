@@ -13,6 +13,9 @@ struct CompiledMouse {
     var verticalIsNeutral: Bool
     var horizontalIsNeutral: Bool
     var buttonActions: [ButtonKey: Action]
+    /// Rules that run when the button is held, not when it is clicked.
+    var holdActions: [ButtonKey: Action]
+    var holdMs: UInt64
     var gestureActions: [GestureDirection: Action]
     var rockerRightThenLeft: Action?
     var rockerLeftThenRight: Action?
@@ -24,10 +27,15 @@ struct CompiledMouse {
         horizontalIsNeutral = settings.horizontal == neutral
 
         var buttons: [ButtonKey: Action] = [:]
+        var holds: [ButtonKey: Action] = [:]
         for rule in settings.buttons {
-            if let action = actions[rule.actionId] { buttons[ButtonKey(button: rule.button, modifiers: rule.modifiers)] = action }
+            guard let action = actions[rule.actionId] else { continue }
+            let key = ButtonKey(button: rule.button, modifiers: rule.modifiers)
+            if rule.trigger == .hold { holds[key] = action } else { buttons[key] = action }
         }
         buttonActions = buttons
+        holdActions = holds
+        holdMs = UInt64(settings.holdMs)
 
         let gestures = settings.gestures
         var byDirection: [GestureDirection: Action] = [:]

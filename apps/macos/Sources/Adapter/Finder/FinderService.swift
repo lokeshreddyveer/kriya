@@ -20,9 +20,9 @@ final class FinderService: ObservableObject {
     private var hotkeys: HotkeyCenter?
     private var cancellables = Set<AnyCancellable>()
 
-    init(store: FinderStore) {
+    init(store: FinderStore, history: FileOperationHistory = FileOperationHistory(), destinations: FolderDestinations = FolderDestinations()) {
         self.store = store
-        runner = FileActionRunner(store: store)
+        runner = FileActionRunner(store: store, history: history, destinations: destinations)
         launcher = FileLauncher(store: store, runner: runner)
         services = FinderServicesProvider()
         services.owner = self

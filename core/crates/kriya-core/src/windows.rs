@@ -859,6 +859,10 @@ pub struct SavedLayout {
     /// Open the apps in the layout that are not running, and place their windows when they appear.
     #[serde(default)]
     pub launch_missing: bool,
+    /// A group of related windows, chosen by hand, that is restored, brought forward and moved as one. A layout saved
+    /// before groups existed is not one.
+    #[serde(default)]
+    pub is_group: bool,
 }
 
 impl SavedLayout {

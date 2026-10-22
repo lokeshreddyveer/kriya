@@ -123,6 +123,7 @@ impl Store {
             entries: entries.into_iter().take(MAX_LAYOUT_ENTRIES).collect(),
             unplaced: UnplacedPolicy::Leave,
             launch_missing: false,
+            is_group: false,
         };
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;
@@ -524,6 +525,7 @@ mod tests {
             entries: vec![entry("a")],
             unplaced: UnplacedPolicy::Leave,
             launch_missing: false,
+            is_group: false,
         }
     }
 
@@ -720,6 +722,30 @@ mod tests {
         let read: SavedLayout = serde_json::from_str(old).unwrap();
         assert_eq!(read.unplaced, UnplacedPolicy::Leave);
         assert!(!read.launch_missing);
+    }
+
+    #[test]
+    fn a_group_is_kept_apart_from_layouts_and_an_old_layout_is_not_one() {
+        let store = open();
+        store
+            .save_layout(&SavedLayout {
+                is_group: true,
+                launch_missing: true,
+                ..layout("G", "Development")
+            })
+            .unwrap();
+        store.save_layout(&layout("L", "Plain")).unwrap();
+        let saved = store.saved_layouts(false).unwrap();
+        assert_eq!(saved.iter().filter(|l| l.is_group).count(), 1);
+        assert!(saved.iter().find(|l| l.id == "G").unwrap().is_group);
+        assert!(!saved.iter().find(|l| l.id == "L").unwrap().is_group);
+        let old = r#"{"id":"O","name":"Old","display_key":"d","is_auto":false,"created_at":1,"entries":[]}"#;
+        assert!(!serde_json::from_str::<SavedLayout>(old).unwrap().is_group);
+        // A group has a shortcut command like a layout does.
+        assert_eq!(
+            saved.iter().find(|l| l.id == "G").unwrap().command(),
+            "window.layout.g"
+        );
     }
 
     #[test]

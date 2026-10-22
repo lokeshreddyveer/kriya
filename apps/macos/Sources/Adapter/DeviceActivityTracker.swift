@@ -9,6 +9,7 @@ final class DeviceActivityTracker {
     private let lock = NSLock()
     private var lastID: String?          // guarded by lock
     private var lastTimeNs: UInt64 = 0   // guarded by lock
+    private var lastUsedDates: [String: Date] = [:]   // guarded by lock
 
     private var thread: Thread?
     private var runLoop: CFRunLoop?
@@ -71,11 +72,19 @@ final class DeviceActivityTracker {
         return DispatchTime.now().uptimeNanoseconds &- lastTimeNs <= Self.maxAgeNs ? lastID : nil
     }
 
+    /// When a device last moved, scrolled or clicked (since Kriya started). Safe to call from any thread.
+    func lastUsed(_ id: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastUsedDates[id]
+    }
+
     /// Lets tests say which device is active without any hardware.
     func simulateActivity(deviceID: String?) {
         lock.lock()
         lastID = deviceID
         lastTimeNs = DispatchTime.now().uptimeNanoseconds
+        if let deviceID { lastUsedDates[deviceID] = Date() }
         lock.unlock()
     }
 
@@ -100,6 +109,7 @@ final class DeviceActivityTracker {
         lock.lock()
         lastID = id
         lastTimeNs = now
+        lastUsedDates[id] = Date()
         lock.unlock()
     }
 }

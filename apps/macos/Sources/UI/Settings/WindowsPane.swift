@@ -119,9 +119,14 @@ private struct ShortcutsTab: View {
                     ForEach(store.sizes) { row(command: store.sizeCommand($0), title: $0.name) }
                 }
             }
-            if !store.layouts.isEmpty {
+            if store.layouts.contains(where: { !$0.isGroup }) {
                 Section("Saved layouts") {
-                    ForEach(store.layouts) { row(command: store.layoutCommand($0), title: $0.name) }
+                    ForEach(store.layouts.filter { !$0.isGroup }) { row(command: store.layoutCommand($0), title: $0.name) }
+                }
+            }
+            if store.layouts.contains(where: \.isGroup) {
+                Section("Window groups") {
+                    ForEach(store.layouts.filter(\.isGroup)) { row(command: store.layoutCommand($0), title: $0.name) }
                 }
             }
         }
@@ -275,7 +280,7 @@ private struct OptionsTab: View {
                 }
                 Picker("Layout", selection: Binding(get: { config.dropZoneLayoutId ?? "" }, set: { v in store.updateConfig { $0.dropZoneLayoutId = v.isEmpty ? nil : v } })) {
                     Text("Most recent saved layout").tag("")
-                    ForEach(store.layouts.filter { !$0.isAuto }) { Text($0.name).tag($0.id) }
+                    ForEach(store.layouts.filter { !$0.isAuto && !$0.isGroup }) { Text($0.name).tag($0.id) }
                 }
             } header: { Text("Drop zones") } footer: {
                 Text("Drag a window and hold the keys: the places in a saved layout appear. Drop the window on one to put it there. Save a layout under Layouts first.")
@@ -400,14 +405,17 @@ private struct LayoutsTab: View {
     @State private var restoring: String?
     @State private var message: String?
     @State private var designing: DesignerTarget?
+    @State private var showingReport = false
+    @State private var makingGroup = false
 
     private struct DesignerTarget: Identifiable {
         let id = UUID()
         let layout: SavedLayout?
     }
 
-    private var thisSetup: [SavedLayout] { store.layouts.filter { $0.displayKey == displays.setKey } }
-    private var otherSetups: [SavedLayout] { store.layouts.filter { $0.displayKey != displays.setKey } }
+    private var thisSetup: [SavedLayout] { store.layouts.filter { !$0.isGroup && $0.displayKey == displays.setKey } }
+    private var otherSetups: [SavedLayout] { store.layouts.filter { !$0.isGroup && $0.displayKey != displays.setKey } }
+    private var groups: [SavedLayout] { store.layouts.filter(\.isGroup) }
 
     var body: some View {
         Form {
@@ -420,6 +428,19 @@ private struct LayoutsTab: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 if let message { Label(message, systemImage: "checkmark.circle.fill").foregroundStyle(Theme.ok).transition(.opacity) }
+                if let report = controller.lastReport {
+                    HStack(spacing: 8) {
+                        Image(systemName: report.isClean ? "checkmark.seal" : "exclamationmark.triangle")
+                            .foregroundStyle(report.isClean ? Theme.ok : Theme.warn)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Last restore: “\(report.layoutName)”").font(.callout)
+                            Text(report.summary).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Details…") { showingReport = true }.controlSize(.small)
+                    }
+                    .transition(.opacity)
+                }
             } footer: {
                 Text("A layout remembers where windows go, on which display. Save the windows you have open, or draw boxes and give each an app. A layout can also minimize, hide or close the windows it does not place, and open apps that are not running. Restore it in one click or with a shortcut. Kriya also keeps its own snapshot for each set of displays and brings it back when that set is connected again.")
             }
@@ -435,6 +456,19 @@ private struct LayoutsTab: View {
                     Text("Windows go to the same display if it is connected, or to the main display.")
                 }
             }
+
+            Section {
+                if groups.isEmpty { Text("None saved.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(groups) { groupRow($0) }
+            } header: {
+                HStack {
+                    Text("Window groups")
+                    Spacer()
+                    Button { makingGroup = true } label: { Label("New Group…", systemImage: "plus") }.controlSize(.small)
+                }
+            } footer: {
+                Text("A group is a few related windows you pick, such as your editor, terminal and browser. Restore brings all of them forward where they were saved, opening apps that are closed. Move To fits the whole group, keeping its shape, into a display or half of one. Like a layout, a group can have a shortcut: look for “Group: …” in the Shortcuts tab.")
+            }
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.layouts)
@@ -445,6 +479,15 @@ private struct LayoutsTab: View {
                 designing = nil
                 message = store.lastError == nil ? "Saved “\(layout.name)”." : nil
             }, onCancel: { designing = nil })
+        }
+        .sheet(isPresented: $showingReport) {
+            RestoreReportSheet(onClose: { showingReport = false }, onRetry: { retryLast() })
+        }
+        .sheet(isPresented: $makingGroup) {
+            NewGroupSheet(onSave: { name, windows in
+                makingGroup = false
+                if controller.saveGroup(named: name, windows: windows) { message = "Saved group “\(name)”." }
+            }, onCancel: { makingGroup = false })
         }
         .alert("Save layout", isPresented: $naming) {
             TextField("Name", text: $name)
@@ -472,6 +515,47 @@ private struct LayoutsTab: View {
             Button("Restore") { restore(layout) }.controlSize(.small)
             Button(role: .destructive) { store.deleteLayout(layout.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
         }
+    }
+
+    private func groupRow(_ group: SavedLayout) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "square.stack.3d.up").foregroundStyle(.secondary).frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(group.name).font(.headline)
+                Text(groupDetail(group)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer()
+            if let shortcut = store.shortcuts.first(where: { $0.command == store.layoutCommand(group) }) {
+                Text(KeyNames.describe(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers))
+                    .font(.system(.caption, design: .rounded)).padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+            if restoring == group.id { ProgressView().controlSize(.small) }
+            Button("Restore") { restore(group) }.controlSize(.small)
+            Menu("Move To") {
+                ForEach(displays.displays) { display in
+                    Menu(display.name) {
+                        ForEach(GroupRegion.allCases) { region in
+                            Button(region.title) { controller.moveGroup(group, to: display, region: region) }
+                        }
+                    }
+                }
+            }
+            .menuStyle(.button).controlSize(.small).fixedSize()
+            Button(role: .destructive) { store.deleteLayout(group.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+        }
+    }
+
+    private func groupDetail(_ group: SavedLayout) -> String {
+        let names = group.entries.map { AppChoice.name(for: $0.appId) }
+        var seen = Set<String>()
+        let unique = names.filter { seen.insert($0).inserted }
+        return "\(group.entries.count) window\(group.entries.count == 1 ? "" : "s"): " + unique.joined(separator: ", ")
+    }
+
+    private func retryLast() {
+        guard let layout = controller.lastLayout else { return }
+        controller.restore(layout)
     }
 
     private func save() {
@@ -509,7 +593,178 @@ private struct LayoutsTab: View {
             if outcome.tidied > 0 { text += ", \(outcome.tidied) other\(outcome.tidied == 1 ? "" : "s") tidied" }
             if outcome.opened > 0 { text += ", \(outcome.opened) app\(outcome.opened == 1 ? "" : "s") opening" }
             message = text + (outcome.missing > outcome.opened ? ", \(outcome.missing - outcome.opened) not open." : ".")
+            // When something did not go where it should, the details open by themselves.
+            if let report = outcome.report, !report.isClean { showingReport = true }
         }
+    }
+}
+
+// MARK: - Restore report
+
+/// What a restore did, window by window, with the reason for anything that did not go where it should and a way to point at
+/// the window that was meant.
+private struct RestoreReportSheet: View {
+    @EnvironmentObject private var controller: WindowController
+    let onClose: () -> Void
+    let onRetry: () -> Void
+    @State private var choices: [WindowChoice] = []
+    @State private var loaded = false
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let report = controller.lastReport {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("“\(report.layoutName)”").font(.headline)
+                        Text(report.summary).font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(16)
+                Divider()
+                List {
+                    if !report.needAttention.isEmpty {
+                        Section("Needs a look") { ForEach(report.needAttention) { row($0, report: report) } }
+                    }
+                    let elsewhere = report.onMainDisplay + report.onOtherDisplay
+                    if !elsewhere.isEmpty {
+                        Section("On a different display") { ForEach(elsewhere) { row($0, report: report) } }
+                    }
+                    let opening = report.results.filter { $0.status == .opening }
+                    if !opening.isEmpty {
+                        Section("Opening") { ForEach(opening) { row($0, report: report) } }
+                    }
+                    let fine = report.placed.filter { r in !elsewhere.contains(where: { $0.id == r.id }) }
+                    if !fine.isEmpty {
+                        Section("Restored") { ForEach(fine) { row($0, report: report) } }
+                    }
+                }
+                if let failure { Text(failure).font(.callout).foregroundStyle(Theme.danger).padding(.horizontal, 16).padding(.bottom, 6) }
+            } else {
+                Text("Nothing has been restored yet.").foregroundStyle(.secondary).frame(maxHeight: .infinity)
+            }
+            Divider()
+            HStack {
+                Text("Choosing a window places it now and remembers it for this layout.").font(.caption).foregroundStyle(.tertiary)
+                Spacer()
+                Button("Try Again") { failure = nil; onRetry() }.disabled(controller.lastLayout == nil)
+                Button("Done") { onClose() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(14)
+        }
+        .frame(width: 600, height: 520)
+        .onAppear { reload() }
+        .animation(.smooth(duration: 0.25), value: controller.lastReport)
+    }
+
+    private func reload() {
+        controller.loadWindowChoices { choices = $0; loaded = true }
+    }
+
+    private func row(_ result: RestoreEntryResult, report: RestoreReport) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon(result)).foregroundStyle(tint(result)).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(result.label).lineLimit(1)
+                Text(result.explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if result.canChooseReplacement {
+                Menu("Choose Window…") {
+                    let same = choices.filter { $0.appID == result.appID }
+                    let others = choices.filter { $0.appID != result.appID }
+                    if choices.isEmpty { Text(loaded ? "No windows are open" : "Looking…") }
+                    ForEach(same) { choice in Button(choice.title.isEmpty ? choice.appName : choice.title) { use(choice, for: result) } }
+                    if !same.isEmpty && !others.isEmpty { Divider() }
+                    ForEach(others) { choice in Button("\(choice.appName) · \(choice.title)") { use(choice, for: result) } }
+                    Divider()
+                    Button("Refresh the List") { reload() }
+                }
+                .menuStyle(.button).controlSize(.small).fixedSize()
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func use(_ choice: WindowChoice, for result: RestoreEntryResult) {
+        guard let layout = controller.lastLayout else { return }
+        if !controller.place(choice, forEntry: result.id, of: layout, remember: true) {
+            failure = "That window could not be moved. Some windows have a fixed size, or are full screen."
+        } else {
+            failure = nil
+        }
+    }
+
+    private func icon(_ result: RestoreEntryResult) -> String {
+        switch result.status {
+        case .placed: return "checkmark.circle.fill"
+        case .placedOnOtherDisplay, .movedToMainDisplay: return "display.2"
+        case .opening: return "arrow.up.forward.app"
+        default: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func tint(_ result: RestoreEntryResult) -> Color {
+        switch result.status {
+        case .placed: return Theme.ok
+        case .placedOnOtherDisplay, .movedToMainDisplay, .opening: return Theme.accent
+        default: return Theme.warn
+        }
+    }
+}
+
+// MARK: - New group
+
+private struct NewGroupSheet: View {
+    @EnvironmentObject private var controller: WindowController
+    let onSave: (String, [WindowChoice]) -> Void
+    let onCancel: () -> Void
+    @State private var name = ""
+    @State private var choices: [WindowChoice] = []
+    @State private var picked = Set<UUID>()
+    @State private var loaded = false
+
+    private var chosen: [WindowChoice] { choices.filter { picked.contains($0.id) } }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("New window group").font(.headline)
+                TextField("Name, such as “Development setup”", text: $name)
+                Text("Tick the windows that belong together. Their places on screen are saved with the group.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            .padding(16)
+            Divider()
+            if choices.isEmpty {
+                Text(loaded ? "No windows are open." : "Looking for open windows…").foregroundStyle(.secondary).frame(maxHeight: .infinity)
+            } else {
+                List(choices) { choice in
+                    Toggle(isOn: Binding(get: { picked.contains(choice.id) }, set: { on in if on { picked.insert(choice.id) } else { picked.remove(choice.id) } })) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(choice.appName)
+                            if !choice.title.isEmpty { Text(choice.title).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                        }
+                    }
+                }
+            }
+            Divider()
+            HStack {
+                Button("Select All") { picked = Set(choices.map(\.id)) }.disabled(choices.isEmpty)
+                Button("None") { picked = [] }.disabled(picked.isEmpty)
+                Spacer()
+                Text("\(picked.count) chosen").font(.callout).foregroundStyle(.secondary)
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                Button("Save Group") { onSave(name.trimmingCharacters(in: .whitespaces), chosen) }
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || picked.isEmpty)
+            }
+            .padding(14)
+        }
+        .frame(width: 520, height: 520)
+        .onAppear { controller.loadWindowChoices { choices = $0; loaded = true } }
+        .animation(.smooth(duration: 0.2), value: choices.count)
     }
 }
 

@@ -26,7 +26,8 @@ final class PointerEffectsStore: ObservableObject {
         enabled: false, haloEnabled: false, haloStyle: .filled, haloSize: 64, haloColor: "#D4A84B", haloOpacity: 0.35, haloPulse: false,
         clickEnabled: false, clickSize: 56, clickDurationMs: 450, leftClickColor: "#6F94B8", rightClickColor: "#C77B6E",
         locateSize: 240, magnifierZoom: 2.5, magnifierSize: 220, magnifierShape: .circle, hideWhenIdle: false, hideAfterSeconds: 5,
-        showWhenSharing: false, positions: [], doubleTapControl: true, shakeToLocate: false, magnifierHoldModifier: 0, hideWhileTyping: false, excludedAppIds: []
+        showWhenSharing: false, positions: [], doubleTapControl: true, shakeToLocate: false, magnifierHoldModifier: 0, hideWhileTyping: false, excludedAppIds: [],
+        spotlightSize: 300, spotlightDim: 0.6, spotlightShape: .circle
     )
     @Published var lastError: String?
 

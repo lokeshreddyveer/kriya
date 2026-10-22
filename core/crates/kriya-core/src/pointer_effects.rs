@@ -29,6 +29,13 @@ pub enum MagnifierShape {
     Square,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SpotlightShape {
+    Circle,
+    RoundedRectangle,
+}
+
 /// A place the pointer can jump to: a spot on a display, as fractions of its width and height.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
 pub struct SavedPosition {
@@ -86,6 +93,12 @@ pub struct PointerEffectsConfig {
     pub hide_while_typing: bool,
     /// Apps in which the halo and the click rings are not drawn.
     pub excluded_app_ids: Vec<String>,
+
+    /// The width of the bright area of the spotlight, in points.
+    pub spotlight_size: f64,
+    /// How dark the rest of the screen goes, from barely to nearly black.
+    pub spotlight_dim: f64,
+    pub spotlight_shape: SpotlightShape,
 }
 
 impl Default for PointerEffectsConfig {
@@ -116,6 +129,9 @@ impl Default for PointerEffectsConfig {
             magnifier_hold_modifier: 0,
             hide_while_typing: false,
             excluded_app_ids: Vec::new(),
+            spotlight_size: 300.0,
+            spotlight_dim: 0.6,
+            spotlight_shape: SpotlightShape::Circle,
         }
     }
 }
@@ -163,6 +179,8 @@ impl PointerEffectsConfig {
         self.locate_size = fix(self.locate_size, 100.0, 600.0, defaults.locate_size);
         self.magnifier_zoom = fix(self.magnifier_zoom, 1.5, 8.0, defaults.magnifier_zoom);
         self.magnifier_size = fix(self.magnifier_size, 120.0, 500.0, defaults.magnifier_size);
+        self.spotlight_size = fix(self.spotlight_size, 100.0, 900.0, defaults.spotlight_size);
+        self.spotlight_dim = fix(self.spotlight_dim, 0.1, 0.95, defaults.spotlight_dim);
         self.hide_after_seconds = fix(
             self.hide_after_seconds,
             1.0,
@@ -285,6 +303,46 @@ mod tests {
             x: 0.5,
             y: 0.5,
         }
+    }
+
+    #[test]
+    fn the_spotlight_is_kept_within_sensible_bounds() {
+        let defaults = PointerEffectsConfig::default();
+        assert_eq!(defaults.spotlight_shape, SpotlightShape::Circle);
+        let wild = PointerEffectsConfig {
+            spotlight_size: 1.0,
+            spotlight_dim: 5.0,
+            ..PointerEffectsConfig::default()
+        }
+        .sanitized();
+        assert_eq!(wild.spotlight_size, 100.0);
+        assert_eq!(wild.spotlight_dim, 0.95);
+        let nan = PointerEffectsConfig {
+            spotlight_size: f64::NAN,
+            spotlight_dim: f64::INFINITY,
+            ..PointerEffectsConfig::default()
+        }
+        .sanitized();
+        assert_eq!(nan.spotlight_size, defaults.spotlight_size);
+        assert_eq!(nan.spotlight_dim, defaults.spotlight_dim);
+        let faint = PointerEffectsConfig {
+            spotlight_dim: 0.0,
+            ..PointerEffectsConfig::default()
+        }
+        .sanitized();
+        assert_eq!(
+            faint.spotlight_dim, 0.1,
+            "never so faint that it does nothing"
+        );
+    }
+
+    #[test]
+    fn settings_saved_before_the_spotlight_existed_still_load() {
+        let old = r##"{"enabled":true,"halo_enabled":true,"halo_size":80.0}"##;
+        let cfg: PointerEffectsConfig = serde_json::from_str(old).unwrap();
+        assert!(cfg.enabled && cfg.halo_enabled);
+        assert_eq!(cfg.spotlight_size, 300.0);
+        assert_eq!(cfg.spotlight_shape, SpotlightShape::Circle);
     }
 
     #[test]

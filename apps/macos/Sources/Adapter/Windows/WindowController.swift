@@ -46,6 +46,18 @@ struct RestoreOutcome: Equatable {
     var tidied = 0
     /// Apps that were not running and were opened, to be placed once their window appears.
     var opened = 0
+    /// Window by window, what became of the layout.
+    var report: RestoreReport?
+}
+
+/// A window that is open now, offered as a replacement for one a layout could not find.
+struct WindowChoice: Identifiable {
+    let id = UUID()
+    let appID: String
+    let appName: String
+    let title: String
+    fileprivate let window: AXWindow
+    fileprivate let frame: Rect
 }
 
 /// Moves and resizes other apps' windows. Every operation checks that there is a window, that its app is not excluded and
@@ -54,6 +66,10 @@ final class WindowController: ObservableObject {
     let displays: DisplayManager
     let diagnostics = WindowDiagnostics()
     @Published private(set) var lastMessage: String?
+    /// How the latest layout restore went, window by window.
+    @Published private(set) var lastReport: RestoreReport?
+    /// The layout that report is about, so a replacement window can be remembered for it and the restore can be tried again.
+    @Published private(set) var lastLayout: SavedLayout?
 
     private let core: KriyaCore
     let store: WindowStore
@@ -370,13 +386,14 @@ final class WindowController: ObservableObject {
         }
         store.saveLayout(SavedLayout(
             id: UUID().uuidString, name: name, displayKey: displays.setKey, isAuto: false,
-            createdAt: SystemInfo.nowSeconds, entries: entries, unplaced: .leave, launchMissing: false
+            createdAt: SystemInfo.nowSeconds, entries: entries, unplaced: .leave, launchMissing: false, isGroup: false
         ))
         diagnostics.note("Saved layout “\(name)” with \(entries.count) windows")
     }
 
     /// Puts open windows where a layout says. Windows the layout does not mention stay where they are. Runs off the
-    /// main thread because asking many apps to move can take a moment.
+    /// main thread because asking many apps to move can take a moment. Afterwards `lastReport` says, window by window,
+    /// what was done and what could not be.
     func restore(_ layout: SavedLayout, completion: ((RestoreOutcome) -> Void)? = nil) {
         let known = displays.displays
         let config = store.currentConfig
@@ -387,11 +404,13 @@ final class WindowController: ObservableObject {
                 entries: layout.entries, openWindows: open.map { WindowRef(appId: $0.appID, title: $0.title) }
             )
             var outcome = RestoreOutcome()
+            var moved = [Bool](repeating: false, count: open.count)
             for (index, match) in matches.enumerated() {
                 guard let match, let frame = Self.target(for: layout.entries[Int(match)], displays: known) else { continue }
                 let window = open[index].window
                 history.record(key: window.key, frame: open[index].frame)
                 let ok = AXWindow.withoutEnhancedInterface(pid: window.pid) { window.setFrame(frame) }
+                moved[index] = ok
                 if ok { outcome.placed += 1 }
             }
             let matchedEntries = Set(matches.compactMap { $0 }.map(Int.init))
@@ -416,23 +435,123 @@ final class WindowController: ObservableObject {
                 }
             }
 
+            // What was true of the Mac just now, for explaining the entries that found no window.
+            var facts = RestoreFacts()
+            for id in Set(layout.entries.map(\.appId)) {
+                if config.isExcluded(appId: id) { facts.excludedApps.insert(id) }
+                guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first(where: { !$0.isTerminated }) else { continue }
+                facts.runningApps.insert(id)
+                if app.isHidden { facts.hiddenApps.insert(id) }
+                let minimized = AXWindow.windows(ofApp: app.processIdentifier).filter { $0.isStandard && $0.isMinimized }.count
+                if minimized > 0 { facts.minimizedWindows[id] = minimized }
+            }
+            let raised = layout.isGroup ? open.enumerated().filter { moved[$0.offset] }.map(\.element.window) : []
+
             // Apps that are not running are opened, and their windows placed as they appear.
             let toOpen = layout.launchMissing ? layout.entries.indices.filter { !matchedEntries.contains($0) } : []
             DispatchQueue.main.async {
                 guard let self else { return }
+                var opened = Set<Int>()
                 for index in toOpen {
                     let entry = layout.entries[index]
                     guard NSRunningApplication.runningApplications(withBundleIdentifier: entry.appId).isEmpty,
                           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: entry.appId) else { continue }
                     outcome.opened += 1
+                    opened.insert(index)
                     NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
                     self.placeWhenWindowAppears(entry: entry, displays: known)
                 }
-                self.diagnostics.note("Restored “\(layout.name)”: \(outcome.placed) placed, \(outcome.tidied) tidied, \(outcome.opened) opened")
+                // A group comes to the front together, in the order it was saved.
+                for window in raised { window.raise() }
+                let report = RestoreDiagnosis.build(
+                    layoutID: layout.id, layoutName: layout.name, entries: layout.entries,
+                    matches: matches.map { $0.map(Int.init) }, open: open.map { ($0.appID, $0.title) }, moved: moved,
+                    opened: opened, displays: known, facts: facts, appName: AppChoice.name(for:)
+                )
+                outcome.report = report
+                self.lastReport = report
+                self.lastLayout = layout
+                self.diagnostics.note("Restored “\(layout.name)”: \(report.summary)")
                 self.lastApplied.removeAll()
                 completion?(outcome)
             }
         }
+    }
+
+    // MARK: Windows to choose from, groups
+
+    /// The windows open now, to pick from. The slow part (asking each app) runs away from the main thread.
+    func loadWindowChoices(_ completion: @escaping ([WindowChoice]) -> Void) {
+        let config = store.currentConfig
+        DispatchQueue.global(qos: .userInitiated).async {
+            let choices = Self.openWindows(excluding: config).map {
+                WindowChoice(appID: $0.appID, appName: AppChoice.name(for: $0.appID), title: $0.title, window: $0.window, frame: $0.frame)
+            }
+            DispatchQueue.main.async { completion(choices) }
+        }
+    }
+
+    /// Puts a window the person chose where a layout entry says. With `remember`, the layout is changed to name that window
+    /// (when it is one of the person's own, not an automatic snapshot) so the next restore finds it.
+    @discardableResult
+    func place(_ choice: WindowChoice, forEntry index: Int, of layout: SavedLayout, remember: Bool) -> Bool {
+        defer { if let latest = store.layouts.first(where: { $0.id == layout.id }) { lastLayout = latest } }
+        guard layout.entries.indices.contains(index), let frame = Self.target(for: layout.entries[index], displays: displays.displays) else { return false }
+        history.record(key: choice.window.key, frame: choice.frame)
+        let ok = AXWindow.withoutEnhancedInterface(pid: choice.window.pid) { choice.window.setFrame(frame) }
+        guard ok else { return false }
+        choice.window.raise()
+        if remember, !layout.isAuto {
+            var changed = layout
+            changed.entries[index].appId = choice.appID
+            changed.entries[index].title = choice.title
+            store.saveLayout(changed)
+        }
+        if var report = lastReport, report.layoutID == layout.id, let row = report.results.firstIndex(where: { $0.id == index }) {
+            report.results[row].status = .placed(display: displays.displays.first { $0.id == layout.entries[index].displayId }?.name ?? "a display")
+            report.results[row].matchedByAppOnly = false
+            lastReport = report
+        }
+        return true
+    }
+
+    /// Saves the chosen windows as a group: a named set that can be restored, brought forward and moved together.
+    @discardableResult
+    func saveGroup(named name: String, windows: [WindowChoice]) -> Bool {
+        let known = displays.displays
+        let entries = windows.compactMap { Self.entry(app: $0.appID, title: $0.title, frame: $0.frame, displays: known) }
+        guard !entries.isEmpty else {
+            store.lastError = "Choose at least one window for the group."
+            return false
+        }
+        store.saveLayout(SavedLayout(
+            id: UUID().uuidString, name: name, displayKey: displays.setKey, isAuto: false,
+            createdAt: SystemInfo.nowSeconds, entries: entries, unplaced: .leave, launchMissing: true, isGroup: true
+        ))
+        diagnostics.note("Saved group “\(name)” with \(entries.count) windows")
+        return store.lastError == nil
+    }
+
+    /// Moves and resizes a group as one: the windows keep their places in the group, which is fitted into `region` of the
+    /// display. Nothing saved is changed.
+    func moveGroup(_ group: SavedLayout, to display: DisplayInfo, region: GroupRegion) {
+        var moved = group
+        moved.entries = GroupGeometry.fit(entries: group.entries, displays: displays.displays, target: display, region: region)
+        restore(moved)
+    }
+
+    private static func entry(app: String, title: String, frame: Rect, displays known: [DisplayInfo]) -> LayoutEntry? {
+        guard let index = windowDisplayIndex(frame: frame, areas: known.map(\.full)) else { return nil }
+        let display = known[Int(index)]
+        let area = display.area
+        guard area.width > 0, area.height > 0 else { return nil }
+        return LayoutEntry(
+            appId: app, title: title, displayId: display.id,
+            frame: Rect(
+                x: (frame.x - area.x) / area.width, y: (frame.y - area.y) / area.height,
+                width: frame.width / area.width, height: frame.height / area.height
+            )
+        )
     }
 
     /// Where a layout entry puts a window, in screen coordinates. The display it was made for, or the main one if that

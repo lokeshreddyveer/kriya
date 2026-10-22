@@ -202,6 +202,156 @@ private final class PointerMagnifier: NSObject, SCStreamOutput {
     }
 }
 
+// MARK: - Spotlight
+
+/// Where the bright area of the spotlight is.
+enum SpotlightGeometry {
+    /// The bright area around `center`, `size` points wide: a circle, or a wider, shorter rounded rectangle.
+    static func hole(center: CGPoint, size: Double, shape: SpotlightShape) -> CGRect {
+        switch shape {
+        case .circle:
+            return CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
+        case .roundedRectangle:
+            let width = size * 1.6
+            let height = size * 0.8
+            return CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
+        }
+    }
+
+    static func cornerRadius(for hole: CGRect, shape: SpotlightShape) -> CGFloat {
+        shape == .circle ? hole.width / 2 : min(hole.height * 0.2, 28)
+    }
+
+    /// The dimmed part of a display: all of it except the hole (drawn with the even-odd rule).
+    static func dimPath(bounds: CGRect, hole: CGRect?, shape: SpotlightShape) -> CGPath {
+        let path = CGMutablePath()
+        path.addRect(bounds)
+        if let hole, hole.intersects(bounds) {
+            let radius = cornerRadius(for: hole, shape: shape)
+            path.addRoundedRect(in: hole, cornerWidth: radius, cornerHeight: radius)
+        }
+        return path
+    }
+}
+
+private final class SpotlightDimView: NSView {
+    private let dim = CAShapeLayer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        dim.fillRule = .evenOdd
+        dim.fillColor = NSColor.black.cgColor
+        layer?.addSublayer(dim)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    /// Redraws the dim with the hole at `center` (in this view's own coordinates), without any implicit animation.
+    func update(center: CGPoint, size: Double, shape: SpotlightShape, dim opacity: Double) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dim.frame = bounds
+        dim.opacity = Float(opacity)
+        dim.path = SpotlightGeometry.dimPath(bounds: bounds, hole: SpotlightGeometry.hole(center: center, size: size, shape: shape), shape: shape)
+        CATransaction.commit()
+    }
+}
+
+/// Darkens every display except the area around the pointer. One click-through window per display, so the bright area can
+/// sit across two displays, and each follows the pointer.
+private final class PointerSpotlight {
+    private var panels: [(panel: NSPanel, view: SpotlightDimView, screen: NSScreen)] = []
+    private var monitors: [Any] = []
+    private var screenObserver: NSObjectProtocol?
+    private var config: PointerEffectsConfig?
+
+    var isOn: Bool { !panels.isEmpty }
+
+    func start(config: PointerEffectsConfig) {
+        guard !isOn else { update(config); return }
+        self.config = config
+        buildPanels()
+        let move: (NSEvent) -> Void = { [weak self] _ in self?.follow() }
+        let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: events, handler: move) { monitors.append(global) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: events, handler: { event in move(event); return event }) { monitors.append(local) }
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.rebuild()
+        }
+        follow()
+        for item in panels {
+            item.panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.22; item.panel.animator().alphaValue = 1 }
+        }
+    }
+
+    func update(_ config: PointerEffectsConfig) {
+        let sharingChanged = config.showWhenSharing != self.config?.showWhenSharing
+        self.config = config
+        if isOn, sharingChanged { for item in panels { item.panel.sharingType = config.showWhenSharing ? .readOnly : .none } }
+        follow()
+    }
+
+    func stop() {
+        for monitor in monitors { NSEvent.removeMonitor(monitor) }
+        monitors.removeAll()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = nil
+        let closing = panels.map(\.panel)
+        panels.removeAll()
+        guard !closing.isEmpty else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.18
+            for panel in closing { panel.animator().alphaValue = 0 }
+        }, completionHandler: {
+            for panel in closing { panel.orderOut(nil) }
+        })
+    }
+
+    private func buildPanels() {
+        panels = NSScreen.screens.map { screen in
+            let panel = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = false
+            panel.ignoresMouseEvents = true
+            panel.level = .screenSaver
+            panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            panel.isReleasedWhenClosed = false
+            panel.sharingType = config?.showWhenSharing == true ? .readOnly : .none
+            panel.alphaValue = 0
+            let view = SpotlightDimView(frame: NSRect(origin: .zero, size: screen.frame.size))
+            panel.contentView = view
+            panel.setFrame(screen.frame, display: false)
+            return (panel, view, screen)
+        }
+    }
+
+    /// The displays changed (one was plugged in, or the arrangement changed): start over on the new set.
+    private func rebuild() {
+        let old = panels.map(\.panel)
+        panels.removeAll()
+        for panel in old { panel.orderOut(nil) }
+        buildPanels()
+        for item in panels {
+            item.panel.alphaValue = 1
+            item.panel.orderFrontRegardless()
+        }
+        follow()
+    }
+
+    private func follow() {
+        guard let config else { return }
+        let mouse = NSEvent.mouseLocation
+        for item in panels {
+            // The pointer in this display's own coordinates; a bright area that crosses into the next display is drawn on both.
+            let local = CGPoint(x: mouse.x - item.screen.frame.minX, y: mouse.y - item.screen.frame.minY)
+            item.view.update(center: local, size: config.spotlightSize, shape: config.spotlightShape, dim: config.spotlightDim)
+        }
+    }
+}
+
 // MARK: - Hiding the pointer when it is idle
 
 /// Hides the pointer after it has been still for a while and brings it back at the first movement. macOS lets only the app
@@ -294,6 +444,7 @@ final class PointerEffects {
             entry("pointer.zoom_out", "Magnifier: zoom out"),
             entry("pointer.show", "Show the pointer now"),
             entry("pointer.presentation", "Presentation mode (on or off)"),
+            entry("pointer.spotlight", "Spotlight (on or off)"),
         ]
     }()
 
@@ -303,6 +454,7 @@ final class PointerEffects {
     private let toast = Toast()
     private let magnifier = PointerMagnifier()
     private let hider = PointerHider()
+    private let spotlight = PointerSpotlight()
 
     private var halo: NSPanel?
     private var haloKey = ""
@@ -340,6 +492,7 @@ final class PointerEffects {
         stopWatching()
         hider.stop()
         magnifier.stop()
+        spotlight.stop()
         stopFindWatchers()
         for command in registered { executor.unregisterCommand(command) }
         registered.removeAll()
@@ -373,6 +526,14 @@ final class PointerEffects {
         case "pointer.zoom_in": magnifier.adjustZoom(by: 1.25)
         case "pointer.zoom_out": magnifier.adjustZoom(by: 0.8)
         case "pointer.show": hider.show()
+        case "pointer.spotlight":
+            if spotlight.isOn {
+                spotlight.stop()
+                toast.show("Spotlight off")
+            } else {
+                spotlight.start(config: store.current)
+                toast.show("Spotlight on")
+            }
         case "pointer.presentation":
             presentation.toggle()
             toast.show(presentation ? "Presentation mode on" : "Presentation mode off")
@@ -392,6 +553,7 @@ final class PointerEffects {
         if wantsHalo { updateHalo(config) } else { halo?.orderOut(nil) }
         if config.enabled, config.hideWhenIdle { hider.start(after: config.hideAfterSeconds) } else if !(config.enabled && config.hideWhileTyping) { hider.stop() }
         if !config.enabled, magnifier.isOn { magnifier.stop() }
+        if !config.enabled, spotlight.isOn { spotlight.stop() } else if spotlight.isOn { spotlight.update(config) }
         if config.enabled, config.doubleTapControl || config.shakeToLocate || config.magnifierHoldModifier != 0 || config.hideWhileTyping { startFindWatchers() } else { stopFindWatchers() }
     }
 

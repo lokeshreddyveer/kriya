@@ -213,6 +213,8 @@ Added after the first release. Every one has a shortcut you can set under Window
 - **Keyboard grid**: place a window on a grid with the arrow keys (Shift extends, Return places).
 - **Todo mode**: keep one app in a narrow column; every layout uses the rest of the display.
 - **Drop zones**: hold the chosen keys while dragging a window to see a saved layout's places and drop onto one.
+- **Window groups** (Windows › Layouts): pick a few open windows, name the group, and restore them together (apps that are closed are opened), move or fit the whole group into a display or half of one, or give it a shortcut.
+- **Restore details**: after a layout restore, a report says for each window whether it was placed, went to another or the main display, or was not found and why (app not running or hidden, only minimized windows, no window open, excluded app, or a window that would not move), with a way to choose a replacement window and try again.
 - **Resizing**: almost maximize with a margin, maximize width or height only, bigger, smaller, wider, narrower, taller, shorter (with optional shape keeping), and a width limit for ultrawide displays.
 - **Arranging**: cascade or tile the windows on a display.
 - **Switching**: previous window, next window of the same app, send behind.
@@ -238,6 +240,8 @@ Not offered: Logitech-specific device features (ratchet or SmartShift control), 
 ## More right-click, window-button and selection features
 
 - **Folder tools** (Add Common Actions in the Finder pane): New Folders (one name per line), Find Large Files (lists the biggest files in a folder, nothing changed), Tidy Up This Folder (sorts loose files into Images, Documents, Archives, Audio, Video and Installers; asks first, never deletes) and Undo Last Tidy-Up.
+- **Recent file operations** (Finder › Actions): moves, copies, renames, batch renames, archives, extractions, aliases and new files are listed with Undo (items put back only if their old place is free; things an action made go to the Trash), Show, and the reason for anything that failed. A move or copy that fails for one item still does the rest. Kept for two weeks.
+- **Move to / Copy to**: the chooser lists starred and recent folders first, with search, ⌘1–⌘9 and “Choose Another Folder…”.
 - **⌥ + right-click** (Right-Click Menu › Pointer Menu): opens the pointer menu; a plain right-click keeps the app's own menu.
 - **Pointer menu** (Right-Click Menu › Pointer Menu): a menu that opens at the pointer from any shortcut, button or gesture. It holds your own items (saved actions or workflows, optionally limited to chosen apps) and the front app's own menu bar, built live from Accessibility. Use the actions “Open the pointer menu” and “Open the app's menu at the pointer” (Actions › Add Common Actions).
 - **Finder**: show or hide hidden files, open the parent folder, and an editor action, all under “Add Common Actions” in the Finder pane's menu. **Default apps by file type** (Setup tab) lists which app opens each extension and applies it to macOS.
@@ -280,6 +284,7 @@ Pointer Effects (Input): a master switch, then:
 - **Hide when still**: the pointer disappears after a few seconds and returns at the first movement, and on demand. This asks the window server for permission to do it from the background, which is not a public API; if it does not work on your Mac the pointer simply stays visible.
 - **Saved positions**: named spots on a chosen display (or the current one) that the pointer can jump to, each a command.
 - **Presenting**: presentation mode switches on the highlight and click rings together; the effects are hidden from screen sharing and recordings unless you choose to show them (some sharing tools capture regardless).
+- **Spotlight**: dims every display except a circle or rounded rectangle around the pointer (size and darkness adjustable); a command, so it can have a shortcut. Hidden from screen sharing unless you choose to show the effects.
 
 Already there: move the pointer to the next or previous display, and to the middle of the front window.
 
@@ -292,6 +297,8 @@ Already there: move the pointer to the next or previous display, and to the midd
 - **File Shelf**: a small panel that holds files, text and images; opens when you shake the pointer while dragging files, or from a shortcut. Drag items out into any app, Quick Look, zip.
 - **Apps**: remove an app with the files it leaves in your Library (previewed, moved to the Trash), find leftovers of apps already gone, and check for updates (apps with their own update feed, and Homebrew).
 - **Mouse**: double-click a button to run an action, hold a button and turn the wheel for two actions, drag to scroll with glide, window follows the pointer.
+- **Hold rules** (Mouse › Buttons): a button rule can fire on a hold instead of a click (150–1500 ms); a quick press is still an ordinary click. **Auto-scroll** (Mouse › Drag): click a chosen button and move the pointer to scroll; Escape, a click or the wheel stops it.
+- **Device status** (Mouse › Devices): battery from macOS for devices that report one (otherwise “not reported”), last used, and a note when a device came back and its settings with it.
 - **Windows**: radial menu colour and size, a layout grid on the green-button hover, move to the display left/right/above/below, act on the window under the pointer, and optionally place an app's windows by its rule every time it comes forward.
 - **Clipboard**: a paste stack that pastes copied items one after another, and read-aloud commands.
 - **Pointer**: hold chosen keys to show the magnifier.

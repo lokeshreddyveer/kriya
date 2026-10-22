@@ -49,6 +49,13 @@ pub struct DragToolsConfig {
     /// How soon the second click must follow the first, in milliseconds.
     pub double_click_ms: u32,
     pub button_scrolls: Vec<ButtonScrollBinding>,
+    /// Click a button and the page scrolls by itself, faster the further the pointer is moved from where it was clicked.
+    /// A click, the Escape key or turning the wheel stops it.
+    pub auto_scroll_enabled: bool,
+    pub auto_scroll_button: u32,
+    pub auto_scroll_modifier: u64,
+    /// How fast it scrolls for a given distance. 1 is the usual speed.
+    pub auto_scroll_speed: f64,
 }
 
 impl Default for DragToolsConfig {
@@ -65,6 +72,10 @@ impl Default for DragToolsConfig {
             double_clicks: Vec::new(),
             double_click_ms: 300,
             button_scrolls: Vec::new(),
+            auto_scroll_enabled: false,
+            auto_scroll_button: 2,
+            auto_scroll_modifier: 0,
+            auto_scroll_speed: 1.0,
         }
     }
 }
@@ -84,6 +95,17 @@ impl DragToolsConfig {
             0.94
         };
         self.follow_modifier &= m::ALL;
+        self.auto_scroll_button = self.auto_scroll_button.clamp(0, 31);
+        self.auto_scroll_modifier &= m::ALL;
+        self.auto_scroll_speed = if self.auto_scroll_speed.is_finite() {
+            self.auto_scroll_speed.clamp(0.2, 5.0)
+        } else {
+            1.0
+        };
+        // A plain click of the main buttons would break ordinary use, so those need keys held.
+        if self.auto_scroll_button < 2 && self.auto_scroll_modifier == 0 {
+            self.auto_scroll_enabled = false;
+        }
         self.double_click_ms = self.double_click_ms.clamp(150, 600);
         let mut seen = std::collections::HashSet::new();
         self.double_clicks = self
@@ -173,6 +195,36 @@ pub fn drag_release_velocity(moves: Vec<DragMove>, released_at_ms: u64) -> Veloc
     Velocity {
         x: dx / span,
         y: dy / span,
+    }
+}
+
+/// How far the pointer must be from where auto-scroll started, in points, before the page moves.
+pub const AUTO_SCROLL_DEAD_ZONE: f64 = 12.0;
+/// The fastest auto-scroll goes, in points per second, at the usual speed setting.
+pub const AUTO_SCROLL_MAX_SPEED: f64 = 2400.0;
+
+/// How fast the page scrolls, in points per second along each axis, for a pointer this far from where auto-scroll was
+/// started. Nothing inside a small dead zone, then faster the further out, up to a limit. Positive means the pointer is
+/// to the right of, or below, the start.
+#[uniffi::export]
+pub fn auto_scroll_velocity(offset_x: f64, offset_y: f64, speed: f64) -> Velocity {
+    let speed = if speed.is_finite() {
+        speed.clamp(0.2, 5.0)
+    } else {
+        1.0
+    };
+    let axis = |offset: f64| {
+        if !offset.is_finite() || offset.abs() <= AUTO_SCROLL_DEAD_ZONE {
+            return 0.0;
+        }
+        let beyond = offset.abs() - AUTO_SCROLL_DEAD_ZONE;
+        // Gentle near the centre so a slow scroll is easy to hold, steeper further out.
+        let rate = (beyond * 6.0 + beyond * beyond * 0.04) * speed;
+        rate.min(AUTO_SCROLL_MAX_SPEED * speed) * offset.signum()
+    };
+    Velocity {
+        x: axis(offset_x),
+        y: axis(offset_y),
     }
 }
 
@@ -390,6 +442,84 @@ mod tests {
             config.button_scrolls[1].button, 2,
             "the left button cannot hold a wheel action"
         );
+    }
+
+    #[test]
+    fn auto_scroll_waits_for_the_pointer_to_leave_the_dead_zone() {
+        let v = auto_scroll_velocity(0.0, 0.0, 1.0);
+        assert_eq!((v.x, v.y), (0.0, 0.0));
+        let v = auto_scroll_velocity(AUTO_SCROLL_DEAD_ZONE, -AUTO_SCROLL_DEAD_ZONE, 1.0);
+        assert_eq!(
+            (v.x, v.y),
+            (0.0, 0.0),
+            "the edge of the zone is still inside it"
+        );
+        let v = auto_scroll_velocity(AUTO_SCROLL_DEAD_ZONE + 5.0, 0.0, 1.0);
+        assert!(v.x > 0.0 && v.y == 0.0);
+    }
+
+    #[test]
+    fn auto_scroll_goes_the_way_the_pointer_went_and_faster_the_further_out() {
+        let near = auto_scroll_velocity(0.0, 40.0, 1.0);
+        let far = auto_scroll_velocity(0.0, 200.0, 1.0);
+        assert!(near.y > 0.0 && far.y > near.y);
+        let up = auto_scroll_velocity(0.0, -200.0, 1.0);
+        assert_eq!(up.y, -far.y, "the same speed either way");
+        let left = auto_scroll_velocity(-80.0, 0.0, 1.0);
+        assert!(left.x < 0.0);
+        let diagonal = auto_scroll_velocity(60.0, 60.0, 1.0);
+        assert!(diagonal.x > 0.0 && diagonal.y > 0.0 && (diagonal.x - diagonal.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn auto_scroll_is_capped_and_the_speed_setting_scales_it() {
+        let far = auto_scroll_velocity(0.0, 100_000.0, 1.0);
+        assert_eq!(far.y, AUTO_SCROLL_MAX_SPEED);
+        let slow = auto_scroll_velocity(0.0, 100.0, 0.5);
+        let usual = auto_scroll_velocity(0.0, 100.0, 1.0);
+        assert!((slow.y * 2.0 - usual.y).abs() < 1e-9);
+        let nonsense = auto_scroll_velocity(f64::NAN, f64::INFINITY, f64::NAN);
+        assert!(
+            nonsense.x == 0.0 && nonsense.y == 0.0,
+            "numbers that are not numbers do nothing"
+        );
+        assert_eq!(
+            auto_scroll_velocity(0.0, 100.0, 1_000.0).y,
+            auto_scroll_velocity(0.0, 100.0, 5.0).y
+        );
+    }
+
+    #[test]
+    fn auto_scroll_settings_are_kept_safe() {
+        let c = DragToolsConfig {
+            auto_scroll_enabled: true,
+            auto_scroll_button: 0,
+            auto_scroll_speed: 99.0,
+            ..DragToolsConfig::default()
+        }
+        .sanitized();
+        assert!(
+            !c.auto_scroll_enabled,
+            "a plain click of the left button cannot start it"
+        );
+        assert_eq!(c.auto_scroll_speed, 5.0);
+        let with_keys = DragToolsConfig {
+            auto_scroll_enabled: true,
+            auto_scroll_button: 0,
+            auto_scroll_modifier: m::OPTION,
+            ..DragToolsConfig::default()
+        }
+        .sanitized();
+        assert!(with_keys.auto_scroll_enabled);
+        let middle = DragToolsConfig {
+            auto_scroll_enabled: true,
+            ..DragToolsConfig::default()
+        }
+        .sanitized();
+        assert!(middle.auto_scroll_enabled);
+        // A saved configuration from before auto-scroll existed has it off.
+        let old: DragToolsConfig = serde_json::from_str(r#"{"scroll_enabled":true}"#).unwrap();
+        assert!(!old.auto_scroll_enabled && old.auto_scroll_speed == 1.0);
     }
 
     #[test]

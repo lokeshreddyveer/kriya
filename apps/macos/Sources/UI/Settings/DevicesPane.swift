@@ -69,7 +69,9 @@ struct DevicesPane: View {
 
             Section {
                 InputTester { event in
-                    withAnimation(.smooth(duration: 0.12)) { events = Array(([event] + events).prefix(8)) }
+                    // Which device it came from is macOS's best guess from the last device that moved.
+                    let line = InputTesterFormat.attributed(event, device: devices.activeDeviceName())
+                    withAnimation(.smooth(duration: 0.12)) { events = Array(([line] + events).prefix(8)) }
                 }
                 .frame(height: 96)
                 .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -80,7 +82,7 @@ struct DevicesPane: View {
                 }
                 if !events.isEmpty { Button("Clear") { events.removeAll() }.controlSize(.small) }
             } header: { Text("Test a device") } footer: {
-                Text("Shows what the mouse, trackpad or keyboard sends, as macOS reports it, while the pointer is over the square. It sees nothing outside it, and nothing is kept.")
+                Text("Shows what the mouse, trackpad or keyboard sends, as macOS reports it, while the pointer is over the square, with the device it seems to come from (macOS does not say, so this is the device that last moved). It sees nothing outside it, and nothing is kept. To see which part of Kriya acted on a button anywhere else, start a trace in Diagnostics › Trace.")
             }
         }
         .onReceive(ticker) { _ in
@@ -127,6 +129,16 @@ private struct DeviceRow: View {
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    if device.isConnected, let status = registry.statuses[device.id] {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label(DeviceStatusText.battery(status.battery, connection: device.connection), systemImage: batterySymbol(status.battery))
+                            if let text = DeviceStatusText.lastUsed(status.lastUsed) { Text(text) }
+                            if let text = DeviceStatusText.reconnected(status.reconnectedAt) { Text(text) }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                    }
                 }
                 Spacer()
                 Button {
@@ -165,6 +177,18 @@ private struct DeviceRow: View {
         .padding(.vertical, 4)
         .onAppear { nickname = device.record.nickname ?? "" }
         .onChange(of: expanded) { _, isOpen in if !isOpen { commitNickname() } }
+    }
+
+    private func batterySymbol(_ state: BatteryState) -> String {
+        guard case .level(let percent, let charging) = state else { return "battery.0percent" }
+        if charging { return "battery.100percent.bolt" }
+        switch percent {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
+        }
     }
 
     private var identifier: String {

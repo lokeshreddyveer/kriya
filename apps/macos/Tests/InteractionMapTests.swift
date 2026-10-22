@@ -20,7 +20,7 @@ final class InteractionMapTests: XCTestCase {
 
     func testAGestureOnAButtonThatHasARuleIsFlagged() {
         var input = InteractionMap.Inputs()
-        input.presets = [preset("default", rules: [ButtonRule(button: 2, modifiers: 0, actionId: "a1")], gestureButton: 2)]
+        input.presets = [preset("default", rules: [ButtonRule(button: 2, modifiers: 0, actionId: "a1", trigger: .click)], gestureButton: 2)]
         input.name = { $0 == "a1" ? "Mission Control" : $0 }
         let entries = InteractionMap.entries(input)
         XCTAssertEqual(entries.map(\.kind).sorted { $0.rawValue < $1.rawValue }, [.gesture, .mouseButton])
@@ -32,7 +32,7 @@ final class InteractionMapTests: XCTestCase {
 
     func testAPresetForOneAppReplacesTheDefaultAndIsNotAClash() {
         var input = InteractionMap.Inputs()
-        let rule = ButtonRule(button: 3, modifiers: 0, actionId: "a")
+        let rule = ButtonRule(button: 3, modifiers: 0, actionId: "a", trigger: .click)
         input.presets = [preset("default", rules: [rule]), preset("games", rules: [rule])]
         input.assignments = [MouseAssignment(id: "x", deviceId: nil, appId: "com.game", presetId: "games")]
         let entries = InteractionMap.entries(input)

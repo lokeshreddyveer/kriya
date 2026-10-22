@@ -5,7 +5,8 @@ import Foundation
 final class DragToolsStore: ObservableObject {
     @Published private(set) var config = DragToolsConfig(
         scrollEnabled: false, scrollButton: 2, scrollModifier: 0, scrollInvert: false, scrollSpeed: 1, momentum: true,
-        momentumKeep: 0.94, followModifier: 0, doubleClicks: [], doubleClickMs: 300, buttonScrolls: []
+        momentumKeep: 0.94, followModifier: 0, doubleClicks: [], doubleClickMs: 300, buttonScrolls: [],
+        autoScrollEnabled: false, autoScrollButton: 2, autoScrollModifier: 0, autoScrollSpeed: 1
     )
     @Published var lastError: String?
 

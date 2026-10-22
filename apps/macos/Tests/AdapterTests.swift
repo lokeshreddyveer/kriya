@@ -285,12 +285,13 @@ final class MouseFeatureTests: XCTestCase {
             vertical: defaultMouseSettings().vertical, horizontal: defaultMouseSettings().horizontal,
             pointer: defaultMouseSettings().pointer,
             buttons: [
-                ButtonRule(button: 3, modifiers: 0, actionId: "known"),
-                ButtonRule(button: 4, modifiers: 0, actionId: "gone"),
+                ButtonRule(button: 3, modifiers: 0, actionId: "known", trigger: .click),
+                ButtonRule(button: 4, modifiers: 0, actionId: "gone", trigger: .click),
             ],
             gestures: defaultMouseSettings().gestures,
             horizontalScrollModifier: defaultMouseSettings().horizontalScrollModifier,
-            rawScrollModifier: defaultMouseSettings().rawScrollModifier
+            rawScrollModifier: defaultMouseSettings().rawScrollModifier,
+            holdMs: 350
         )
         let compiled = CompiledMouse(settings: settings, actions: ["known": .noop], neutral: defaultMouseSettings().vertical)
         XCTAssertNotNil(compiled.buttonActions[ButtonKey(button: 3, modifiers: 0)])
@@ -367,7 +368,7 @@ final class WindowManagementTests: XCTestCase {
         defer { world.cleanUp() }
         let store = WindowStore(core: world.core)
         let entry = LayoutEntry(appId: "com.example", title: "Doc", displayId: "d", frame: Rect(x: 0, y: 0, width: 0.5, height: 1))
-        store.saveLayout(SavedLayout(id: "L1", name: "Writing", displayKey: "d", isAuto: false, createdAt: 1, entries: [entry], unplaced: .leave, launchMissing: false))
+        store.saveLayout(SavedLayout(id: "L1", name: "Writing", displayKey: "d", isAuto: false, createdAt: 1, entries: [entry], unplaced: .leave, launchMissing: false, isGroup: false))
         XCTAssertEqual(store.layouts.map(\.name), ["Writing"])
         XCTAssertEqual(store.title(forCommand: store.layoutCommand(store.layouts[0])), "Layout: Writing")
         store.deleteLayout("L1")

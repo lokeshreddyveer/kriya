@@ -46,6 +46,14 @@ final class InteractionTrace: ObservableObject {
 
     func clear() { DispatchQueue.main.async { self.entries.removeAll() } }
 
+    /// Whether anything is being recorded right now. Cheap, and safe from any thread, so a caller can skip the work of
+    /// describing an event when nobody is looking.
+    var isRecording: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return running && now() <= until
+    }
+
     /// Records something Kriya did. Does nothing while the trace is off, so it costs next to nothing.
     func note(_ source: String, _ text: String) {
         lock.lock()

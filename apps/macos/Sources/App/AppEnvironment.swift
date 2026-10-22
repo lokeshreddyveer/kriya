@@ -315,6 +315,8 @@ final class AppEnvironment {
         // Apps, open windows, files, clipboard history, macOS settings, a calculator, timers and emoji.
         let sources = LauncherSources(inventory: inventory, clipboard: clipboard, prefs: keyboard.palette.prefs)
         sources.intelligence = intelligence
+        devices.activeDeviceID = { [weak activity] in activity?.currentDeviceID() }
+        devices.lastUsedProvider = { [weak activity] id in activity?.lastUsed(id) }
         clipboard.quick.extraMenuActions = { [weak intelligence, weak clipboard] item in
             guard let intelligence, intelligence.service.isAvailable, intelligence.service.settings.onClipboardItems, !item.sensitive,
                   item.kind == .text || item.kind == .richText || item.kind == .url,

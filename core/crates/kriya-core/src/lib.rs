@@ -72,10 +72,13 @@ pub use model::{
     FeatureOverride, LogLevel, Profile,
 };
 pub use mouse::{
-    ButtonRule, GestureBinding, GestureDirection, GestureSettings, MouseAssignment, MouseConfig,
-    MousePreset, MouseSettings, PointerAccelerationPreset, PointerSettings, ScrollAxis,
+    ButtonRule, ButtonTrigger, GestureBinding, GestureDirection, GestureSettings, MouseAssignment,
+    MouseConfig, MousePreset, MouseSettings, PointerAccelerationPreset, PointerSettings,
+    ScrollAxis,
 };
-pub use pointer_effects::{HaloStyle, MagnifierShape, PointerEffectsConfig, SavedPosition};
+pub use pointer_effects::{
+    HaloStyle, MagnifierShape, PointerEffectsConfig, SavedPosition, SpotlightShape,
+};
 pub use pointer_menu::{PointerMenuConfig, PointerMenuItem};
 pub use remap::{EngineEffect, EngineResult, RemapConfig, RemapEngine, RemapOutput, RemapRule};
 pub use rules::{Rule, Trigger};

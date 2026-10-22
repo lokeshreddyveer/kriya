@@ -78,6 +78,7 @@ final class MouseFeature: FeatureModule {
         cancellables.removeAll()
         driver.stop()
         smoother.clear()
+        holds.cancel()
         gestures.reset()
         tuner.restoreAll()
         context?.activity.stop()
@@ -118,8 +119,14 @@ final class MouseFeature: FeatureModule {
         CGAssociateMouseAndMouseCursorPosition(1)
     }
 
+    /// The same note as `trace`, for a place that holds the lock: done after it is let go.
+    private func traceLater(_ text: String, button: UInt32) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in self?.trace(text, button: button) }
+    }
+
     func systemDidWake() {
         // Sleep can drop the pointer settings and any half-finished press.
+        holds.cancel()
         gestures.reset()
         applyPointerSettings()
     }
@@ -259,6 +266,34 @@ final class MouseFeature: FeatureModule {
 
     // MARK: Buttons, gestures and rocker clicks
 
+    private struct HoldPayload {
+        let hold: Action
+        /// The button's own click rule, if it has one, which runs when it is let go before the hold time.
+        let click: Action?
+    }
+
+    private let holds = HoldTracker<HoldPayload>()
+
+    /// Says in the trace what happened to a mouse button, never what the rule does. Costs nothing when no trace is running.
+    private func trace(_ text: String, button: UInt32) {
+        guard InteractionTrace.shared.isRecording else { return }
+        let device = context?.activity.currentDeviceID().flatMap { context?.devices.displayName(forID: $0) }
+        InteractionTrace.shared.note("Mouse", Self.traceText(text, button: button, device: device))
+    }
+
+    /// What a trace line says: which button, what happened to it, and which device. Nothing about what the rule does, which
+    /// app it was in, where the pointer was or anything typed.
+    static func traceText(_ text: String, button: UInt32, device: String?) -> String {
+        "\(MouseButtons.name(button)) \(text)" + (device.map { " (\($0))" } ?? "")
+    }
+
+    private func holdTimerFired(_ id: Int) {
+        let now = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        guard let payload = holds.fireIfDue(id: id, nowMs: now) else { return }
+        InteractionTrace.shared.note("Mouse", "A held button's rule ran")
+        run(payload.hold)
+    }
+
     private func handleButton(down: Bool, _ event: CGEvent, _ compiled: CompiledMouse, nowMs: UInt64) -> EventDisposition {
         let button = UInt32(truncatingIfNeeded: event.getIntegerValueField(.mouseEventButtonNumber))
         let location = event.location
@@ -273,9 +308,11 @@ final class MouseFeature: FeatureModule {
         case .swallow:
             return .drop
         case .rocker(let kind):
+            trace("rocker gesture ran a rule", button: button)
             run(kind == .rightThenLeft ? compiled.rockerRightThenLeft : compiled.rockerLeftThenRight)
             return .drop
         case .gesture(let direction):
+            trace("gesture \(direction.title.lowercased()) ran a rule", button: button)
             run(compiled.gestureActions[direction])
             return .drop
         case .replayClick(let replayed):
@@ -290,11 +327,38 @@ final class MouseFeature: FeatureModule {
         }
 
         let key = ButtonKey(button: button, modifiers: modifiers)
+
+        // A button with a hold rule has its press kept back: held long enough it runs the rule, let go sooner it is an
+        // ordinary click (its own click rule if it has one, otherwise the click the app would have had).
+        if down, let hold = compiled.holdActions[key] {
+            let id = holds.press(
+                button: button, location: location, flags: event.flags, nowMs: nowMs, holdMs: compiled.holdMs,
+                payload: HoldPayload(hold: hold, click: compiled.buttonActions[key])
+            )
+            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + .milliseconds(Int(compiled.holdMs))) { [weak self] in
+                self?.holdTimerFired(id)
+            }
+            return .drop
+        }
+        if !down {
+            switch holds.release(button: button) {
+            case .notTracked:
+                break
+            case .afterHold:
+                return .drop
+            case .early(let at, let flags, let payload):
+                trace(payload.click == nil ? "released before the hold time, passed on as a click" : "released before the hold time, ran its click rule", button: button)
+                if let click = payload.click { run(click) } else { replayClick(button: button, at: at, flags: flags) }
+                return .drop
+            }
+        }
+
         lock.lock()
         defer { lock.unlock() }
         if down {
             if let action = compiled.buttonActions[key] {
                 swallowedReleases.insert(button)
+                if InteractionTrace.shared.isRecording { traceLater("ran its click rule", button: button) }
                 run(action)
                 return .drop
             }

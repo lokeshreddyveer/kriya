@@ -137,7 +137,7 @@ final class DragSnapper {
             zones.hide()
             return nil
         }
-        let layout = store.layouts.first { $0.id == config.dropZoneLayoutId } ?? store.layouts.last { !$0.isAuto }
+        let layout = store.layouts.first { $0.id == config.dropZoneLayoutId } ?? store.layouts.last { !$0.isAuto && !$0.isGroup }
         guard let layout else { return nil }
         var entries = layout.entries.filter { $0.displayId == display.id }
         if entries.isEmpty, controller.displays.displays.count == 1 { entries = layout.entries }

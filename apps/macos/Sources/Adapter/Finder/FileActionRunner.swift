@@ -4,6 +4,11 @@ import AppKit
 /// "name 2"), refuses to touch system folders, asks first when the action changes files, and says what happened.
 final class FileActionRunner {
     private let store: FinderStore
+    /// What recent actions did, so they can be looked at and undone.
+    let history: FileOperationHistory
+    /// Where items were sent lately, and the starred folders, for the Move to / Copy to chooser.
+    let destinations: FolderDestinations
+    private lazy var chooser = DestinationChooser(destinations: destinations)
     private let toast = Toast()
     private let fm = FileManager.default
     /// Disk work runs one task at a time, so two quick actions never pick the same new name.
@@ -15,8 +20,10 @@ final class FileActionRunner {
     /// Shows the batch rename window. Set by the app; tests leave it out.
     var presentBatchRename: ((_ names: [String], _ others: [String], _ rule: BatchRenameRule, _ apply: @escaping (BatchRenameRule) -> Void) -> Void)?
 
-    init(store: FinderStore) {
+    init(store: FinderStore, history: FileOperationHistory = FileOperationHistory(), destinations: FolderDestinations = FolderDestinations()) {
         self.store = store
+        self.history = history
+        self.destinations = destinations
     }
 
     // MARK: Entry point (main thread)
@@ -164,18 +171,58 @@ final class FileActionRunner {
     struct Outcome {
         var message: String
         var reveal: [URL]
+        /// What changed on disk, for the history and for undo. Empty when nothing was changed.
+        var steps: [FileStep] = []
+        /// Items that failed, each with its reason.
+        var failures: [String] = []
+        var isError = false
+
+        static func created(_ message: String, _ urls: [URL]) -> Outcome {
+            Outcome(message: message, reveal: urls, steps: urls.map { .created(path: $0.path) })
+        }
     }
 
     private func finish(_ outcome: Outcome) {
         DispatchQueue.main.async { [self] in
-            toast.show(outcome.message)
+            history.record(title: outcome.message, steps: outcome.steps, failures: outcome.failures)
+            toast.show(outcome.message, isError: outcome.isError)
             if !outcome.reveal.isEmpty && outcome.reveal.count <= 50 { NSWorkspace.shared.activateFileViewerSelecting(outcome.reveal) }
+        }
+    }
+
+    // MARK: Undo
+
+    /// Takes an earlier operation back. It runs with the other disk work, so it never overlaps an action in progress.
+    func undo(_ id: UUID) {
+        guard let operation = history.operation(id), operation.canUndo else { return }
+        let steps = operation.steps
+        diskQueue.async { [self] in
+            let report = FileUndo.perform(steps)
+            DispatchQueue.main.async { [self] in
+                history.applyUndo(report, to: id)
+                toast.show(report.summary, isError: report.restored + report.trashed == 0 && !report.problems.isEmpty)
+            }
+        }
+    }
+
+    /// Shows where an operation's items are now.
+    func reveal(_ id: UUID) {
+        guard let operation = history.operation(id) else { return }
+        let urls = operation.affectedPaths.map { URL(fileURLWithPath: $0) }.filter { fm.fileExists(atPath: $0.path) }
+        if urls.isEmpty {
+            toast.show("Those items are no longer where they were left.", isError: true)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting(Array(urls.prefix(50)))
         }
     }
 
     private func fail(_ error: Error) {
         Log.warning("Finder", "An action failed")
-        toast.show(error.localizedDescription, isError: true)
+        let reason = error.localizedDescription
+        DispatchQueue.main.async { [self] in
+            history.record(title: "An action failed", steps: [], failures: [reason])
+            toast.show(reason, isError: true)
+        }
     }
 
     // MARK: Creating
@@ -199,7 +246,7 @@ final class FileActionRunner {
         let unique = finderUniqueName(candidate: name, existing: names(in: folder))
         let url = folder.appendingPathComponent(unique)
         guard fm.createFile(atPath: url.path, contents: Data()) else { throw FileActionError("Could not create the file here.") }
-        return Outcome(message: "Created \(unique)", reveal: [url])
+        return .created("Created \(unique)", [url])
     }
 
     private func newFile(from template: FileTemplate, in folder: URL) throws -> Outcome {
@@ -211,14 +258,14 @@ final class FileActionRunner {
         } else {
             guard fm.createFile(atPath: url.path, contents: Data((template.content ?? "").utf8)) else { throw FileActionError("Could not create the file here.") }
         }
-        return Outcome(message: "Created \(unique)", reveal: [url])
+        return .created("Created \(unique)", [url])
     }
 
     private func newFolder(named name: String, in folder: URL) throws -> Outcome {
         let unique = finderUniqueName(candidate: name, existing: names(in: folder))
         let url = folder.appendingPathComponent(unique, isDirectory: true)
         try fm.createDirectory(at: url, withIntermediateDirectories: false)
-        return Outcome(message: "Created \(unique)", reveal: [url])
+        return .created("Created \(unique)", [url])
     }
 
     private func newFolder(from template: FolderTemplate, in folder: URL) throws -> Outcome {
@@ -236,7 +283,7 @@ final class FileActionRunner {
                 fm.createFile(atPath: target.path, contents: Data((entry.content ?? "").utf8))
             }
         }
-        return Outcome(message: "Created \(unique)", reveal: [root])
+        return .created("Created \(unique)", [root])
     }
 
     // MARK: Copying and moving
@@ -250,7 +297,7 @@ final class FileActionRunner {
             try fm.copyItem(at: url, to: copy)
             made.append(copy)
         }
-        return Outcome(message: made.count == 1 ? "Duplicated" : "Duplicated \(made.count) items", reveal: made)
+        return .created(made.count == 1 ? "Duplicated" : "Duplicated \(made.count) items", made)
     }
 
     private func transfer(_ urls: [URL], to fixed: String?, move: Bool) {
@@ -263,21 +310,19 @@ final class FileActionRunner {
         if let fixed {
             destination = URL(fileURLWithPath: fixed, isDirectory: true)
         } else {
-            let panel = NSOpenPanel()
-            panel.canChooseFiles = false
-            panel.canChooseDirectories = true
-            panel.canCreateDirectories = true
-            panel.allowsMultipleSelection = false
-            panel.prompt = move ? "Move Here" : "Copy Here"
-            panel.message = move ? "Choose where to move the items." : "Choose where to copy the items."
-            NSApp.activate(ignoringOtherApps: true)
-            guard panel.runModal() == .OK, let chosen = panel.url else { return }
+            guard let chosen = chooser.choose(count: urls.count, move: move) else { return }
             destination = chosen
+            destinations.used(chosen.path)
         }
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            do {
-                var placed: [URL] = []
-                for url in urls {
+            // Each item is tried on its own, so one that cannot be placed does not stop the rest, and what happened to
+            // every item is written down.
+            var placed: [URL] = []
+            var steps: [FileStep] = []
+            var failures: [String] = []
+            let verb = move ? "Moved" : "Copied"
+            for url in urls {
+                do {
                     let into = destination.standardizedFileURL.path
                     let from = url.standardizedFileURL.path
                     if into == from || into.hasPrefix(from + "/") { throw FileActionError("A folder cannot be moved or copied into itself.") }
@@ -285,11 +330,20 @@ final class FileActionRunner {
                     let result = destination.appendingPathComponent(name)
                     if move { try fm.moveItem(at: url, to: result) } else { try fm.copyItem(at: url, to: result) }
                     placed.append(result)
+                    steps.append(move ? .moved(from: url.path, to: result.path) : .created(path: result.path))
+                } catch {
+                    failures.append("“\(url.lastPathComponent)”: \(error.localizedDescription)")
                 }
-                finish(Outcome(message: "\(move ? "Moved" : "Copied") \(placed.count) item\(placed.count == 1 ? "" : "s")", reveal: placed))
-            } catch {
-                fail(error)
             }
+            let message: String
+            if failures.isEmpty {
+                message = "\(verb) \(placed.count) item\(placed.count == 1 ? "" : "s")"
+            } else if placed.isEmpty {
+                message = failures.count == 1 ? failures[0] : "Nothing was \(verb.lowercased()). \(failures.count) items failed."
+            } else {
+                message = "\(verb) \(placed.count) of \(urls.count) items. \(failures.count) failed: see Recent File Operations."
+            }
+            finish(Outcome(message: message, reveal: placed, steps: steps, failures: failures, isError: placed.isEmpty))
         }
     }
 
@@ -325,6 +379,7 @@ final class FileActionRunner {
         }
         do {
             try fm.moveItem(at: url, to: target)
+            history.record(title: "Renamed “\(url.lastPathComponent)”", steps: [.moved(from: url.path, to: target.path)], failures: [])
             toast.show("Renamed")
         } catch {
             fail(error)
@@ -350,8 +405,11 @@ final class FileActionRunner {
             guard finderRenamePlanReady(plan: plan) else { return }
             DispatchQueue.global(qos: .userInitiated).async { [self] in
                 do {
-                    try applyRenames(plan, in: URL(fileURLWithPath: parent, isDirectory: true))
-                    finish(Outcome(message: "Renamed \(plan.filter { !$0.unchanged }.count) items", reveal: []))
+                    let folder = URL(fileURLWithPath: parent, isDirectory: true)
+                    try applyRenames(plan, in: folder)
+                    let changes = plan.filter { !$0.unchanged }
+                    let steps = changes.map { FileStep.moved(from: folder.appendingPathComponent($0.from).path, to: folder.appendingPathComponent($0.to).path) }
+                    finish(Outcome(message: "Renamed \(changes.count) items", reveal: [], steps: steps))
                 } catch {
                     fail(error)
                 }
@@ -433,7 +491,7 @@ final class FileActionRunner {
                 made.append(folder.appendingPathComponent(name))
             }
         }
-        return Outcome(message: made.count == 1 ? "Compressed" : "Made \(made.count) archives", reveal: made)
+        return .created(made.count == 1 ? "Compressed" : "Made \(made.count) archives", made)
     }
 
     private func extract(_ urls: [URL]) throws -> Outcome {
@@ -458,7 +516,7 @@ final class FileActionRunner {
             }
             made.append(out)
         }
-        return Outcome(message: made.count == 1 ? "Extracted" : "Extracted \(made.count) archives", reveal: made)
+        return .created(made.count == 1 ? "Extracted" : "Extracted \(made.count) archives", made)
     }
 
     private func convert(_ urls: [URL], to target: ConversionTarget) throws -> Outcome {
@@ -466,7 +524,7 @@ final class FileActionRunner {
         for url in urls {
             made.append(try Converter.convert(url, to: target, into: url.deletingLastPathComponent()))
         }
-        return Outcome(message: "Converted \(made.count) file\(made.count == 1 ? "" : "s") to \(target.title)", reveal: made)
+        return .created("Converted \(made.count) file\(made.count == 1 ? "" : "s") to \(target.title)", made)
     }
 
     // MARK: Scripts and Shortcuts

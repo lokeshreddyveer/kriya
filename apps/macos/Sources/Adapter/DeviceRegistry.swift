@@ -17,6 +17,20 @@ struct InputDevice: Identifiable, Equatable {
 /// it reconnects.
 final class DeviceRegistry: ObservableObject {
     @Published private(set) var devices: [InputDevice] = []
+    /// What the Devices pane shows beyond the name: battery, last use and reconnection, by device id.
+    @Published private(set) var statuses: [String: DeviceStatus] = [:]
+
+    /// Where battery readings come from. A test replaces it, so no hardware is needed.
+    var batteryReader: () -> [BatteryReading] = DeviceBattery.readSystem
+    /// When a device was last used, and which device is in use now. Set by the app from the activity tracker.
+    var lastUsedProvider: (String) -> Date? = { _ in nil }
+    var activeDeviceID: () -> String? = { nil }
+
+    private var history = ConnectionHistory()
+    private var readings: [BatteryReading] = []
+    private var statusTimer: Timer?
+    private let nameLock = NSLock()
+    private var names: [String: String] = [:]          // guarded by nameLock, for the event tap's thread
 
     private let core: KriyaCore
     private var manager: IOHIDManager?
@@ -50,10 +64,16 @@ final class DeviceRegistry: ObservableObject {
         }
         self.manager = manager
         Log.info("Devices", "Watching for mice and trackpads")
+        refreshStatus()
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in self?.refreshStatus() }
+        RunLoop.main.add(timer, forMode: .common)
+        statusTimer = timer
     }
 
     func stop() {
         guard let manager else { return }
+        statusTimer?.invalidate()
+        statusTimer = nil
         IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         self.manager = nil
@@ -91,7 +111,51 @@ final class DeviceRegistry: ObservableObject {
     func forget(_ id: String) {
         guard (liveCounts[id] ?? 0) == 0 else { return }
         try? core.forgetDevice(id: id)
+        history.forget(id)
         loadRecords()
+    }
+
+    // MARK: Status (battery, last use, reconnection)
+
+    /// Reads batteries again, off the main thread, then updates what the pane shows. Cheap enough to run every minute.
+    func refreshStatus() {
+        let reader = batteryReader
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let fresh = reader()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.readings = fresh
+                self.publishStatuses()
+            }
+        }
+    }
+
+    private func publishStatuses() {
+        var next: [String: DeviceStatus] = [:]
+        for device in devices {
+            var status = DeviceStatus()
+            if device.isConnected {
+                let wanted = [device.record.name, device.record.nickname].compactMap { $0 }
+                status.battery = DeviceBattery.state(forDeviceNamed: wanted, readings: readings)
+            }
+            status.connectedAt = history.connectedAt[device.id]
+            status.reconnectedAt = history.reconnectedAt[device.id]
+            status.lastUsed = lastUsedProvider(device.id)
+            next[device.id] = status
+        }
+        if next != statuses { statuses = next }
+    }
+
+    /// The name of a device, from any thread (the event tap's, for the trace).
+    func displayName(forID id: String) -> String? {
+        nameLock.lock()
+        defer { nameLock.unlock() }
+        return names[id]
+    }
+
+    /// The device in use right now, by name, if there is one.
+    func activeDeviceName() -> String? {
+        activeDeviceID().flatMap(displayName(forID:))
     }
 
     // MARK: Registry state
@@ -112,6 +176,10 @@ final class DeviceRegistry: ObservableObject {
                 if a.isConnected != b.isConnected { return a.isConnected }
                 return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
             }
+        nameLock.lock()
+        names = Dictionary(devices.map { ($0.id, $0.displayName) }, uniquingKeysWith: { first, _ in first })
+        nameLock.unlock()
+        publishStatuses()
     }
 
     // MARK: IOHIDManager callbacks (main run loop)
@@ -145,7 +213,9 @@ final class DeviceRegistry: ObservableObject {
             Log.error("Devices", "Could not save device: \(error.userMessage)")
         }
         if liveCounts[described.id] == 1 {
+            history.connected(described.id, at: Date())
             Log.info("Devices", "Connected: \(described.name) (\(described.connection.title), \(described.transport))")
+            refreshStatus()
         }
         publish()
     }
@@ -159,6 +229,7 @@ final class DeviceRegistry: ObservableObject {
             let now = SystemInfo.nowSeconds
             try? core.touchDevice(id: id, lastSeen: now)
             records[id]?.lastSeen = now
+            history.disconnected(id)
             Log.info("Devices", "Disconnected: \(records[id]?.name ?? id)")
         }
         publish()

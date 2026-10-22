@@ -3,6 +3,12 @@ import SwiftUI
 
 /// What the tester shows for an event. Kept apart from the view so it can be checked.
 enum InputTesterFormat {
+    /// An event line with the device it seems to come from, when that is known.
+    static func attributed(_ line: String, device: String?) -> String {
+        guard let device, !device.isEmpty else { return line }
+        return "\(line)  ·  \(device)"
+    }
+
     static func button(_ number: Int, down: Bool) -> String {
         "\(MouseButtons.name(UInt32(max(number, 0)))) \(down ? "pressed" : "released")"
     }

@@ -38,11 +38,19 @@ enum FolderTools {
         for name in names {
             let unique = finderUniqueName(candidate: name, existing: existing)
             let url = folder.appendingPathComponent(unique, isDirectory: true)
-            try fm.createDirectory(at: url, withIntermediateDirectories: false)
+            do {
+                try fm.createDirectory(at: url, withIntermediateDirectories: false)
+            } catch {
+                // Folders already made stay made and are written down; the rest are reported.
+                if made.isEmpty { throw error }
+                var outcome = FileActionRunner.Outcome.created("Created \(made.count) of \(names.count) folders. The rest failed.", made)
+                outcome.failures = ["“\(unique)”: \(error.localizedDescription)"]
+                return outcome
+            }
             existing.append(unique)
             made.append(url)
         }
-        return FileActionRunner.Outcome(message: made.count == 1 ? "Created 1 folder" : "Created \(made.count) folders", reveal: made)
+        return .created(made.count == 1 ? "Created 1 folder" : "Created \(made.count) folders", made)
     }
 
     // MARK: Large files
@@ -159,7 +167,10 @@ enum FolderTools {
         }
         guard !moves.isEmpty else { return FileActionRunner.Outcome(message: "Nothing to tidy: no loose files of a known kind", reveal: []) }
         UserDefaults.standard.set(moves, forKey: undoKey)
-        return FileActionRunner.Outcome(message: "Moved \(moves.count) file\(moves.count == 1 ? "" : "s") into folders. “Undo Last Tidy-Up” puts them back.", reveal: [])
+        return FileActionRunner.Outcome(
+            message: "Moved \(moves.count) file\(moves.count == 1 ? "" : "s") into folders. “Undo Last Tidy-Up” puts them back.", reveal: [],
+            steps: moves.map { .moved(from: $0[0], to: $0[1]) }
+        )
     }
 
     /// Puts back what the last tidy-up moved, skipping any file that has since moved or whose old place is taken.
@@ -244,6 +255,6 @@ enum FolderTools {
             try URL.writeBookmarkData(data, to: alias)
             made.append(alias)
         }
-        return FileActionRunner.Outcome(message: made.count == 1 ? "Made an alias" : "Made \(made.count) aliases", reveal: made)
+        return .created(made.count == 1 ? "Made an alias" : "Made \(made.count) aliases", made)
     }
 }

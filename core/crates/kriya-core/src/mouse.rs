@@ -146,13 +146,33 @@ impl PointerSettings {
 
 // ---- buttons ---------------------------------------------------------------------------------------------------------
 
+/// When a button rule runs: when the button is clicked, or only when it is held down for a moment.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, uniffi::Enum,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ButtonTrigger {
+    /// As soon as it is pressed. The way every rule worked before holding existed.
+    #[default]
+    Click,
+    /// After it has been held for `MouseSettings::hold_ms`. A press let go sooner is an ordinary click.
+    Hold,
+}
+
 /// Makes one mouse button (optionally with modifier keys held) run a saved action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct ButtonRule {
     pub button: u32,
     pub modifiers: u64,
     pub action_id: String,
+    /// A rule saved before holding existed has none, and is a click rule.
+    #[serde(default)]
+    pub trigger: ButtonTrigger,
 }
+
+/// How long a button is held before a hold rule runs, in milliseconds, and the range it may be set to.
+pub const DEFAULT_HOLD_MS: u32 = 350;
+pub const HOLD_MS_RANGE: std::ops::RangeInclusive<u32> = 150..=1500;
 
 // ---- gestures --------------------------------------------------------------------------------------------------------
 
@@ -222,7 +242,7 @@ impl GestureSettings {
 
 // ---- a whole set of settings -----------------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
 #[serde(default)]
 pub struct MouseSettings {
     pub vertical: ScrollAxis,
@@ -234,6 +254,23 @@ pub struct MouseSettings {
     pub horizontal_scroll_modifier: u64,
     /// Hold these keys to scroll with no smoothing, acceleration or other change. 0 turns it off.
     pub raw_scroll_modifier: u64,
+    /// How long a button must be held before a hold rule runs.
+    pub hold_ms: u32,
+}
+
+impl Default for MouseSettings {
+    fn default() -> Self {
+        MouseSettings {
+            vertical: ScrollAxis::default(),
+            horizontal: ScrollAxis::default(),
+            pointer: PointerSettings::default(),
+            buttons: Vec::new(),
+            gestures: GestureSettings::default(),
+            horizontal_scroll_modifier: 0,
+            raw_scroll_modifier: 0,
+            hold_ms: DEFAULT_HOLD_MS,
+        }
+    }
 }
 
 impl MouseSettings {
@@ -249,9 +286,13 @@ impl MouseSettings {
         if self.horizontal_scroll_modifier == self.raw_scroll_modifier {
             self.horizontal_scroll_modifier = 0;
         }
+        self.hold_ms = self
+            .hold_ms
+            .clamp(*HOLD_MS_RANGE.start(), *HOLD_MS_RANGE.end());
+        // A button can have a click rule and a hold rule at once, but not two of the same kind.
         let mut seen = HashSet::new();
         self.buttons.retain(|b| {
-            (2..=MAX_BUTTON).contains(&b.button) && seen.insert((b.button, b.modifiers))
+            (2..=MAX_BUTTON).contains(&b.button) && seen.insert((b.button, b.modifiers, b.trigger))
         });
         self
     }
@@ -573,6 +614,57 @@ mod tests {
     }
 
     #[test]
+    fn a_rule_saved_before_holding_existed_is_a_click_rule_and_the_hold_time_has_a_default() {
+        let old = r#"{"buttons":[{"button":3,"modifiers":0,"action_id":"a"}]}"#;
+        let settings: MouseSettings = serde_json::from_str(old).unwrap();
+        assert_eq!(settings.buttons[0].trigger, ButtonTrigger::Click);
+        assert_eq!(settings.hold_ms, DEFAULT_HOLD_MS);
+        assert_eq!(MouseSettings::default().hold_ms, DEFAULT_HOLD_MS);
+        let json = serde_json::to_string(&settings).unwrap();
+        assert_eq!(
+            serde_json::from_str::<MouseSettings>(&json).unwrap(),
+            settings
+        );
+    }
+
+    #[test]
+    fn a_button_can_have_one_click_rule_and_one_hold_rule_but_not_two_of_a_kind() {
+        let rule = |trigger: ButtonTrigger, action: &str| ButtonRule {
+            button: 3,
+            modifiers: 0,
+            action_id: action.into(),
+            trigger,
+        };
+        let s = MouseSettings {
+            buttons: vec![
+                rule(ButtonTrigger::Click, "click"),
+                rule(ButtonTrigger::Hold, "hold"),
+                rule(ButtonTrigger::Hold, "second hold"),
+                rule(ButtonTrigger::Click, "second click"),
+            ],
+            ..MouseSettings::default()
+        }
+        .sanitized();
+        let ids: Vec<&str> = s.buttons.iter().map(|b| b.action_id.as_str()).collect();
+        assert_eq!(ids, ["click", "hold"]);
+    }
+
+    #[test]
+    fn the_hold_time_is_kept_in_range() {
+        let sanitized = |ms: u32| {
+            MouseSettings {
+                hold_ms: ms,
+                ..MouseSettings::default()
+            }
+            .sanitized()
+            .hold_ms
+        };
+        assert_eq!(sanitized(0), 150);
+        assert_eq!(sanitized(350), 350);
+        assert_eq!(sanitized(60_000), 1500);
+    }
+
+    #[test]
     fn left_and_right_buttons_cannot_be_remapped_and_repeats_are_dropped() {
         let s = MouseSettings {
             buttons: vec![
@@ -580,26 +672,31 @@ mod tests {
                     button: 0,
                     modifiers: 0,
                     action_id: "a".into(),
+                    trigger: ButtonTrigger::Click,
                 },
                 ButtonRule {
                     button: 1,
                     modifiers: 0,
                     action_id: "a".into(),
+                    trigger: ButtonTrigger::Click,
                 },
                 ButtonRule {
                     button: 3,
                     modifiers: 0,
                     action_id: "a".into(),
+                    trigger: ButtonTrigger::Click,
                 },
                 ButtonRule {
                     button: 3,
                     modifiers: 0,
                     action_id: "b".into(),
+                    trigger: ButtonTrigger::Click,
                 },
                 ButtonRule {
                     button: 3,
                     modifiers: 8,
                     action_id: "b".into(),
+                    trigger: ButtonTrigger::Click,
                 },
             ],
             ..MouseSettings::default()
@@ -688,6 +785,7 @@ mod tests {
                     button: 3,
                     modifiers: 0,
                     action_id: "a".into(),
+                    trigger: ButtonTrigger::Click,
                 }],
                 ..MouseSettings::default()
             },
@@ -707,6 +805,7 @@ mod tests {
                 button: 3,
                 modifiers: 0,
                 action_id: "a".into(),
+                trigger: ButtonTrigger::Click,
             }],
             gestures: GestureSettings {
                 bindings: vec![GestureBinding {

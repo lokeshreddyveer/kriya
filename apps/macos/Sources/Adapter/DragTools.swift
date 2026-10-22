@@ -11,6 +11,13 @@ final class DragTools {
     private let windowStore: WindowStore
     private let run: (String) -> Void
     private var token: EventMonitor.Token?
+    private let autoScroll = AutoScroll()
+    private let autoMarker = AutoScrollMarker()
+    // Used only on `work`.
+    private var autoTimer: DispatchSourceTimer?
+    private var autoLastTick: UInt64 = 0
+    private var autoCarryX = 0.0
+    private var autoCarryY = 0.0
 
     private enum Phase { case idle, pending, scrolling }
 
@@ -48,7 +55,7 @@ final class DragTools {
         .leftMouseDown, .leftMouseUp, .leftMouseDragged,
         .rightMouseDown, .rightMouseUp, .rightMouseDragged,
         .otherMouseDown, .otherMouseUp, .otherMouseDragged,
-        .mouseMoved, .flagsChanged, .scrollWheel,
+        .mouseMoved, .flagsChanged, .scrollWheel, .keyDown,
     ]
 
     init(events: EventMonitor, store: DragToolsStore, windowStore: WindowStore, run: @escaping (String) -> Void) {
@@ -56,6 +63,7 @@ final class DragTools {
         self.store = store
         self.windowStore = windowStore
         self.run = run
+        autoScroll.onStop = { [weak self] reason in self?.autoScrollStopped(reason) }
     }
 
     func start() {
@@ -66,6 +74,7 @@ final class DragTools {
     }
 
     func stop() {
+        autoScroll.stop(.disabled)
         if let token { events.unsubscribe(token) }
         token = nil
         lock.lock()
@@ -94,7 +103,12 @@ final class DragTools {
             if active { track(event.location) }
             return .passThrough
         case .scrollWheel:
+            // Turning the wheel by hand takes over from auto-scroll, and goes through.
+            autoScroll.wheel()
             return wheel(event)
+        case .keyDown:
+            // Escape stops auto-scroll, and is not also given to the app.
+            return autoScroll.key(UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))) ? .drop : .passThrough
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             return buttonDown(type, event, config)
         case .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
@@ -118,6 +132,26 @@ final class DragTools {
         let number = buttonNumber(event)
         let held = KeyModifiers.bits(from: event.flags)
         let dragScrollsThis = config.scrollEnabled && number == config.scrollButton && held == config.scrollModifier
+
+        // Auto-scroll: any click while it is running stops it, and that click is not given to the app. A click of the chosen
+        // button (with its keys) starts it. Where drag-to-scroll uses the same button and keys, drag-to-scroll wins.
+        if autoScroll.click() {
+            lock.lock()
+            swallowUp.insert(number)
+            lock.unlock()
+            return .drop
+        }
+        if config.autoScrollEnabled, !dragScrollsThis, number == config.autoScrollButton, held == config.autoScrollModifier {
+            let start = event.location
+            autoScroll.start(at: start)
+            lock.lock()
+            swallowUp.insert(number)
+            lock.unlock()
+            autoMarker.show(at: start)
+            InteractionTrace.shared.note("Drag tools", "Auto-scroll started")
+            work.async { [self] in startAutoScrollTimer() }
+            return .drop
+        }
 
         // A button that turns the wheel into actions: the press is held back, and a press with no wheel turn still clicks.
         if !dragScrollsThis, config.buttonScrolls.contains(where: { $0.button == number }) {
@@ -253,6 +287,50 @@ final class DragTools {
         lock.unlock()
         if let fire { DispatchQueue.main.async { [run] in run(fire) } }
         return .drop
+    }
+
+    // MARK: Auto-scroll (on `work`)
+
+    private func startAutoScrollTimer() {
+        autoTimer?.cancel()
+        autoCarryX = 0
+        autoCarryY = 0
+        autoLastTick = DispatchTime.now().uptimeNanoseconds
+        let source = DispatchSource.makeTimerSource(queue: work)
+        source.schedule(deadline: .now() + .milliseconds(8), repeating: .milliseconds(8), leeway: .milliseconds(1))
+        source.setEventHandler { [weak self] in self?.autoScrollTick() }
+        autoTimer = source
+        source.resume()
+    }
+
+    private func autoScrollTick() {
+        let config = store.current
+        guard config.autoScrollEnabled else {
+            autoScroll.stop(.disabled)
+            return
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+        let seconds = Double(now &- autoLastTick) / 1_000_000_000
+        autoLastTick = now
+        let pointer = CGEvent(source: nil)?.location ?? .zero
+        let step = autoScroll.step(pointer: pointer, seconds: seconds, speed: config.autoScrollSpeed)
+        autoCarryX += step.dx
+        autoCarryY += step.dy
+        let ix = Int32(autoCarryX.rounded(.towardZero))
+        let iy = Int32(autoCarryY.rounded(.towardZero))
+        autoCarryX -= Double(ix)
+        autoCarryY -= Double(iy)
+        guard ix != 0 || iy != 0 else { return }
+        SmoothScrollDriver.postScroll(dx: ix, dy: iy, flags: [], location: pointer)
+    }
+
+    private func autoScrollStopped(_ reason: AutoScroll.StopReason) {
+        autoMarker.hide()
+        work.async { [self] in
+            autoTimer?.cancel()
+            autoTimer = nil
+        }
+        InteractionTrace.shared.note("Drag tools", "Auto-scroll stopped (\(reason.rawValue))")
     }
 
     // MARK: Scrolling and gliding (on `work`)

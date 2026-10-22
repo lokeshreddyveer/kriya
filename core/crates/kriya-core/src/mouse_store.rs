@@ -470,7 +470,9 @@ fn write_config(conn: &Connection, config: &MouseConfig) -> Result<(), CoreError
 mod tests {
     use super::*;
     use crate::actions::Action;
-    use crate::mouse::{ButtonRule, GestureBinding, GestureDirection, GestureSettings, ScrollAxis};
+    use crate::mouse::{
+        ButtonRule, ButtonTrigger, GestureBinding, GestureDirection, GestureSettings, ScrollAxis,
+    };
 
     fn open() -> Store {
         Store::open_in_memory().unwrap()
@@ -491,6 +493,7 @@ mod tests {
                 button: 3,
                 modifiers: 0,
                 action_id: a.into(),
+                trigger: ButtonTrigger::Click,
             });
         }
         MousePreset {
