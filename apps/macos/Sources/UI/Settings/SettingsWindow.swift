@@ -21,7 +21,7 @@ enum SettingsPaneGroup: CaseIterable, Identifiable {
 
 /// Declared in sidebar order, so "next pane" and the Cmd-number shortcuts follow what the person sees.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case features, mouse, pointer, keyboard, devices, windows, workspaces, buttons, displays, finder, clipboard, selection, links, shelf, apps, automation, actions, profiles
+    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, clipboard, selection, links, shelf, apps, automation, actions, profiles
     case menuBar, power, general, permissions, backup, diagnostics, about
 
     var id: String { rawValue }
@@ -46,6 +46,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .selection: return "Selection Bar"
         case .links: return "Link Routing"
         case .keyboard: return "Keyboard"
+        case .shortcutMap: return "Shortcut Map"
         case .automation: return "Automation"
         case .devices: return "Devices"
         case .profiles: return "App Profiles"
@@ -76,6 +77,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .selection: return "text.cursor"
         case .links: return "arrow.triangle.branch"
         case .keyboard: return "keyboard"
+        case .shortcutMap: return "command.square"
         case .automation: return "gearshape.2"
         case .devices: return "computermouse"
         case .profiles: return "square.stack"
@@ -89,7 +91,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     var group: SettingsPaneGroup {
         switch self {
         case .features: return .overview
-        case .mouse, .pointer, .keyboard, .devices: return .input
+        case .mouse, .pointer, .keyboard, .shortcutMap, .devices: return .input
         case .windows, .workspaces, .buttons: return .windows
         case .finder, .clipboard, .selection, .links: return .filesAndText
         case .automation, .actions, .profiles: return .automate
@@ -120,6 +122,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .features: return "home features turn on off setup guide"
         case .mouse: return "scroll speed acceleration trackpad gestures buttons natural reverse"
         case .keyboard: return "shortcuts hotkeys text expansion snippets launcher palette"
+        case .shortcutMap: return "shortcuts hotkeys keys conflicts clash duplicate list all registry overview refused"
         case .devices: return "wired wireless bluetooth usb"
         case .pointer: return "cursor highlight halo click ring locate find magnifier zoom hide idle presentation screen sharing position"
         case .windows: return "snap tile resize move layout screen edge display half quarter maximize grid todo stash radial cascade ultrawide hot corners drop zones margin grow shrink"
@@ -268,6 +271,7 @@ struct SettingsRootView: View {
         case .selection: SelectionPane()
         case .links: LinksPane()
         case .keyboard: KeyboardPane()
+        case .shortcutMap: ShortcutMapPane()
         case .automation: AutomationPane()
         case .devices: DevicesPane()
         case .profiles: ProfilesPane()

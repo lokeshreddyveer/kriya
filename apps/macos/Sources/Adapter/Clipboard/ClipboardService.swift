@@ -230,7 +230,7 @@ final class ClipboardService: ObservableObject {
         let timer = Timer(timeInterval: 3600, repeats: true) { [store] _ in store.cleanup() }
         RunLoop.main.add(timer, forMode: .common)
         cleanupTimer = timer
-        hotkeys = HotkeyCenter { [weak self] command in self?.fire(command) }
+        hotkeys = HotkeyCenter(owner: "Clipboard") { [weak self] command in self?.fire(command) }
         store.$config
             .receive(on: DispatchQueue.main)
             .sink { [weak self] config in self?.registerShortcuts(config) }

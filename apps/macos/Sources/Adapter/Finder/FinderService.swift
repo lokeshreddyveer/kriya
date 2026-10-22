@@ -39,7 +39,7 @@ final class FinderService: ObservableObject {
         guard !isActive else { return }
         isActive = true
         store.setActive(true)
-        hotkeys = HotkeyCenter { [weak self] _ in self?.launcher.show() }
+        hotkeys = HotkeyCenter(owner: "Right-click menu") { [weak self] _ in self?.launcher.show() }
         store.$config
             .receive(on: DispatchQueue.main)
             .sink { [weak self] config in self?.updateLauncherShortcut(config) }

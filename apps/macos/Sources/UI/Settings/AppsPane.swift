@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension InstalledApp.Source {
     var label: String {
@@ -24,7 +25,7 @@ struct AppsPane: View {
     @State private var message: String?
 
     enum Tab: String, CaseIterable, Identifiable {
-        case installed = "Installed", leftovers = "Leftovers", updates = "Updates"
+        case installed = "Installed", install = "Install", leftovers = "Leftovers", updates = "Updates"
         var id: String { rawValue }
     }
 
@@ -36,11 +37,12 @@ struct AppsPane: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
-                .paneTabBar(maxWidth: 340)
+                .paneTabBar(maxWidth: 440)
                 .paneHeader()
             Group {
                 switch tab {
                 case .installed: installedTab
+                case .install: InstallTab()
                 case .leftovers: leftoversTab
                 case .updates: updatesTab
                 }
@@ -283,6 +285,141 @@ private struct RemoveSheet: View {
                     loaded = true
                 }
             }
+        }
+    }
+}
+
+
+/// Finding and installing apps with Homebrew, and saving or reinstalling a list of them. Every command is shown before it
+/// runs, and what Homebrew says while it works is kept below.
+private struct InstallTab: View {
+    @EnvironmentObject private var brew: HomebrewManager
+    @EnvironmentObject private var inventory: AppInventory
+    @State private var query = ""
+    @State private var missing: [String] = []
+    @State private var chosen = Set<String>()
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            if brew.brewPath == nil {
+                Section {
+                    Text("Homebrew is not installed on this Mac.")
+                    HStack {
+                        Link("About Homebrew", destination: URL(string: "https://brew.sh")!)
+                        Spacer()
+                        Button("Check Again") { brew.locate() }
+                    }
+                } footer: {
+                    Text("Kriya uses Homebrew, if you have it, to find and install apps. It never installs Homebrew itself.")
+                }
+            } else {
+                Section {
+                    HStack {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Search for an app", text: $query).textFieldStyle(.plain).onSubmit { brew.search(query) }
+                        Button("Search") { brew.search(query) }.controlSize(.small).disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    if let status = brew.status { Text(status).font(.callout).foregroundStyle(.secondary) }
+                    ForEach(brew.results, id: \.self) { token in
+                        HStack {
+                            Text(token)
+                            Spacer()
+                            if brew.installed.contains(token) {
+                                StateBadge(text: "Installed", color: Theme.ok)
+                            } else {
+                                Button("Install…") { confirmAndInstall([token]) }.controlSize(.small).disabled(brew.isRunning)
+                            }
+                        }
+                    }
+                } header: { Text("Find an app") } footer: {
+                    Text("Searches Homebrew's casks. You see the exact command before anything is installed.")
+                }
+
+                Section {
+                    Button("Save My Apps as a List…") { exportList() }
+                    Button("Reinstall from a List…") { importList() }
+                } header: { Text("Your apps list") } footer: {
+                    Text("A list holds the names of the Homebrew apps installed here. Open it on another Mac to see which ones are missing and install the ones you pick. System apps are never part of it.")
+                }
+
+                if !missing.isEmpty {
+                    Section {
+                        ForEach(missing, id: \.self) { token in
+                            Toggle(token, isOn: Binding(get: { chosen.contains(token) }, set: { on in if on { chosen.insert(token) } else { chosen.remove(token) } }))
+                        }
+                        HStack {
+                            Button("Select All") { chosen = Set(missing) }.controlSize(.small)
+                            Spacer()
+                            Button("Install \(chosen.count)…") { confirmAndInstall(missing.filter { chosen.contains($0) }) }
+                                .disabled(chosen.isEmpty || brew.isRunning)
+                        }
+                    } header: { Text("In the list, not on this Mac") }
+                } else if message != nil {
+                    Section { Text(message ?? "").font(.callout).foregroundStyle(.secondary) }
+                }
+
+                if !brew.log.isEmpty || brew.isRunning {
+                    Section {
+                        ScrollView {
+                            Text(brew.log).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 170)
+                        if brew.isRunning {
+                            HStack {
+                                ProgressView().controlSize(.small)
+                                Text("Working…").foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Stop") { brew.cancel() }.controlSize(.small)
+                            }
+                        }
+                    } header: { Text("What Homebrew says") }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { brew.locate() }
+    }
+
+    /// Shows the exact commands and installs only if the person agrees.
+    private func confirmAndInstall(_ tokens: [String]) {
+        let alert = NSAlert()
+        alert.messageText = tokens.count == 1 ? "Install \(tokens[0])?" : "Install \(tokens.count) apps?"
+        alert.informativeText = "These commands will run:\n\n" + tokens.map { HomebrewManager.command(install: $0) }.joined(separator: "\n")
+            + "\n\nSome apps ask for your password to finish. If Homebrew stops for that, run the command in Terminal."
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn { brew.install(tokens) }
+    }
+
+    private func exportList() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Kriya apps.json"
+        panel.message = "Save the list of Homebrew apps installed on this Mac."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try brew.exportList(to: url, apps: inventory.apps.map { ($0.name, $0.bundleID) })
+            message = "Saved \(brew.installed.count) apps to \(url.lastPathComponent)."
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func importList() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.message = "Choose a list saved by Kriya."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let wanted = try brew.readList(from: url)
+            brew.refreshInstalled()
+            missing = HomebrewParsing.missing(wanted: wanted, installed: brew.installed)
+            chosen = Set(missing)
+            message = missing.isEmpty ? "Everything in that list is already installed." : nil
+        } catch {
+            message = error.localizedDescription
         }
     }
 }

@@ -34,6 +34,7 @@ final class AppEnvironment {
     let displayTools: DisplayTools
     let fileShelf: FileShelf
     let inventory: AppInventory
+    let homebrew: HomebrewManager
     let runIdentifier: (String) -> Void
     let quickCommands: QuickCommands
     let popoverPrefs: PopoverPrefs
@@ -105,6 +106,7 @@ final class AppEnvironment {
         let displayTools = DisplayTools(store: screenStore)
         let fileShelf = FileShelf(store: screenStore)
         let inventory = AppInventory()
+        let homebrew = HomebrewManager()
         let keepAwake = KeepAwake()
         let remapStore = RemapStore(core: core)
         let keyboardDevices = KeyboardDevices()
@@ -186,6 +188,7 @@ final class AppEnvironment {
         self.displayTools = displayTools
         self.fileShelf = fileShelf
         self.inventory = inventory
+        self.homebrew = homebrew
         self.runIdentifier = runIdentifier
         self.quickCommands = QuickCommands(run: runIdentifier)
         self.popoverPrefs = PopoverPrefs()
@@ -307,11 +310,13 @@ extension View {
             .environmentObject(env.displayTools)
             .environmentObject(env.fileShelf)
             .environmentObject(env.inventory)
+            .environmentObject(env.homebrew)
             .environmentObject(env.keepAwake)
             .environmentObject(env.remapStore)
             .environmentObject(env.keyboardDevices)
             .environmentObject(env.quickCommands)
             .environmentObject(env.popoverPrefs)
+            .environmentObject(ShortcutRegistry.shared)
             .environmentObject(env.pasteStack)
             .environmentObject(env.clipboard)
             .environmentObject(env.clipboard.store)

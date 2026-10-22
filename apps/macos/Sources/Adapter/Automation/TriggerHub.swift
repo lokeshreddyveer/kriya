@@ -63,7 +63,10 @@ final class TriggerHub {
         }
         hotkeyIDs = Dictionary(wanted.map { ($0.1.command, $0.0) }, uniquingKeysWith: { first, _ in first })
         if hotkeys == nil {
-            hotkeys = HotkeyCenter { [weak self] command in
+            hotkeys = HotkeyCenter(owner: "Automation", title: { [weak self] command in
+                guard let self, let id = hotkeyIDs[command] else { return command }
+                return workflows.first(where: { $0.id == id })?.name ?? command
+            }) { [weak self] command in
                 guard let self, let id = hotkeyIDs[command], let workflow = workflows.first(where: { $0.id == id }) else { return }
                 fire(workflow, "Keyboard shortcut")
             }

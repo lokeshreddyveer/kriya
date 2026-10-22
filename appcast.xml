@@ -4,6 +4,14 @@
     <title>Kriya</title>
     <!-- One <item> per release, added by hand after scripts/release.sh and Sparkle's sign_update. -->
     <item>
+      <title>Kriya 0.2.5</title>
+      <pubDate>Thu, 22 Oct 2026 02:41:54 -0000</pubDate>
+      <sparkle:version>12</sparkle:version>
+      <sparkle:shortVersionString>0.2.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/lokeshreddyveer/kriya/releases/download/v0.2.5/Kriya-0.2.5.dmg" length="29122133" type="application/octet-stream" sparkle:edSignature="hW7+g1VEtGYY/9UKzUgE+srBM+Y8ehDpqM60nnLHy1F1D8gfLDAOIKOBmTTeOjud3H9ln44WQfFMgEQiMUoSBg=="/>
+    </item>
+    <item>
       <title>Kriya 0.2.4</title>
       <pubDate>Thu, 22 Oct 2026 02:21:42 -0000</pubDate>
       <sparkle:version>11</sparkle:version>

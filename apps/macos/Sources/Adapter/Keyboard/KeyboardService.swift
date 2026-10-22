@@ -180,11 +180,12 @@ final class KeyboardService: ObservableObject {
         self.expansion = expansion
         shortcuts.update()
         expansion.start()
-        hotkeys = HotkeyCenter { [weak self] _ in self?.palette.toggle() }
+        hotkeys = HotkeyCenter(owner: "Keyboard") { [weak self] _ in self?.palette.toggle() }
 
         store.$shortcuts.combineLatest(store.$snippets, store.$config)
             .debounce(for: .milliseconds(60), scheduler: DispatchQueue.main)
-            .sink { [weak self] _, _, config in
+            .sink { [weak self] shortcuts, _, config in
+                self?.listShortcuts(shortcuts)
                 self?.shortcuts?.update()
                 self?.expansion?.snippetsChanged()
                 if let key = config.paletteKey, config.paletteModifiers != 0 {
@@ -223,6 +224,16 @@ final class KeyboardService: ObservableObject {
             context?.executor.unregisterCommand(command)
         }
         palette.close()
+    }
+
+    /// Tells the shared shortcut list about the shortcuts Kriya finds by watching key presses, so they are checked for clashes too.
+    private func listShortcuts(_ list: [KeyShortcut]) {
+        let entries = list.filter(\.enabled).map { shortcut -> ShortcutEntry in
+            var apps: [String] = []
+            if case .onlyApps(let ids) = shortcut.scope { apps = ids }
+            return ShortcutEntry(owner: "Keyboard shortcuts", command: shortcut.id, title: shortcut.name, keyCode: shortcut.keyCode, modifiers: shortcut.modifiers, apps: apps)
+        }
+        ShortcutRegistry.shared.setPassive(owner: "Keyboard shortcuts", entries: entries)
     }
 
     /// Carries out what a shortcut is set to do.

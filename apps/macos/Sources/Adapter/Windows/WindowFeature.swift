@@ -35,7 +35,7 @@ final class WindowFeature: FeatureModule {
         radial = RadialMenu(controller: controller, store: store)
         grid = GridMenu(controller: controller, store: store)
 
-        hotkeys = HotkeyCenter { [weak self] command in self?.fire(command) }
+        hotkeys = HotkeyCenter(owner: "Windows", title: { [weak store] command in store?.title(forCommand: command) ?? command }) { [weak self] command in self?.fire(command) }
         dragSnapper = DragSnapper(store: store, controller: controller)
 
         controller.displays.onChange = { [weak controller] before, after in controller?.displaysChanged(from: before, to: after) }

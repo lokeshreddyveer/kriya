@@ -302,7 +302,7 @@ final class SelectionService: ObservableObject {
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             self?.toolbar.hide()
         }
-        hotkeys = HotkeyCenter { [weak self] _ in self?.showManually() }
+        hotkeys = HotkeyCenter(owner: "Selection bar") { [weak self] _ in self?.showManually() }
         store.$config
             .receive(on: DispatchQueue.main)
             .sink { [weak self] config in
