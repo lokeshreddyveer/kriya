@@ -17,6 +17,7 @@ struct AppsPane: View {
     @EnvironmentObject private var inventory: AppInventory
     @State private var tab: Tab = .installed
     @State private var query = ""
+    @State private var sort: Sort = .name
     @State private var removing: InstalledApp?
     @State private var orphans: [Leftover] = []
     @State private var orphansScanned = false
@@ -24,6 +25,11 @@ struct AppsPane: View {
 
     enum Tab: String, CaseIterable, Identifiable {
         case installed = "Installed", leftovers = "Leftovers", updates = "Updates"
+        var id: String { rawValue }
+    }
+
+    enum Sort: String, CaseIterable, Identifiable {
+        case name = "Name", size = "Largest", unused = "Least used"
         var id: String { rawValue }
     }
 
@@ -63,7 +69,24 @@ struct AppsPane: View {
     // MARK: Installed
 
     private var filtered: [InstalledApp] {
-        query.isEmpty ? inventory.apps : inventory.apps.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.bundleID.localizedCaseInsensitiveContains(query) }
+        let list = query.isEmpty ? inventory.apps : inventory.apps.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.bundleID.localizedCaseInsensitiveContains(query) }
+        switch sort {
+        case .name: return list
+        case .size: return list.sorted { (inventory.sizes[$0.id] ?? 0) > (inventory.sizes[$1.id] ?? 0) }
+        // Never opened comes first, then the longest ago.
+        case .unused: return list.sorted { ($0.lastUsed ?? .distantPast) < ($1.lastUsed ?? .distantPast) }
+        }
+    }
+
+    private func detail(_ app: InstalledApp) -> String {
+        var parts = [app.version.isEmpty ? "—" : app.version, app.source.label]
+        if let bytes = inventory.sizes[app.id] { parts.append(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) }
+        if let used = app.lastUsed {
+            parts.append("Opened " + RelativeDateTimeFormatter().localizedString(for: used, relativeTo: Date()))
+        } else {
+            parts.append("Never opened")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var installedTab: some View {
@@ -72,6 +95,8 @@ struct AppsPane: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search apps", text: $query).textFieldStyle(.plain)
                 if inventory.isScanning { ProgressView().controlSize(.small) }
+                Picker("", selection: $sort) { ForEach(Sort.allCases) { Text($0.rawValue).tag($0) } }
+                    .labelsHidden().pickerStyle(.menu).fixedSize()
                 Button { inventory.scan() } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless).help("Scan again")
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
@@ -83,7 +108,7 @@ struct AppsPane: View {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path)).resizable().frame(width: 30, height: 30)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(app.name)
-                        Text("\(app.version.isEmpty ? "—" : app.version) · \(app.source.label)").font(.caption).foregroundStyle(.secondary)
+                        Text(detail(app)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([app.url]) }.controlSize(.small)

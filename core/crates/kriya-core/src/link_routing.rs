@@ -334,6 +334,68 @@ fn is_tracking(key: &str, extra: &[String]) -> bool {
 
 /// Removes tracking parameters from an address, leaving every other part exactly as it was. Returns the address and how
 /// many parameters were taken out.
+/// Ready-made rules that try to open a site's links in its own app. They are only a starting point: whether an app takes a
+/// web address depends on the app, so each is worth trying once. They are added switched on, next to the person's own.
+pub fn suggested_rules() -> Vec<LinkRule> {
+    let app = |id: &str, name: &str, domain: &str, app_id: &str| LinkRule {
+        id: format!("app-{id}"),
+        name: name.to_string(),
+        enabled: true,
+        match_kind: MatchKind::Domain,
+        pattern: domain.to_string(),
+        source_app_ids: Vec::new(),
+        modifiers: 0,
+        target: LinkTarget::Open {
+            app_id: app_id.to_string(),
+            profile: None,
+        },
+    };
+    vec![
+        app("zoom", "Zoom links in Zoom", "zoom.us", "us.zoom.xos"),
+        app(
+            "figma",
+            "Figma links in Figma",
+            "figma.com",
+            "com.figma.Desktop",
+        ),
+        app("notion", "Notion links in Notion", "notion.so", "notion.id"),
+        app(
+            "spotify",
+            "Spotify links in Spotify",
+            "open.spotify.com",
+            "com.spotify.client",
+        ),
+        app(
+            "slack",
+            "Slack links in Slack",
+            "slack.com",
+            "com.tinyspeck.slackmacgap",
+        ),
+        app(
+            "discord",
+            "Discord links in Discord",
+            "discord.com",
+            "com.hnc.Discord",
+        ),
+        app(
+            "linear",
+            "Linear links in Linear",
+            "linear.app",
+            "com.linear",
+        ),
+        LinkRule {
+            id: "dev-localhost".to_string(),
+            name: "Ask for localhost links".to_string(),
+            enabled: true,
+            match_kind: MatchKind::Domain,
+            pattern: "localhost".to_string(),
+            source_app_ids: Vec::new(),
+            modifiers: 0,
+            target: LinkTarget::Ask,
+        },
+    ]
+}
+
 pub fn strip_tracking(url: &str, extra: &[String]) -> (String, usize) {
     let hash = url.find('#');
     let question = url.find('?').filter(|q| match hash {
@@ -464,6 +526,34 @@ mod tests {
             rules,
             ..LinkRoutingConfig::default()
         }
+    }
+
+    #[test]
+    fn suggested_rules_are_valid_unique_and_match_their_sites() {
+        let rules = suggested_rules();
+        let ids: std::collections::HashSet<_> = rules.iter().map(|r| r.id.clone()).collect();
+        assert_eq!(ids.len(), rules.len());
+        let config = LinkRoutingConfig {
+            enabled: true,
+            rules: rules.clone(),
+            ..LinkRoutingConfig::default()
+        }
+        .sanitized();
+        assert_eq!(
+            config.rules.len(),
+            rules.len(),
+            "none is thrown out as invalid"
+        );
+        let decision = resolve_link(&config, "https://us02web.zoom.us/j/123", None, 0);
+        assert_eq!(
+            decision.target,
+            LinkTarget::Open {
+                app_id: "us.zoom.xos".into(),
+                profile: None
+            }
+        );
+        let local = resolve_link(&config, "http://localhost:3000/x", None, 0);
+        assert_eq!(local.target, LinkTarget::Ask);
     }
 
     #[test]

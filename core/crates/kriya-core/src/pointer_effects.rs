@@ -82,6 +82,8 @@ pub struct PointerEffectsConfig {
     pub shake_to_locate: bool,
     /// Hold exactly these keys and the magnifier shows; let go and it goes. 0 turns it off.
     pub magnifier_hold_modifier: u64,
+    /// Hide the pointer while typing, until the mouse moves again.
+    pub hide_while_typing: bool,
     /// Apps in which the halo and the click rings are not drawn.
     pub excluded_app_ids: Vec<String>,
 }
@@ -112,6 +114,7 @@ impl Default for PointerEffectsConfig {
             double_tap_control: true,
             shake_to_locate: false,
             magnifier_hold_modifier: 0,
+            hide_while_typing: false,
             excluded_app_ids: Vec::new(),
         }
     }

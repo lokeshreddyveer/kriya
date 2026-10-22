@@ -160,6 +160,12 @@ pub enum FinderActionKind {
     CleanupFolder,
     /// Puts back what the last cleanup moved.
     UndoLast,
+    /// Copies the SHA-256 checksum of each selected file.
+    CopyChecksum,
+    /// Takes away the "downloaded from the internet" warning macOS puts on files, so an app opens without the prompt.
+    RemoveQuarantine,
+    /// Makes a Finder alias beside each selected item.
+    MakeAlias,
 }
 
 /// What a selection has to look like for an action to be offered.
@@ -691,6 +697,7 @@ pub fn is_destructive(kind: &FinderActionKind) -> bool {
             | FinderActionKind::Convert { .. }
             | FinderActionKind::Extract
             | FinderActionKind::CleanupFolder
+            | FinderActionKind::RemoveQuarantine
     )
 }
 
@@ -801,6 +808,24 @@ pub fn suggested_items() -> Vec<FinderItem> {
             "Undo Last Tidy-Up",
             FinderActionKind::UndoLast,
             Applies::FolderBackground,
+        ),
+        item(
+            "copy-checksum",
+            "Copy SHA-256 Checksum",
+            FinderActionKind::CopyChecksum,
+            Applies::Files,
+        ),
+        item(
+            "remove-quarantine",
+            "Remove Download Warning",
+            FinderActionKind::RemoveQuarantine,
+            Applies::Anything,
+        ),
+        item(
+            "make-alias",
+            "Make Alias",
+            FinderActionKind::MakeAlias,
+            Applies::Anything,
         ),
     ]
 }
@@ -1000,6 +1025,13 @@ mod tests {
         assert!(big.check().is_err());
         let tidy = list.iter().find(|i| i.id == "tidy-folder").unwrap();
         assert!(is_destructive(&tidy.kind));
+        let quarantine = list.iter().find(|i| i.id == "remove-quarantine").unwrap();
+        assert!(
+            is_destructive(&quarantine.kind),
+            "it changes a security setting, so it asks first"
+        );
+        let plain = list.iter().find(|i| i.id == "copy-checksum").unwrap();
+        assert!(!is_destructive(&plain.kind));
         assert!(confirmation_message(tidy, 1, &FinderConfig::default())
             .unwrap()
             .contains("subfolders"));

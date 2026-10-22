@@ -172,6 +172,18 @@ final class DragTools {
         lock.unlock()
         // The window following the pointer is moved by the plain pointer; dragging has nothing to do with it.
         guard current != .idle else { return .passThrough }
+        // Only a drag with the button that started this is taken. If its release was lost, the state clears here rather
+        // than swallowing every later drag.
+        let dragButton = buttonNumber(event)
+        lock.lock()
+        let started = button
+        lock.unlock()
+        if dragButton != started {
+            lock.lock()
+            phase = .idle
+            lock.unlock()
+            return .passThrough
+        }
         let location = event.location
         if current == .pending, hypot(location.x - origin.x, location.y - origin.y) < 4 { return .drop }
         lock.lock()

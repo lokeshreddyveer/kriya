@@ -191,18 +191,29 @@ final class DisplayTools: ObservableObject {
     /// Darkens each display by the saved level, by scaling its gamma table. Level 0 leaves it alone.
     func applyDimming() {
         CGDisplayRestoreColorSyncSettings()
-        let levels = Dictionary(store.current.dimLevels.map { ($0.key, $0.level) }, uniquingKeysWith: { first, _ in first })
+        let looks = Dictionary(store.current.dimLevels.map { ($0.key, (level: $0.level, warmth: $0.warmth)) }, uniquingKeysWith: { first, _ in first })
         for entry in Self.displays() {
-            guard let level = levels[entry.key], level > 0 else { continue }
-            let scale = Float(1 - level)
-            CGSetDisplayTransferByFormula(entry.id, 0, scale, 1, 0, scale, 1, 0, scale, 1)
+            guard let look = looks[entry.key] else { continue }
+            // Dimming scales every colour; warmth takes more out of blue than green, for a softer screen at night.
+            let scale = Float(1 - look.level)
+            let green = scale * Float(1 - 0.3 * look.warmth)
+            let blue = scale * Float(1 - 0.7 * look.warmth)
+            CGSetDisplayTransferByFormula(entry.id, 0, scale, 1, 0, green, 1, 0, blue, 1)
         }
     }
 
     func setDim(_ level: Double, forKey key: String) {
+        setLook(key: key, level: level, warmth: store.current.dimLevels.first { $0.key == key }?.warmth ?? 0)
+    }
+
+    func setWarmth(_ warmth: Double, forKey key: String) {
+        setLook(key: key, level: store.current.dimLevels.first { $0.key == key }?.level ?? 0, warmth: warmth)
+    }
+
+    private func setLook(key: String, level: Double, warmth: Double) {
         store.update { config in
             config.dimLevels.removeAll { $0.key == key }
-            if level > 0 { config.dimLevels.append(DimLevel(key: key, level: level)) }
+            if level > 0 || warmth > 0 { config.dimLevels.append(DimLevel(key: key, level: level, warmth: warmth)) }
         }
         applyDimming()
     }

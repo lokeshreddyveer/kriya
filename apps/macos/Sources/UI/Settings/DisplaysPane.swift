@@ -64,6 +64,11 @@ struct DisplaysPane: View {
                         range: 0...0.9, format: { $0 == 0 ? "Off" : "\(Int($0 * 100))%" },
                         help: "Makes the display darker in software. It is not a hardware brightness control."
                     )
+                    SliderRow(
+                        title: "Warmth", value: Binding(get: { config.dimLevels.first { $0.key == entry.key }?.warmth ?? 0 }, set: { tools.setWarmth($0, forKey: entry.key) }),
+                        range: 0...0.8, format: { $0 == 0 ? "Off" : "\(Int($0 / 0.8 * 100))%" },
+                        help: "Takes blue out of the picture for a softer screen in the evening."
+                    )
                 } header: {
                     Text(entry.name + (entry.isMain ? " · main" : ""))
                 } footer: {

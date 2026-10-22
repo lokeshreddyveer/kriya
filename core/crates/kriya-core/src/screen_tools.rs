@@ -60,6 +60,9 @@ pub struct DisplayProfile {
 pub struct DimLevel {
     pub key: String,
     pub level: f64,
+    /// How much of the blue is taken out, from 0 (none) to 0.8, for a warmer screen at night.
+    #[serde(default)]
+    pub warmth: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
@@ -170,9 +173,18 @@ impl ScreenToolsConfig {
                 } else {
                     0.0
                 };
+                d.warmth = if d.warmth.is_finite() {
+                    d.warmth.clamp(0.0, 0.8)
+                } else {
+                    0.0
+                };
                 d
             })
-            .filter(|d| !d.key.trim().is_empty() && d.level > 0.0 && dim_seen.insert(d.key.clone()))
+            .filter(|d| {
+                !d.key.trim().is_empty()
+                    && (d.level > 0.0 || d.warmth > 0.0)
+                    && dim_seen.insert(d.key.clone())
+            })
             .take(MAX_DISPLAYS)
             .collect();
 
@@ -354,18 +366,27 @@ mod tests {
                 DimLevel {
                     key: "x".into(),
                     level: 5.0,
+                    warmth: 0.0,
                 },
                 DimLevel {
                     key: "x".into(),
                     level: 0.3,
+                    warmth: 0.0,
                 },
                 DimLevel {
                     key: "y".into(),
                     level: 0.0,
+                    warmth: 0.0,
+                },
+                DimLevel {
+                    key: "w".into(),
+                    level: 0.0,
+                    warmth: 9.0,
                 },
                 DimLevel {
                     key: " ".into(),
                     level: 0.5,
+                    warmth: 0.0,
                 },
             ],
             shelf_auto_hide_seconds: f64::NAN,
@@ -383,8 +404,13 @@ mod tests {
             ("a", 0)
         );
         assert_eq!(config.display_profiles.len(), 1);
-        assert_eq!(config.dim_levels.len(), 1);
+        assert_eq!(
+            config.dim_levels.len(),
+            2,
+            "a display with only warmth is kept"
+        );
         assert_eq!(config.dim_levels[0].level, 0.9, "never fully black");
+        assert_eq!(config.dim_levels[1].warmth, 0.8, "never fully red");
         assert_eq!(config.shelf_auto_hide_seconds, 0.0);
         assert_eq!(config.shelf_excluded_app_ids, vec!["com.x".to_string()]);
     }

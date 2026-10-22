@@ -3,6 +3,7 @@ import SwiftUI
 /// Keeping the Mac awake: for a while, until turned off, or while chosen apps run.
 struct PowerPane: View {
     @EnvironmentObject private var awake: KeepAwake
+    @State private var untilTime = Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: Date()) ?? Date()
 
     private static let durations: [(title: String, minutes: Int?)] = [
         ("15 minutes", 15), ("30 minutes", 30), ("1 hour", 60), ("2 hours", 120), ("4 hours", 240), ("Until I turn it off", nil),
@@ -28,6 +29,13 @@ struct PowerPane: View {
             Section {
                 ForEach(Self.durations, id: \.title) { option in
                     Button(option.title) { awake.start(minutes: option.minutes) }
+                }
+                HStack {
+                    DatePicker("Until", selection: $untilTime, displayedComponents: .hourAndMinute)
+                    Button("Keep Awake") {
+                        let parts = Calendar.current.dateComponents([.hour, .minute], from: untilTime)
+                        awake.start(untilHour: parts.hour ?? 0, minute: parts.minute ?? 0)
+                    }
                 }
                 Toggle("Keep the display on too", isOn: $awake.keepDisplayOn)
                 SliderRow(title: "Stop on battery at", value: Binding(get: { Double(awake.stopBelowBattery) }, set: { awake.stopBelowBattery = Int($0) }),

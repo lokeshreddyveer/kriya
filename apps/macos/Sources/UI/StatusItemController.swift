@@ -48,7 +48,7 @@ final class StatusItemController: NSObject {
         let view = PopoverView(openSettings: { [weak self] pane in
             self?.popover.performClose(nil)
             self?.openSettings(pane)
-        }).injecting(env)
+        }, close: { [weak self] in self?.popover.performClose(nil) }).injecting(env)
         let host = NSHostingController(rootView: view)
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host

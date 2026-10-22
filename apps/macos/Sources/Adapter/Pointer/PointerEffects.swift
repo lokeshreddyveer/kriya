@@ -214,14 +214,29 @@ private final class PointerHider {
     private var hidden = false
     private var after: TimeInterval = 5
 
-    func start(after seconds: Double) {
-        after = seconds
-        guard timer == nil else { return }
-        lastMove = Date()
+    /// Watches for the pointer moving, which brings it back.
+    private func watchMovement() {
+        guard monitors.isEmpty else { return }
         let wake: (NSEvent) -> Void = { [weak self] _ in self?.moved() }
         let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .scrollWheel, .leftMouseDown, .rightMouseDown, .otherMouseDown]
         if let global = NSEvent.addGlobalMonitorForEvents(matching: events, handler: wake) { monitors.append(global) }
         if let local = NSEvent.addLocalMonitorForEvents(matching: events, handler: { event in wake(event); return event }) { monitors.append(local) }
+    }
+
+    /// Hides the pointer while the person types, until the mouse moves. Works from the background, like hiding when idle.
+    func hideForTyping() {
+        watchMovement()
+        guard !hidden else { return }
+        allowBackgroundCursorControl()
+        CGDisplayHideCursor(CGMainDisplayID())
+        hidden = true
+    }
+
+    func start(after seconds: Double) {
+        after = seconds
+        guard timer == nil else { return }
+        lastMove = Date()
+        watchMovement()
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.check() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -375,9 +390,9 @@ final class PointerEffects {
         let wantsClicks = config.enabled && (config.clickEnabled || presentation)
         if wantsHalo || wantsClicks { startWatching(halo: wantsHalo, clicks: wantsClicks) } else { stopWatching() }
         if wantsHalo { updateHalo(config) } else { halo?.orderOut(nil) }
-        if config.enabled, config.hideWhenIdle { hider.start(after: config.hideAfterSeconds) } else { hider.stop() }
+        if config.enabled, config.hideWhenIdle { hider.start(after: config.hideAfterSeconds) } else if !(config.enabled && config.hideWhileTyping) { hider.stop() }
         if !config.enabled, magnifier.isOn { magnifier.stop() }
-        if config.enabled, config.doubleTapControl || config.shakeToLocate || config.magnifierHoldModifier != 0 { startFindWatchers() } else { stopFindWatchers() }
+        if config.enabled, config.doubleTapControl || config.shakeToLocate || config.magnifierHoldModifier != 0 || config.hideWhileTyping { startFindWatchers() } else { stopFindWatchers() }
     }
 
     // MARK: Finding the pointer with a double tap or a shake
@@ -385,7 +400,7 @@ final class PointerEffects {
     private func startFindWatchers() {
         guard findMonitors.isEmpty else { return }
         let handler: (NSEvent) -> Void = { [weak self] event in self?.handleFind(event) }
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .mouseMoved], handler: handler) { findMonitors.append(global) }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .mouseMoved, .keyDown], handler: handler) { findMonitors.append(global) }
     }
 
     private func stopFindWatchers() {
@@ -409,6 +424,10 @@ final class PointerEffects {
                 holdingMagnifier = false
                 if magnifier.isOn { magnifier.stop() }
             }
+        }
+        // The pointer steps out of the way while typing, and comes back when the mouse moves.
+        if event.type == .keyDown, config.hideWhileTyping, !event.isARepeat, !event.modifierFlags.contains(.command) {
+            hider.hideForTyping()
         }
         switch event.type {
         case .flagsChanged where config.doubleTapControl:

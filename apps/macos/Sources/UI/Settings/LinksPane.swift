@@ -130,6 +130,12 @@ private struct RulesTab: View {
                 HStack {
                     Text("Rules")
                     Spacer()
+                    Menu {
+                        Button("Add Experimental App Rules (Zoom, Figma, Notion, Spotify, Discord, Linear)") {
+                            let have = Set(store.config.rules.map(\.id))
+                            store.update { $0.rules.append(contentsOf: suggestedLinkRules().filter { !have.contains($0.id) }) }
+                        }
+                    } label: { MoreMenuLabel() }.menuStyle(.button).menuIndicator(.hidden).fixedSize().controlSize(.small)
                     Button { editing = store.newRule() } label: { Label("Add Rule", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: {

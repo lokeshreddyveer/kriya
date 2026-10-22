@@ -13,6 +13,8 @@ extension TextOp {
             .prefixLines(text: "- "), .suffixLines(text: ""), .urlEncode, .urlDecode, .htmlEscape, .htmlUnescape,
             .jsonFormat, .jsonMinify, .findReplace(find: "", replace: ""),
             .regexReplace(pattern: "", replacement: "", caseInsensitive: false), .wrap(before: "", after: ""),
+            .commaToLines, .linesToComma, .shuffleLines, .numberLines, .slugify, .stripUrlTracking, .extractUrls, .extractEmails,
+            .unixTimeToDate, .dateToUnixTime,
         ]
     }
 

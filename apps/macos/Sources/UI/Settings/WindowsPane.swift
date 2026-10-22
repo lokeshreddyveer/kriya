@@ -227,6 +227,11 @@ private struct OptionsTab: View {
                 SliderRow(title: "Radial menu size", value: Binding(get: { config.radialSize }, set: { v in store.updateConfig { $0.radialSize = v } }),
                           range: 70...220, format: { "\(Int($0)) pt" })
                 Toggle("Place an app's windows by its rule every time it comes to the front", isOn: Binding(get: { config.applyRulesOnActivate }, set: { v in store.updateConfig { $0.applyRulesOnActivate = v } }))
+                Toggle("Bring a window to the front when I rest the pointer on it", isOn: Binding(get: { config.focusFollowsMouse }, set: { v in store.updateConfig { $0.focusFollowsMouse = v } }))
+                if config.focusFollowsMouse {
+                    SliderRow(title: "Rest for", value: Binding(get: { Double(config.focusDelayMs) }, set: { v in store.updateConfig { $0.focusDelayMs = UInt32(v) } }),
+                              range: 150...2000, format: { "\(Int($0)) ms" }, help: "How long the pointer stays before the window comes forward.")
+                }
                 Toggle("Hold and release, like ⌘Tab", isOn: Binding(get: { config.switcherHoldRelease }, set: { v in store.updateConfig { $0.switcherHoldRelease = v } }))
                 Toggle("Show a picture of each window in the switcher", isOn: Binding(get: { config.switcherThumbnails }, set: { v in
                     store.updateConfig { $0.switcherThumbnails = v }

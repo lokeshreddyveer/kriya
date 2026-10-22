@@ -532,6 +532,10 @@ pub struct WindowConfig {
     pub apply_rules_on_activate: bool,
     /// Like ⌘Tab: press the shortcut again to step through the windows, and letting go of its keys switches to the chosen one.
     pub switcher_hold_release: bool,
+    /// Resting the pointer over another app's window brings that window to the front, without a click.
+    pub focus_follows_mouse: bool,
+    /// How long the pointer must rest, in milliseconds.
+    pub focus_delay_ms: u32,
 }
 
 impl Default for WindowConfig {
@@ -566,6 +570,8 @@ impl Default for WindowConfig {
             act_on_pointer_window: false,
             switcher_thumbnails: false,
             switcher_hold_release: true,
+            focus_follows_mouse: false,
+            focus_delay_ms: 400,
             radial_color: "#7B97B9".to_string(),
             radial_size: 104.0,
             apply_rules_on_activate: false,
@@ -600,6 +606,7 @@ impl WindowConfig {
                 0.0
             };
         self.snap_drag_modifier &= m::ALL;
+        self.focus_delay_ms = self.focus_delay_ms.clamp(150, 2000);
         self.radial_size = if self.radial_size.is_finite() {
             self.radial_size.clamp(70.0, 220.0)
         } else {

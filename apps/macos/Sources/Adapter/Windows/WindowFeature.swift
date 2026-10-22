@@ -11,6 +11,7 @@ final class WindowFeature: FeatureModule {
     private var hotkeys: HotkeyCenter?
     private var dragSnapper: DragSnapper?
     private var modifierDrag: ModifierDrag?
+    private var focusFollow: FocusFollowsMouse?
     private var switcher: WindowSwitcher?
     private var radial: RadialMenu?
     private var grid: GridMenu?
@@ -78,6 +79,8 @@ final class WindowFeature: FeatureModule {
         dragSnapper = nil
         modifierDrag?.stop()
         modifierDrag = nil
+        focusFollow?.stop()
+        focusFollow = nil
         switcher?.close()
         switcher = nil
         radial?.close()
@@ -114,6 +117,8 @@ final class WindowFeature: FeatureModule {
         context.windowController.diagnostics.hotkeyFailures = failed.map { store.title(forCommand: $0) }
 
         if config.snapOnDrag { dragSnapper?.start() } else { dragSnapper?.stop() }
+        if focusFollow == nil { focusFollow = FocusFollowsMouse(store: store) }
+        focusFollow?.apply()
 
         let wantsModifierDrag = config.moveModifier != 0 || config.resizeModifier != 0
         if wantsModifierDrag, context.permissions.isGranted(.inputMonitoring) {

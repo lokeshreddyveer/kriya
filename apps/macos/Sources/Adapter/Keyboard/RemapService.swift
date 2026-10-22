@@ -15,7 +15,8 @@ final class RemapService {
     private let engine = RemapEngine(config: RemapConfig(enabled: false, rules: [], holdMs: 200, doubleTapMs: 250, chordMs: 50))
     private let queue = DispatchQueue(label: "app.kriya.remap", qos: .userInteractive)
     private var timer: DispatchSourceTimer?      // used only on `queue`
-    private var capsSwapped = false
+    private var capsSwapped = false       // used only on `hidQueue`
+    private let hidQueue = DispatchQueue(label: "app.kriya.remap.hid")
 
     /// The modifier a modifier key code stands for.
     private static let modifierFlags: [UInt16: CGEventFlags] = [
@@ -159,15 +160,69 @@ final class RemapService {
 
     // MARK: Caps Lock
 
-    /// Turns Caps Lock into F18 (and back) for the whole keyboard, with the system's own `hidutil`.
+    private static let capsSource = 30064771129    // Caps Lock, as the HID usage 0x700000039
+    private static let f18Target = 30064771181      // F18, 0x70000006D
+
+    /// Turns Caps Lock into F18 (and back) with the system's own `hidutil`. Mappings someone else made are kept: Kriya adds
+    /// its one entry to what is there, and takes out only that entry when it stops. The changes run one at a time, and Kriya
+    /// counts Caps Lock as swapped only once the system has accepted it.
     private func setCapsSwap(_ on: Bool) {
-        guard on != capsSwapped else { return }
-        capsSwapped = on
-        let mapping = on
-            ? "{\"UserKeyMapping\":[{\"HIDKeyboardModifierMappingSrc\":30064771129,\"HIDKeyboardModifierMappingDst\":30064771181}]}"
-            : "{\"UserKeyMapping\":[]}"
-        DispatchQueue.global(qos: .utility).async {
-            _ = try? ToolRunner.run("/usr/bin/hidutil", ["property", "--set", mapping])
+        hidQueue.async { [self] in
+            guard on != capsSwapped else { return }
+            guard let existing = Self.currentMappings() else {
+                Log.warning("Remap", "Could not read the keyboard mappings already in place, so Caps Lock was left alone")
+                return
+            }
+            let mappings = Self.merged(existing, capsOn: on)
+            guard let data = try? JSONSerialization.data(withJSONObject: ["UserKeyMapping": mappings]), let json = String(data: data, encoding: .utf8) else { return }
+            if (try? ToolRunner.run("/usr/bin/hidutil", ["property", "--set", json])) != nil {
+                capsSwapped = on
+            } else {
+                Log.warning("Remap", "The system did not accept the Caps Lock change")
+            }
+        }
+    }
+
+    /// Stops remapping and waits until Caps Lock is back to normal. For quitting, when nothing may be left running.
+    func stopAndWait() {
+        stop()
+        hidQueue.sync {}
+    }
+
+    /// The mappings that should be in place: everything that was there, plus Kriya's Caps Lock entry when `capsOn`. Any
+    /// earlier Kriya entry is dropped first, so adding it twice or removing it never touches anyone else's.
+    static func merged(_ existing: [[String: Any]], capsOn: Bool) -> [[String: Any]] {
+        var result = existing.filter { entry in
+            let source = (entry["HIDKeyboardModifierMappingSrc"] as? NSNumber)?.int64Value
+            let target = (entry["HIDKeyboardModifierMappingDst"] as? NSNumber)?.int64Value
+            return !(source == Int64(capsSource) && target == Int64(f18Target))
+        }
+        if capsOn { result.append(["HIDKeyboardModifierMappingSrc": capsSource, "HIDKeyboardModifierMappingDst": f18Target]) }
+        return result
+    }
+
+    /// The key mappings in place now, from `hidutil`'s output. It prints them as an old-style property list, once per
+    /// service; `convert` turns one such list into JSON (the system's `plutil` in the app, a stand-in in tests). Nothing
+    /// set gives an empty list; text that cannot be read gives nil, and then Caps Lock is left alone.
+    static func parseMappings(_ output: String, convert: (String) -> String?) -> [[String: Any]]? {
+        let lines = output.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.contains("UserKeyMapping") && !$0.contains("(null)") && $0.hasSuffix("(") }) else { return [] }
+        var block = ["("]
+        for line in lines[(start + 1)...] {
+            if line == ")" { block.append(")"); break }
+            block.append(line)
+        }
+        guard block.last == ")", let json = convert(block.joined(separator: "\n")), let data = json.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]]
+    }
+
+    private static func currentMappings() -> [[String: Any]]? {
+        guard let output = try? ToolRunner.run("/usr/bin/hidutil", ["property", "--get", "UserKeyMapping"]) else { return nil }
+        return parseMappings(output) { plist in
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-mapping-\(UUID().uuidString).plist")
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard (try? plist.write(to: file, atomically: true, encoding: .utf8)) != nil else { return nil }
+            return try? ToolRunner.run("/usr/bin/plutil", ["-convert", "json", "-o", "-", file.path])
         }
     }
 }

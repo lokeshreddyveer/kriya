@@ -47,9 +47,12 @@ struct PointerPane: View {
 
             Section {
                 SliderRow(title: "Ring size", value: Binding(get: { config.locateSize }, set: { v in store.update { $0.locateSize = v } }), range: 100...600, format: { "\(Int($0)) pt" })
+                Toggle("Double-tap Control to find it", isOn: Binding(get: { config.doubleTapControl }, set: { v in store.update { $0.doubleTapControl = v } }))
+                Toggle("Shake the mouse to find it", isOn: Binding(get: { config.shakeToLocate }, set: { v in store.update { $0.shakeToLocate = v } }))
+                Toggle("Hide the pointer while I type", isOn: Binding(get: { config.hideWhileTyping }, set: { v in store.update { $0.hideWhileTyping = v } }))
                 Button("Try It") { run("pointer.locate") }
             } header: { Text("Find the pointer") } footer: {
-                Text("Three rings spread out from the pointer. Give the command “Find the pointer” a shortcut, a button or a hot corner.")
+                Text("Three rings spread out from the pointer. You can also give the command “Find the pointer” a shortcut, a button or a hot corner. Hiding the pointer while typing brings it back as soon as the mouse moves. These need the pointer effects switched on at the top.")
             }
 
             Section {
@@ -108,6 +111,18 @@ struct PointerPane: View {
             } footer: {
                 Text("Each position is a command named “Pointer: …” for a shortcut, a button or a gesture. Moving the pointer to the next or previous display, and to the middle of the front window, are also commands.")
             }
+
+            Section {
+                if config.excludedAppIds.isEmpty { Text("The halo and click rings are drawn in every app.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(config.excludedAppIds, id: \.self) { id in
+                    HStack {
+                        Text(AppChoice.name(for: id))
+                        Spacer()
+                        Button(role: .destructive) { store.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    }
+                }
+                Button { if let id = AppChoice.choose(prompt: "Hide effects in"), !config.excludedAppIds.contains(id) { store.update { $0.excludedAppIds.append(id) } } } label: { Label("Hide Effects in an App", systemImage: "plus") }
+            } header: { Text("Apps without the halo and rings") }
 
             Section {
                 Toggle("Show the effects to people watching a shared screen or a recording", isOn: Binding(get: { config.showWhenSharing }, set: { v in store.update { $0.showWhenSharing = v } }))

@@ -22,7 +22,7 @@ enum SettingsPaneGroup: CaseIterable, Identifiable {
 /// Declared in sidebar order, so "next pane" and the Cmd-number shortcuts follow what the person sees.
 enum SettingsPane: String, CaseIterable, Identifiable {
     case features, mouse, pointer, keyboard, devices, windows, workspaces, buttons, displays, finder, clipboard, selection, links, shelf, apps, automation, actions, profiles
-    case power, general, permissions, backup, diagnostics, about
+    case menuBar, power, general, permissions, backup, diagnostics, about
 
     var id: String { rawValue }
 
@@ -33,6 +33,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .displays: return "Displays & Corners"
         case .shelf: return "File Shelf"
         case .apps: return "Apps"
+        case .menuBar: return "Menu Bar Window"
         case .power: return "Sleep & Power"
         case .permissions: return "Permissions"
         case .mouse: return "Mouse & Trackpad"
@@ -62,6 +63,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .displays: return "display"
         case .shelf: return "tray"
         case .apps: return "square.grid.3x3.square"
+        case .menuBar: return "menubar.rectangle"
         case .power: return "bolt.circle"
         case .permissions: return "lock.shield"
         case .mouse: return "computermouse.fill"
@@ -93,7 +95,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .automation, .actions, .profiles: return .automate
         case .displays: return .windows
         case .shelf, .apps: return .filesAndText
-        case .power, .general, .permissions, .backup, .diagnostics, .about: return .system
+        case .menuBar, .power, .general, .permissions, .backup, .diagnostics, .about: return .system
         }
     }
 
@@ -133,6 +135,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .displays: return "resolution refresh rate hidpi scaling dim brightness profile arrangement hot corners corner"
         case .shelf: return "drag drop files temporary tray dropover stage hold"
         case .apps: return "uninstall remove leftovers cleaner orphan update installed applications trash"
+        case .menuBar: return "popover menu bar icon window quick actions tiles theme colour tint compact search layout customize"
         case .power: return "sleep wake awake caffeinate keep awake prevent display lid battery"
         case .general: return "appearance dark light dock menu bar login startup updates"
         case .permissions: return "accessibility input monitoring screen recording privacy"
@@ -249,6 +252,7 @@ struct SettingsRootView: View {
         switch navigator.pane {
         case .general: GeneralPane()
         case .power: PowerPane()
+        case .menuBar: MenuBarPane()
         case .displays: DisplaysPane()
         case .shelf: ShelfPane(shelf: shelf)
         case .apps: AppsPane()

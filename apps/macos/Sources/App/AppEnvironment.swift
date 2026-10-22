@@ -35,6 +35,8 @@ final class AppEnvironment {
     let fileShelf: FileShelf
     let inventory: AppInventory
     let runIdentifier: (String) -> Void
+    let quickCommands: QuickCommands
+    let popoverPrefs: PopoverPrefs
     private var screenCancellable: AnyCancellable?
     let keepAwake: KeepAwake
     let remapStore: RemapStore
@@ -185,6 +187,8 @@ final class AppEnvironment {
         self.fileShelf = fileShelf
         self.inventory = inventory
         self.runIdentifier = runIdentifier
+        self.quickCommands = QuickCommands(run: runIdentifier)
+        self.popoverPrefs = PopoverPrefs()
         self.keepAwake = keepAwake
         self.remapStore = remapStore
         self.remap = remap
@@ -306,6 +310,9 @@ extension View {
             .environmentObject(env.keepAwake)
             .environmentObject(env.remapStore)
             .environmentObject(env.keyboardDevices)
+            .environmentObject(env.quickCommands)
+            .environmentObject(env.popoverPrefs)
+            .environmentObject(env.pasteStack)
             .environmentObject(env.clipboard)
             .environmentObject(env.clipboard.store)
             .environmentObject(env.approvals)

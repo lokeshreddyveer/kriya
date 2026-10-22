@@ -300,7 +300,20 @@ private struct ShelfView: View {
             } else if case .text(let text) = item.kind {
                 Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
             }
+            Divider()
+            Button("AirDrop…") { NSSharingService(named: .sendViaAirDrop)?.perform(withItems: shareable(item)) }
+            Button("Mail…") { NSSharingService(named: .composeEmail)?.perform(withItems: shareable(item)) }
+            Divider()
             Button("Remove") { remove(item) }
+        }
+    }
+
+    /// What the sharing services take for an item: the file, its text, or the image.
+    private func shareable(_ item: ShelfItem) -> [Any] {
+        switch item.kind {
+        case .file(let url): return [url]
+        case .text(let text): return [text]
+        case .image(let image): return [image]
         }
     }
 

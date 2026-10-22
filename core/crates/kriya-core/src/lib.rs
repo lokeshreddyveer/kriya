@@ -739,6 +739,12 @@ pub fn text_ops_problem(ops: Vec<TextOp>) -> Option<String> {
     text_tools::check_ops(&ops).err()
 }
 
+/// Ready-made rules that open a site's links in its own app.
+#[uniffi::export]
+pub fn suggested_link_rules() -> Vec<LinkRule> {
+    link_routing::suggested_rules()
+}
+
 #[uniffi::export]
 pub fn text_op_title(op: TextOp) -> String {
     op.title().to_string()

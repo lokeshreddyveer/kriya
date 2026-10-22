@@ -3,7 +3,9 @@
 Mouse, trackpad, window and right-click control for the Mac. A menu-bar app, signed with a Developer ID and notarized
 (not sandboxed, not on the App Store: it has to watch input and move other apps' windows).
 
-**Status: All nine phases (foundation, mouse & trackpad, windows, window buttons, Finder actions, clipboard, selection bar, keyboard & text expansion, automation) are written but have not been compiled or run yet.** See "Not verified" below.
+**Status:** the app builds, is signed with a Developer ID and notarized by `scripts/release.sh`, which also runs the Rust tests. The Swift tests run with `xcodebuild test` (quit the installed Kriya first, because the test host shares its bundle identifier). The version of each release is in `apps/macos/project.yml`, `appcast.xml` and the GitHub release; test counts are not kept here, so they cannot go stale. Most features have **not yet been checked by hand in everyday use**: see "Not verified" below.
+
+Build and test: `scripts/build-core.sh` (Rust tests, bindings, universal library), `scripts/swift-build.sh` (debug build), `scripts/release.sh <version> <build>` (signed, notarized DMG).
 
 ## Layout
 
@@ -59,7 +61,7 @@ scripts/build-core.sh test                 # core tests, clippy, fmt
 | 20 | Local diagnostic log | `Support/Log.swift`, Diagnostics pane |
 | 21 | Backup and restore | `core/.../backup.rs`, `Core/BackupManager.swift`, Backup pane |
 | 22 | Light / dark / system | `ConfigStore.applyAppearance` |
-| 23 | Automatic updates | `Adapter/UpdateManager.swift` (Sparkle; off until a signing key is set) |
+| 23 | Automatic updates | `Adapter/UpdateManager.swift` (Sparkle; the public key is built in) |
 | 24 | Signing and notarization | `scripts/release.sh` |
 
 Phase 1 ships the feature switches with placeholder modules. Each feature arrives in its own phase and replaces its
@@ -166,7 +168,7 @@ Logic: `core/.../workflow.rs`, `workflow_store.rs`. macOS: `Adapter/Automation/`
 
 ## Not verified
 
-Phases 3 to 9 have the same status as Phase 2: written, never compiled. Things most likely to need attention:
+Everything compiles and passes its tests, but these were never exercised on a real desktop and are the most likely to need attention:
 - **Finder extension:** needs to be enabled in System Settings, and the temporary home-relative read exception in `KriyaFinder.entitlements` makes it unsuitable for the Mac App Store. Finder sometimes needs a relaunch to show the menu.
 - **Window buttons:** clicks on buttons are taken (not just watched) when a rule exists, which needs Input Monitoring; the button does not highlight on press.
 - **Hover menu** may sit beside macOS's own green-button menu on newer systems.
@@ -182,15 +184,14 @@ Phase 2 specifics, none of it tested on hardware:
 - A fast-moving gesture or smooth scroll uses `CGEvent` fields whose exact behavior across macOS versions is unverified.
 
 
-Nothing has been built, run or tested. The Rust code, the Swift code and the generated bindings have never met a compiler.
-Expect a round of compile errors on the first build. Specific things to check first:
+The code builds and its automated tests pass (see Status), but the features that need a real keyboard, mouse and displays have only been tried in a few spots. Specific things to check by hand first:
 
-- Generated Swift names (`KriyaCore.open(supportDir:now:)`, error cases `.Invalid(message:)`) follow the pattern of the Browser Setu bindings.
-- IOHID matching without Input Monitoring: the device registry opens `IOHIDManager` at launch; if macOS prompts for Input
-  Monitoring just for listing mice, defer `start()` until the Mouse feature is on.
-- `scripts/build-core.sh` and `release.sh` were adapted from Browser Setu's and have not been run.
+- **Key remapping:** Caps Lock is swapped with the system's `hidutil`, keeping any mappings someone else made. Turn remapping off and quit Kriya once to confirm Caps Lock works normally again.
+- **Several features on one mouse button:** drag to scroll, button gestures, modifier-drag, window-button clicks and double-click actions all use the shared event tap. Once one takes an event, later ones see only the events that end it (a button let go, a key up, a modifier change).
+- **IOHID matching without Input Monitoring:** the device registry opens `IOHIDManager` at launch; if macOS prompts for Input Monitoring just for listing mice, defer `start()` until the Mouse feature is on.
+- **Finder extension:** needs enabling in System Settings, and may need a Finder relaunch to show its menu.
 - There is no app icon yet (the menu bar uses an SF Symbol).
-- `SUFeedURL` in `project.yml` points at a repository that does not exist yet.
+- **Updates:** `SUFeedURL` in `project.yml` points at `lokeshreddyveer/kriya`, which is private for now, so updates do not reach other people until the repository is public or the feed moves.
 
 ## More window features (Windows pane)
 

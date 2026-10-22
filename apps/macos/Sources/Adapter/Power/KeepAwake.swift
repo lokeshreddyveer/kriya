@@ -93,6 +93,12 @@ final class KeepAwake: ObservableObject {
         Log.info("Power", minutes.map { "Keeping the Mac awake for \($0) minutes" } ?? "Keeping the Mac awake")
     }
 
+    /// Keeps the Mac awake until the next time the clock shows this hour and minute (today, or tomorrow if it has passed).
+    func start(untilHour hour: Int, minute: Int) {
+        guard let target = Calendar.current.nextDate(after: Date(), matching: DateComponents(hour: hour, minute: minute, second: 0), matchingPolicy: .nextTime) else { return }
+        start(minutes: max(1, Int(target.timeIntervalSinceNow / 60)))
+    }
+
     func stop() {
         manual = false
         endsAt = nil

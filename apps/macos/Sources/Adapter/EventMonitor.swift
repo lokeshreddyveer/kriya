@@ -238,20 +238,44 @@ final class EventMonitor: ObservableObject {
 
         let bit = CGEventMask(1) << CGEventMask(type.rawValue)
         let started = DispatchTime.now().uptimeNanoseconds
-        var current = event
-        var replaced = false
-        var dropped = false
-        for sub in subs where sub.mask & bit != 0 {
-            switch sub.handler(type, current) {
-            case .passThrough: continue
-            case .drop: dropped = true
-            case .replace(let new): current = new; replaced = true
-            }
-            if dropped { break }
-        }
+        let result = Self.dispatch(handlers: subs.filter { $0.mask & bit != 0 }.map(\.handler), type: type, event: event)
         record(elapsed: DispatchTime.now().uptimeNanoseconds - started)
-        if dropped { return nil }
-        return replaced ? Unmanaged.passRetained(current) : Unmanaged.passUnretained(event)
+        if result.dropped { return nil }
+        if let replacement = result.replacement { return Unmanaged.passRetained(replacement) }
+        return Unmanaged.passUnretained(event)
+    }
+
+    struct DispatchResult {
+        var dropped = false
+        var replacement: CGEvent?
+    }
+
+    /// Hands an event to each feature in turn. A feature can let it pass, take it (drop) or swap it for another. Once one has
+    /// taken it, the features after it do not act on it, but the events that end something are still handed on, so none of
+    /// them is left waiting for a release it never saw.
+    static func dispatch(handlers: [Handler], type: CGEventType, event: CGEvent) -> DispatchResult {
+        var result = DispatchResult()
+        var current = event
+        for handler in handlers {
+            if result.dropped {
+                guard endsInteraction(type) else { break }
+                _ = handler(type, current)
+                continue
+            }
+            switch handler(type, current) {
+            case .passThrough: continue
+            case .drop: result.dropped = true
+            case .replace(let new): current = new; result.replacement = new
+            }
+        }
+        return result
+    }
+
+    static func endsInteraction(_ type: CGEventType) -> Bool {
+        switch type {
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp, .flagsChanged: return true
+        default: return false
+        }
     }
 
     private func record(elapsed: UInt64) {

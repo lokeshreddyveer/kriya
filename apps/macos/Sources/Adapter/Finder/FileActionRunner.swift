@@ -79,6 +79,15 @@ final class FileActionRunner {
         case .undoLast:
             inBackground { try FolderTools.undoLastTidy() }
 
+        case .copyChecksum:
+            inBackground { try FolderTools.copyChecksums(urls) }
+
+        case .removeQuarantine:
+            inBackground { try FolderTools.removeQuarantine(urls) }
+
+        case .makeAlias:
+            inBackground { try FolderTools.makeAliases(urls) }
+
         case .openInTerminal(let appID):
             openInTerminal(urls: urls, folder: folder, appID: appID ?? child)
 

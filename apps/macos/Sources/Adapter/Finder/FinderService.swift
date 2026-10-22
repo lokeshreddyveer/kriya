@@ -94,11 +94,40 @@ final class FinderService: ObservableObject {
             toast.show("That action is no longer available.", isError: true)
             return true
         }
-        let paths = request.paths.filter { $0.hasPrefix("/") && !$0.contains("\0") }
+        let paths = request.paths.filter { $0.hasPrefix("/") && !$0.contains("\0") }.map { ($0 as NSString).standardizingPath }.filter(Self.isAllowedItem)
+        // The folder to act in gets the same care as the selected items: a real folder, and not a system one.
+        var target: String?
+        if let asked = request.target {
+            guard let safe = Self.safeTarget(asked) else {
+                Log.warning("Finder", "Ignored a request for a folder that is not allowed")
+                return true
+            }
+            target = safe
+        }
         DispatchQueue.main.async { [runner] in
-            runner.run(item, paths: paths, target: request.target, child: request.child)
+            runner.run(item, paths: paths, target: target, child: request.child)
         }
         return true
+    }
+
+    /// A selected item a request may act on: not a system location, even when reached through a link that points there.
+    static func isAllowedItem(_ path: String) -> Bool {
+        guard path.hasPrefix("/"), !path.contains("\0") else { return false }
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        for candidate in [path, resolved] {
+            if candidate == "/" { return false }
+            for blocked in ["/System", "/usr", "/bin", "/sbin", "/private/etc", "/private/var/db"] where candidate == blocked || candidate.hasPrefix(blocked + "/") { return false }
+        }
+        return true
+    }
+
+    /// A folder path a request may act in: absolute, standardized, an existing folder, and outside the system's own.
+    static func safeTarget(_ path: String) -> String? {
+        guard path.hasPrefix("/"), !path.contains("\0") else { return nil }
+        let clean = (path as NSString).standardizingPath
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: clean, isDirectory: &isFolder), isFolder.boolValue else { return nil }
+        return isAllowedItem(clean) ? clean : nil
     }
 
     // MARK: The Services menu
@@ -106,12 +135,17 @@ final class FinderService: ObservableObject {
     /// Runs one of the shipped actions on the files a Services request carries.
     func runService(itemID: String, pasteboard: NSPasteboard) {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        let paths = urls.map(\.path)
+        // The same rule as for requests from the Finder extension: nothing in a system folder, even through a link.
+        let all = urls.map { ($0.path as NSString).standardizingPath }
+        let paths = all.filter(Self.isAllowedItem)
         guard isActive else {
             toast.show("Turn on Right-Click Menu in Kriya to use this.", isError: true)
             return
         }
-        guard !paths.isEmpty else { return }
+        guard !paths.isEmpty else {
+            if !all.isEmpty { toast.show("Items in system folders are left alone.", isError: true) }
+            return
+        }
         if itemID == "launcher" {
             DispatchQueue.main.async { [launcher] in launcher.show(selection: FinderSelection(paths: paths, folder: nil)) }
             return

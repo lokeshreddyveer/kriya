@@ -311,6 +311,20 @@ final class WindowManagementTests: XCTestCase {
         XCTAssertEqual(windowLayoutFromCommand(command: "window.left_half"), .leftHalf)
     }
 
+    func testTinyLayoutPicturesAreDrawnFromAFullSizeScreen() {
+        // The menu-bar window draws each layout as a small screen from these numbers, so they have to be the layout's
+        // real share of the screen, not stretched by minimum window sizes.
+        let screen = Rect(x: 0, y: 0, width: 1600, height: 1000)
+        let window = Rect(x: 400, y: 250, width: 800, height: 500)
+        let left = windowLayoutFrame(layout: .leftHalf, area: screen, current: window, gap: 0)
+        XCTAssertEqual(left.width, 800)
+        XCTAssertEqual(left.height, 1000)
+        let corner = windowLayoutFrame(layout: .topRight, area: screen, current: window, gap: 0)
+        XCTAssertEqual([corner.x, corner.y, corner.width, corner.height], [800, 0, 800, 500])
+        let third = windowLayoutFrame(layout: .firstThird, area: screen, current: window, gap: 0)
+        XCTAssertEqual(third.width, 533, accuracy: 1)
+    }
+
     func testCommandsMatchTheNamesTheMouseFeatureUses() {
         // Every layout the core knows must be offered as a command that a shortcut, button or gesture can run.
         let offered = Set(WindowCommands.all.map(\.command))
@@ -552,6 +566,60 @@ final class FinderActionTests: XCTestCase {
             .trim, .removeCharacters(characters: "xyz"), .replaceExtension(extension: "md"),
         ]
         XCTAssertEqual(steps.map { StepDraft($0).asStep }, steps)
+    }
+
+    func testChecksumsQuarantineAndAliasesWork() throws {
+        let world = try TestWorld()
+        defer { world.cleanUp() }
+        let file = world.folder.appendingPathComponent("abc.txt")
+        try Data("abc".utf8).write(to: file)
+        XCTAssertEqual(try FolderTools.checksum(of: file), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "the well-known SHA-256 of “abc”")
+        XCTAssertThrowsError(try FolderTools.checksum(of: world.folder.appendingPathComponent("missing")))
+
+        // The download warning goes, and only that.
+        XCTAssertEqual(setxattr(file.path, "com.apple.quarantine", "0081;00000000;Test;", 19, 0, 0), 0)
+        XCTAssertEqual(setxattr(file.path, "user.keep", "yes", 3, 0, 0), 0)
+        _ = try FolderTools.removeQuarantine([file])
+        XCTAssertEqual(getxattr(file.path, "com.apple.quarantine", nil, 0, 0, 0), -1, "the warning is gone")
+        XCTAssertGreaterThan(getxattr(file.path, "user.keep", nil, 0, 0, 0), 0, "other marks stay")
+
+        // An alias is made beside the file and points back at it; a second one gets another name.
+        let first = try FolderTools.makeAliases([file])
+        let second = try FolderTools.makeAliases([file])
+        let names = try FileManager.default.contentsOfDirectory(atPath: world.folder.path).sorted()
+        XCTAssertTrue(names.contains("abc.txt alias") && names.contains("abc.txt alias 2"), "\(names)")
+        XCTAssertEqual(first.reveal.count, 1)
+        XCTAssertEqual(second.reveal.count, 1)
+        var stale = false
+        let data = try URL.bookmarkData(withContentsOf: first.reveal[0])
+        XCTAssertEqual(try URL(resolvingBookmarkData: data, bookmarkDataIsStale: &stale).standardizedFileURL.path, file.standardizedFileURL.path)
+    }
+
+    func testSelectedItemsAreRefusedInSystemFoldersEvenThroughLinks() throws {
+        let world = try TestWorld()
+        defer { world.cleanUp() }
+        XCTAssertTrue(FinderService.isAllowedItem(world.folder.appendingPathComponent("a.txt").path))
+        XCTAssertFalse(FinderService.isAllowedItem("/System/Library/CoreServices"))
+        XCTAssertFalse(FinderService.isAllowedItem("/usr/bin/true"))
+        XCTAssertFalse(FinderService.isAllowedItem("/"))
+        let link = world.folder.appendingPathComponent("to-system")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "/System/Library")
+        XCTAssertFalse(FinderService.isAllowedItem(link.path), "a link into a system folder is treated as that folder")
+    }
+
+    func testRequestFoldersAreCheckedLikeSelectedItems() throws {
+        let world = try TestWorld()
+        defer { world.cleanUp() }
+        XCTAssertEqual(FinderService.safeTarget(world.folder.path), world.folder.standardizedFileURL.path)
+        XCTAssertNil(FinderService.safeTarget("relative/folder"), "only absolute paths")
+        XCTAssertNil(FinderService.safeTarget("/"), "never the root")
+        XCTAssertNil(FinderService.safeTarget("/System/Library"), "never the system's own folders")
+        XCTAssertNil(FinderService.safeTarget("/usr/bin"))
+        XCTAssertNil(FinderService.safeTarget(world.folder.appendingPathComponent("missing").path), "it must exist")
+        let file = world.folder.appendingPathComponent("a.txt")
+        FileManager.default.createFile(atPath: file.path, contents: Data())
+        XCTAssertNil(FinderService.safeTarget(file.path), "it must be a folder")
+        XCTAssertEqual(FinderService.safeTarget(world.folder.path + "/../" + world.folder.lastPathComponent), world.folder.standardizedFileURL.path, "dots are resolved")
     }
 
     func testTheRunnerCreatesNamesThatDoNotClashAndNeverOverwrites() throws {
@@ -971,5 +1039,129 @@ final class AutomationTests: XCTestCase {
         XCTAssertTrue(workflowStepCatalog().contains { $0.risk == .needsAuthorization })
         XCTAssertGreaterThanOrEqual(workflowTriggerCatalog().count, 13)
         XCTAssertEqual(workflowMaxChainDepth(), 5)
+    }
+}
+
+
+final class EventDispatchTests: XCTestCase {
+    private func event(_ type: CGEventType) -> CGEvent {
+        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: .zero, mouseButton: .left)!
+    }
+
+    func testFeaturesSeeAnEventInOrderAndPassingChangesNothing() {
+        var seen: [String] = []
+        let result = EventMonitor.dispatch(
+            handlers: [{ _, _ in seen.append("a"); return .passThrough }, { _, _ in seen.append("b"); return .passThrough }],
+            type: .leftMouseDown, event: event(.leftMouseDown)
+        )
+        XCTAssertEqual(seen, ["a", "b"])
+        XCTAssertFalse(result.dropped)
+        XCTAssertNil(result.replacement)
+    }
+
+    func testOnceAFeatureTakesAPressTheLaterOnesDoNotActOnIt() {
+        var seen: [String] = []
+        let result = EventMonitor.dispatch(
+            handlers: [{ _, _ in seen.append("a"); return .drop }, { _, _ in seen.append("b"); return .passThrough }],
+            type: .leftMouseDown, event: event(.leftMouseDown)
+        )
+        XCTAssertEqual(seen, ["a"])
+        XCTAssertTrue(result.dropped)
+    }
+
+    func testTheEndOfAnInteractionStillReachesEveryFeature() {
+        for type in [CGEventType.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp, .flagsChanged] {
+            var seen: [String] = []
+            let result = EventMonitor.dispatch(
+                handlers: [{ _, _ in seen.append("a"); return .drop }, { _, _ in seen.append("b"); return .passThrough }, { _, _ in seen.append("c"); return .drop }],
+                type: type, event: event(.leftMouseUp)
+            )
+            XCTAssertEqual(seen, ["a", "b", "c"], "\(type) must reach every feature so none is left waiting")
+            XCTAssertTrue(result.dropped)
+        }
+    }
+
+    func testDraggingAndKeyPressesStopAtTheFirstFeatureThatTakesThem() {
+        for type in [CGEventType.leftMouseDragged, .keyDown, .scrollWheel, .mouseMoved] {
+            var seen: [String] = []
+            _ = EventMonitor.dispatch(
+                handlers: [{ _, _ in seen.append("a"); return .drop }, { _, _ in seen.append("b"); return .passThrough }],
+                type: type, event: event(.leftMouseDown)
+            )
+            XCTAssertEqual(seen, ["a"], "\(type)")
+        }
+    }
+
+    func testAFeatureCanReplaceTheEventForTheNextOne() {
+        let swapped = event(.rightMouseDown)
+        var received: CGEvent?
+        let result = EventMonitor.dispatch(
+            handlers: [{ _, _ in .replace(swapped) }, { _, e in received = e; return .passThrough }],
+            type: .leftMouseDown, event: event(.leftMouseDown)
+        )
+        XCTAssertTrue(received === swapped || received?.type == .rightMouseDown)
+        XCTAssertNotNil(result.replacement)
+        XCTAssertFalse(result.dropped)
+    }
+}
+
+
+final class CapsLockMappingTests: XCTestCase {
+    private let ours: [String: Any] = ["HIDKeyboardModifierMappingSrc": 30064771129, "HIDKeyboardModifierMappingDst": 30064771181]
+    private let theirs: [String: Any] = ["HIDKeyboardModifierMappingSrc": 30064771300, "HIDKeyboardModifierMappingDst": 30064771301]
+
+    private func keys(_ list: [[String: Any]]) -> [Int64] {
+        list.compactMap { ($0["HIDKeyboardModifierMappingSrc"] as? NSNumber)?.int64Value }
+    }
+
+    func testTurningTheSwapOnKeepsOtherMappingsAndAddsOurs() {
+        let result = RemapService.merged([theirs], capsOn: true)
+        XCTAssertEqual(keys(result), [30064771300, 30064771129])
+    }
+
+    func testTurningItOffRemovesOnlyOurEntry() {
+        let result = RemapService.merged([theirs, ours], capsOn: false)
+        XCTAssertEqual(keys(result), [30064771300])
+        XCTAssertEqual(keys(RemapService.merged([], capsOn: false)), [], "nothing there, nothing to remove")
+    }
+
+    func testTurningItOnTwiceNeverDoublesOurEntry() {
+        let once = RemapService.merged([theirs], capsOn: true)
+        let twice = RemapService.merged(once, capsOn: true)
+        XCTAssertEqual(keys(twice), [30064771300, 30064771129])
+    }
+
+    func testHidutilOutputIsReadForTheFirstServiceThatHasMappings() {
+        let output = """
+        RegistryID  Key                   Value
+        100000802   UserKeyMapping   (
+                {
+                HIDKeyboardModifierMappingDst = 30064771181;
+                HIDKeyboardModifierMappingSrc = 30064771129;
+            }
+        )
+        1000007d7   UserKeyMapping   (
+                {
+                HIDKeyboardModifierMappingDst = 30064771181;
+                HIDKeyboardModifierMappingSrc = 30064771129;
+            }
+        )
+        """
+        var received = ""
+        let parsed = RemapService.parseMappings(output) { plist in
+            received = plist
+            return "[{\"HIDKeyboardModifierMappingSrc\":30064771129,\"HIDKeyboardModifierMappingDst\":30064771181}]"
+        }
+        XCTAssertEqual(parsed.map(keys), [30064771129])
+        XCTAssertTrue(received.hasPrefix("(") && received.hasSuffix(")"), "one service's list is handed on, brackets included")
+        XCTAssertFalse(received.contains("1000007d7"), "only the first service")
+    }
+
+    func testNothingSetIsAnEmptyListAndUnreadableOutputIsRefused() {
+        let none = "RegistryID  Key                   Value\n100000802   UserKeyMapping   (null)\n"
+        XCTAssertEqual(RemapService.parseMappings(none) { _ in "[]" }?.count, 0)
+        let broken = "100000802   UserKeyMapping   (\n  {\n"
+        XCTAssertNil(RemapService.parseMappings(broken) { _ in "[]" }, "a list that never closes is not read")
+        XCTAssertNil(RemapService.parseMappings("x   UserKeyMapping   (\n)") { _ in nil }, "when the converter fails, nothing is changed")
     }
 }

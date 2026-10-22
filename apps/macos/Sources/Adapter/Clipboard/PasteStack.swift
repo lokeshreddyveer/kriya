@@ -3,7 +3,7 @@ import AVFoundation
 
 /// Paste several copied items one after another. While it is on, everything copied is added to a line, and each ⌘V pastes
 /// the next one in the order they were copied.
-final class PasteStack {
+final class PasteStack: ObservableObject {
     private typealias Saved = [[NSPasteboard.PasteboardType: Data]]
 
     private let events: EventMonitor
@@ -19,6 +19,7 @@ final class PasteStack {
         self.events = events
     }
 
+    @Published private(set) var active = false
     var isOn: Bool { token != nil }
 
     func toggle() {
@@ -33,6 +34,7 @@ final class PasteStack {
         token = events.subscribe(owner: "clipboard.stack", events: [.keyDown], mode: .active) { [weak self] _, event in
             self?.keyDown(event) ?? .passThrough
         }
+        active = true
         toast.show("Paste stack on: copy several things, then paste them in order")
     }
 
@@ -42,6 +44,7 @@ final class PasteStack {
         timer?.invalidate()
         timer = nil
         queue.removeAll()
+        active = false
         toast.show("Paste stack off")
     }
 

@@ -30,6 +30,15 @@ struct WorkspacesPane: View {
                 HStack {
                     Text("Workspaces")
                     Spacer()
+                    Button {
+                        // The apps open right now become a new workspace, ready to name.
+                        var workspace = store.newWorkspace()
+                        workspace.name = "Open apps"
+                        workspace.appIds = Array(NSWorkspace.shared.runningApplications
+                            .filter { $0.activationPolicy == .regular && !$0.isHidden && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+                            .compactMap(\.bundleIdentifier).prefix(30))
+                        editing = workspace
+                    } label: { Label("Save Open Apps", systemImage: "square.and.arrow.down") }.controlSize(.small)
                     Button { editing = store.newWorkspace() } label: { Label("Add Workspace", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: {

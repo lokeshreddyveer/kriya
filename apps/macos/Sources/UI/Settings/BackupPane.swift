@@ -51,7 +51,7 @@ struct BackupPane: View {
                 Text("iCloud Drive")
             } footer: {
                 Text(backup.iCloudAvailable
-                     ? "Keeps one copy of your settings per Mac in iCloud Drive, updated every hour. To move to another Mac, turn this on in both and restore the other Mac's copy here. Clipboard history is never included."
+                     ? "Keeps one copy of your settings per Mac in iCloud Drive, updated every hour. To move to another Mac, turn this on in both and restore the other Mac's copy here. Clipboard history is never included. The copy is not encrypted and includes your saved actions, scripts and shortcuts, so turn this on only if you are comfortable with that in your iCloud Drive."
                      : "Turn on iCloud Drive in System Settings to use this.")
             }
 

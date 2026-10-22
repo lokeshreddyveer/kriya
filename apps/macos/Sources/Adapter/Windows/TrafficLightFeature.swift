@@ -543,14 +543,15 @@ private struct LayoutTile: View {
     let layout: WindowLayout
 
     var body: some View {
-        let area = Rect(x: 0, y: 0, width: 100, height: 64)
-        let frame = windowLayoutFrame(layout: layout, area: area, current: Rect(x: 20, y: 12, width: 50, height: 36), gap: 0)
+        // Drawn from a full-size screen, so the layout's minimum window sizes do not stretch the little picture.
+        let area = Rect(x: 0, y: 0, width: 1600, height: 1000)
+        let frame = windowLayoutFrame(layout: layout, area: area, current: Rect(x: 400, y: 250, width: 800, height: 500), gap: 0)
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color.primary.opacity(0.08))
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(Theme.accent.opacity(0.75))
-                .frame(width: max(4, 44 * frame.width / 100), height: max(4, 28 * frame.height / 64))
-                .offset(x: 44 * frame.x / 100, y: 28 * frame.y / 64)
+                .frame(width: max(4, 44 * frame.width / 1600), height: max(4, 28 * frame.height / 1000))
+                .offset(x: 44 * frame.x / 1600, y: 28 * frame.y / 1000)
         }
         .frame(width: 44, height: 28)
         .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Color.primary.opacity(0.3), lineWidth: 1))

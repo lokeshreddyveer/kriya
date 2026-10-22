@@ -62,6 +62,25 @@ pub enum TextOp {
     /// Escapes quotes, backslashes and line breaks so the text can sit inside a string in code.
     EscapeString,
     UnescapeString,
+    /// `a, b, c` (or with semicolons) becomes one item per line.
+    CommaToLines,
+    /// One item per line becomes `a, b, c`.
+    LinesToComma,
+    ShuffleLines,
+    /// Puts `1. `, `2. ` and so on in front of each line.
+    NumberLines,
+    /// `Hello, World!` becomes `hello-world`, for addresses and file names.
+    Slugify,
+    /// Takes the tracking parameters (`utm_source`, `fbclid` and the like) out of every web address in the text.
+    StripUrlTracking,
+    /// Keeps only the web addresses found in the text, one per line.
+    ExtractUrls,
+    /// Keeps only the email addresses found in the text, one per line.
+    ExtractEmails,
+    /// A number of seconds (or milliseconds) since 1970 becomes a date and time in UTC.
+    UnixTimeToDate,
+    /// A date and time in UTC (`2026-10-21 18:30:00`) becomes seconds since 1970.
+    DateToUnixTime,
 }
 
 impl TextOp {
@@ -98,6 +117,16 @@ impl TextOp {
             TextOp::Base64Decode => "Base64 decode",
             TextOp::EscapeString => "Escape for a string",
             TextOp::UnescapeString => "Unescape a string",
+            TextOp::CommaToLines => "Comma list to lines",
+            TextOp::LinesToComma => "Lines to comma list",
+            TextOp::ShuffleLines => "Shuffle lines",
+            TextOp::NumberLines => "Number the lines",
+            TextOp::Slugify => "Make a slug",
+            TextOp::StripUrlTracking => "Clean tracking from links",
+            TextOp::ExtractUrls => "Keep only the links",
+            TextOp::ExtractEmails => "Keep only the email addresses",
+            TextOp::UnixTimeToDate => "Unix time to date",
+            TextOp::DateToUnixTime => "Date to Unix time",
         }
     }
 }
@@ -167,7 +196,195 @@ pub fn apply(op: &TextOp, text: &str) -> Result<String, String> {
         TextOp::Base64Decode => base64_decode(text)?,
         TextOp::EscapeString => escape_string(text),
         TextOp::UnescapeString => unescape_string(text)?,
+        TextOp::CommaToLines => text
+            .split([',', ';', '\n'])
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect::<Vec<_>>()
+            .join(newline(text)),
+        TextOp::LinesToComma => lines(text)
+            .into_iter()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
+        TextOp::ShuffleLines => shuffle_lines(text),
+        TextOp::NumberLines => lines(text)
+            .into_iter()
+            .enumerate()
+            .map(|(i, l)| format!("{}. {l}", i + 1))
+            .collect::<Vec<_>>()
+            .join(newline(text)),
+        TextOp::Slugify => slugify(text),
+        TextOp::StripUrlTracking => strip_url_tracking(text),
+        TextOp::ExtractUrls => extract_matches(text, URL_PATTERN)?,
+        TextOp::ExtractEmails => extract_matches(text, EMAIL_PATTERN)?,
+        TextOp::UnixTimeToDate => unix_to_date(text)?,
+        TextOp::DateToUnixTime => date_to_unix(text)?,
     })
+}
+
+const URL_PATTERN: &str = r#"https?://[^\s<>"')\]]+"#;
+const EMAIL_PATTERN: &str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}";
+
+/// The lines in a random order. The order comes from the system's own randomness, so no two shuffles agree.
+fn shuffle_lines(text: &str) -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let mut l: Vec<&str> = lines(text);
+    let state = RandomState::new();
+    // Fisher-Yates, with a fresh hash for each step.
+    for i in (1..l.len()).rev() {
+        let mut hasher = state.build_hasher();
+        hasher.write_usize(i);
+        let j = (hasher.finish() % (i as u64 + 1)) as usize;
+        l.swap(i, j);
+    }
+    l.join(newline(text))
+}
+
+fn slugify(text: &str) -> String {
+    let mut out = String::new();
+    let mut pending_dash = false;
+    for c in text.chars() {
+        if c.is_alphanumeric() {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            out.extend(c.to_lowercase());
+        } else {
+            pending_dash = true;
+        }
+    }
+    out
+}
+
+fn strip_url_tracking(text: &str) -> String {
+    match regex::Regex::new(URL_PATTERN) {
+        Ok(re) => re
+            .replace_all(text, |caps: &regex::Captures| {
+                let whole = &caps[0];
+                // Punctuation that ends a sentence is not part of the address.
+                let trimmed = whole.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+                let tail = &whole[trimmed.len()..];
+                format!(
+                    "{}{}",
+                    crate::link_routing::strip_tracking(trimmed, &[]).0,
+                    tail
+                )
+            })
+            .into_owned(),
+        Err(_) => text.to_string(),
+    }
+}
+
+fn extract_matches(text: &str, pattern: &str) -> Result<String, String> {
+    let re = regex::Regex::new(pattern).map_err(|_| "the pattern is not valid".to_string())?;
+    let found: Vec<&str> = re
+        .find_iter(text)
+        .map(|m| m.as_str().trim_end_matches(['.', ',', ';', ':', '!', '?']))
+        .collect();
+    if found.is_empty() {
+        return Err("nothing was found".into());
+    }
+    Ok(found.join(newline(text)))
+}
+
+/// Days since 1970-01-01 to a calendar date (proleptic Gregorian, UTC).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64;
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+fn unix_to_date(text: &str) -> Result<String, String> {
+    map_lines_result(text, |line| {
+        let n: i64 = line
+            .trim()
+            .parse()
+            .map_err(|_| "that is not a number".to_string())?;
+        // More than 11 digits is milliseconds, not seconds.
+        let seconds = if n.abs() >= 100_000_000_000 {
+            n / 1000
+        } else {
+            n
+        };
+        if seconds.abs() > 253_402_300_799 {
+            return Err("that is outside the years 0 to 9999".to_string());
+        }
+        let (y, m, d) = civil_from_days(seconds.div_euclid(86_400));
+        let rest = seconds.rem_euclid(86_400);
+        Ok(format!(
+            "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} UTC",
+            rest / 3600,
+            rest % 3600 / 60,
+            rest % 60
+        ))
+    })
+}
+
+fn date_to_unix(text: &str) -> Result<String, String> {
+    map_lines_result(text, |line| {
+        let cleaned = line
+            .trim()
+            .trim_end_matches("UTC")
+            .trim_end_matches('Z')
+            .trim()
+            .replace('T', " ");
+        let mut parts = cleaned.split_whitespace();
+        let date = parts.next().ok_or_else(|| "there is no date".to_string())?;
+        let time = parts.next().unwrap_or("00:00:00");
+        let d: Vec<u32> = date.split('-').filter_map(|p| p.parse().ok()).collect();
+        let t: Vec<u32> = time.split(':').filter_map(|p| p.parse().ok()).collect();
+        if d.len() != 3
+            || t.len() < 2
+            || !(1..=12).contains(&d[1])
+            || !(1..=31).contains(&d[2])
+            || t[0] > 23
+            || t[1] > 59
+            || t.get(2).is_some_and(|s| *s > 59)
+        {
+            return Err("use a date like 2026-10-21 18:30:00".to_string());
+        }
+        let days = days_from_civil(d[0] as i64, d[1], d[2]);
+        Ok(
+            (days * 86_400
+                + t[0] as i64 * 3600
+                + t[1] as i64 * 60
+                + *t.get(2).unwrap_or(&0) as i64)
+                .to_string(),
+        )
+    })
+}
+
+/// Runs a step on every line and stops at the first line that cannot be done.
+fn map_lines_result(
+    text: &str,
+    mut f: impl FnMut(&str) -> Result<String, String>,
+) -> Result<String, String> {
+    let mut out = Vec::new();
+    for line in lines(text) {
+        out.push(f(line)?);
+    }
+    Ok(out.join(newline(text)))
 }
 
 /// Runs the steps in order. Stops at the first one that cannot be done and says which.
@@ -1057,5 +1274,104 @@ mod tests {
             "GET_HTTP_RESPONSE"
         );
         assert_eq!(run(TextOp::PascalCase, ""), "");
+    }
+
+    #[test]
+    fn lists_move_between_commas_and_lines() {
+        assert_eq!(
+            apply(&TextOp::CommaToLines, "a, b;c ,, d").unwrap(),
+            "a\nb\nc\nd"
+        );
+        assert_eq!(
+            apply(&TextOp::LinesToComma, "a\n\n b \nc").unwrap(),
+            "a, b, c"
+        );
+        assert_eq!(apply(&TextOp::NumberLines, "x\ny").unwrap(), "1. x\n2. y");
+    }
+
+    #[test]
+    fn shuffling_keeps_every_line_once() {
+        let out = apply(&TextOp::ShuffleLines, "a\nb\nc\nd\ne\nf").unwrap();
+        let mut got: Vec<&str> = out.lines().collect();
+        got.sort();
+        assert_eq!(got, vec!["a", "b", "c", "d", "e", "f"]);
+        assert_eq!(apply(&TextOp::ShuffleLines, "only").unwrap(), "only");
+    }
+
+    #[test]
+    fn slugs_are_lower_case_words_with_single_dashes() {
+        assert_eq!(
+            apply(&TextOp::Slugify, "  Hello,   World! 2026 ").unwrap(),
+            "hello-world-2026"
+        );
+        assert_eq!(apply(&TextOp::Slugify, "Über cool").unwrap(), "über-cool");
+        assert_eq!(apply(&TextOp::Slugify, "!!!").unwrap(), "");
+    }
+
+    #[test]
+    fn tracking_is_cleaned_from_links_inside_text() {
+        let text = "See https://example.com/a?utm_source=x&id=7&fbclid=abc. Also https://b.test/?utm_medium=m, ok";
+        assert_eq!(
+            apply(&TextOp::StripUrlTracking, text).unwrap(),
+            "See https://example.com/a?id=7. Also https://b.test/, ok"
+        );
+        assert_eq!(
+            apply(&TextOp::StripUrlTracking, "no links here").unwrap(),
+            "no links here"
+        );
+    }
+
+    #[test]
+    fn links_and_emails_can_be_pulled_out_of_text() {
+        let text =
+            "Mail ann@example.com or visit https://example.com/page, thanks. Also bob@test.org.";
+        assert_eq!(
+            apply(&TextOp::ExtractUrls, text).unwrap(),
+            "https://example.com/page"
+        );
+        assert_eq!(
+            apply(&TextOp::ExtractEmails, text).unwrap(),
+            "ann@example.com\nbob@test.org"
+        );
+        assert!(apply(&TextOp::ExtractUrls, "nothing").is_err());
+    }
+
+    #[test]
+    fn unix_time_and_dates_convert_both_ways() {
+        assert_eq!(
+            apply(&TextOp::UnixTimeToDate, "0").unwrap(),
+            "1970-01-01 00:00:00 UTC"
+        );
+        assert_eq!(
+            apply(&TextOp::UnixTimeToDate, "1700000000").unwrap(),
+            "2023-11-14 22:13:20 UTC"
+        );
+        assert_eq!(
+            apply(&TextOp::UnixTimeToDate, "1700000000000").unwrap(),
+            "2023-11-14 22:13:20 UTC",
+            "milliseconds are noticed"
+        );
+        assert_eq!(
+            apply(&TextOp::UnixTimeToDate, "-86400").unwrap(),
+            "1969-12-31 00:00:00 UTC"
+        );
+        assert_eq!(
+            apply(&TextOp::DateToUnixTime, "2023-11-14 22:13:20").unwrap(),
+            "1700000000"
+        );
+        assert_eq!(
+            apply(&TextOp::DateToUnixTime, "2023-11-14T22:13:20Z").unwrap(),
+            "1700000000"
+        );
+        assert_eq!(
+            apply(&TextOp::DateToUnixTime, "2000-02-29").unwrap(),
+            "951782400"
+        );
+        assert!(apply(&TextOp::UnixTimeToDate, "abc").is_err());
+        assert!(apply(&TextOp::DateToUnixTime, "2023-13-40").is_err());
+        assert_eq!(
+            apply(&TextOp::UnixTimeToDate, "0\n86400").unwrap(),
+            "1970-01-01 00:00:00 UTC\n1970-01-02 00:00:00 UTC"
+        );
     }
 }

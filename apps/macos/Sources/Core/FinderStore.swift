@@ -78,6 +78,9 @@ extension FinderActionKind {
         case .findLargeFiles(let mb): return "List files of \(mb) MB or more in the folder"
         case .cleanupFolder: return "Sort loose files into folders by kind"
         case .undoLast: return "Put back what the last tidy-up moved"
+        case .copyChecksum: return "Copy the file's SHA-256 checksum"
+        case .removeQuarantine: return "Remove the download warning macOS puts on files"
+        case .makeAlias: return "Make an alias beside the item"
         }
     }
 
@@ -104,6 +107,9 @@ extension FinderActionKind {
         case .findLargeFiles: return "magnifyingglass"
         case .cleanupFolder: return "sparkles"
         case .undoLast: return "arrow.uturn.backward"
+        case .copyChecksum: return "number.circle"
+        case .removeQuarantine: return "checkmark.shield"
+        case .makeAlias: return "arrow.turn.up.right"
         }
     }
 }

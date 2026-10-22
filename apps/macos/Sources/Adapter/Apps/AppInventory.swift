@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreServices
 
 /// An app installed on this Mac, with what can be told about where it came from.
 struct InstalledApp: Identifiable, Hashable {
@@ -16,6 +17,8 @@ struct InstalledApp: Identifiable, Hashable {
     let version: String
     let build: String
     let source: Source
+    /// When the app was last opened, as Spotlight knows it. Nil when it never has been.
+    let lastUsed: Date?
     var id: String { url.path }
     var isProtected: Bool {
         bundleID.hasPrefix("com.apple.") || bundleID == Bundle.main.bundleIdentifier || bundleID.isEmpty
@@ -50,6 +53,8 @@ struct AppUpdate: Identifiable, Hashable {
 /// go to the Trash, so every removal can be undone from there.
 final class AppInventory: ObservableObject {
     @Published private(set) var apps: [InstalledApp] = []
+    /// How much room each app takes, filled in after the list appears.
+    @Published private(set) var sizes: [String: Int64] = [:]
     @Published private(set) var isScanning = false
     @Published private(set) var updates: [AppUpdate] = []
     @Published private(set) var isCheckingUpdates = false
@@ -83,6 +88,22 @@ final class AppInventory: ObservableObject {
             DispatchQueue.main.async {
                 self.apps = found
                 self.isScanning = false
+                self.measure(found)
+            }
+        }
+    }
+
+    /// Works out each app's size one after another in the background, so the list is never held up by it.
+    private func measure(_ list: [InstalledApp]) {
+        DispatchQueue.global(qos: .utility).async { [self] in
+            var batch: [String: Int64] = [:]
+            for (index, app) in list.enumerated() {
+                batch[app.id] = Self.size(of: app.url)
+                if batch.count >= 8 || index == list.count - 1 {
+                    let ready = batch
+                    batch.removeAll()
+                    DispatchQueue.main.async { self.sizes.merge(ready) { _, new in new } }
+                }
             }
         }
     }
@@ -99,9 +120,10 @@ final class AppInventory: ObservableObject {
         } else {
             source = .other
         }
+        let lastUsed = MDItemCreateWithURL(kCFAllocatorDefault, url as CFURL).flatMap { MDItemCopyAttribute($0, kMDItemLastUsedDate) as? Date }
         return InstalledApp(
             url: url, name: name, bundleID: id, version: (info["CFBundleShortVersionString"] as? String) ?? "",
-            build: (info["CFBundleVersion"] as? String) ?? "", source: source
+            build: (info["CFBundleVersion"] as? String) ?? "", source: source, lastUsed: lastUsed
         )
     }
 

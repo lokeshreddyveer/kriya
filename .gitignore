@@ -8,3 +8,4 @@ apps/macos/Info.plist
 xcuserdata/
 DerivedData/
 apps/macos/FinderExtension/Info.plist
+release-evidence/

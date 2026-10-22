@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 
 /// Folder actions for the Finder menu: several folders at once, the biggest files in a folder, and a tidy-up that sorts
 /// loose files into subfolders by kind. A tidy-up never deletes or overwrites anything, and the last one can be undone.
@@ -175,5 +176,74 @@ enum FolderTools {
         }
         UserDefaults.standard.removeObject(forKey: undoKey)
         return FileActionRunner.Outcome(message: restored == 0 ? "Nothing could be put back" : "Put back \(restored) file\(restored == 1 ? "" : "s")", reveal: [])
+    }
+
+    // MARK: Checksums, download warnings and aliases
+
+    /// The SHA-256 checksum of a file, read in pieces so a large file does not have to fit in memory.
+    static func checksum(of url: URL) throws -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { throw FileActionError("Could not read “\(url.lastPathComponent)”.") }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Copies the SHA-256 checksum of each selected file. A folder has none, so it is skipped.
+    static func copyChecksums(_ urls: [URL]) throws -> FileActionRunner.Outcome {
+        let files = urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+        guard !files.isEmpty else { throw FileActionError("Select a file: a folder has no checksum.") }
+        var lines: [String] = []
+        for url in files {
+            let hex = try checksum(of: url)
+            lines.append(files.count == 1 ? hex : "\(hex)  \(url.lastPathComponent)")
+        }
+        let text = lines.joined(separator: "\n")
+        DispatchQueue.main.async {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        return FileActionRunner.Outcome(message: files.count == 1 ? "Copied the SHA-256 checksum" : "Copied \(files.count) checksums", reveal: [])
+    }
+
+    /// Takes the "downloaded from the internet" mark off the items and everything inside them.
+    static func removeQuarantine(_ urls: [URL]) throws -> FileActionRunner.Outcome {
+        var cleared = 0
+        for url in urls {
+            if ProtectedPaths.isProtected(url.path) { throw FileActionError("“\(url.lastPathComponent)” is a system folder and is left alone.") }
+            var targets = [url]
+            if let walker = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil, options: []) {
+                var seen = 0
+                for case let item as URL in walker {
+                    seen += 1
+                    if seen > 50_000 { break }
+                    targets.append(item)
+                }
+            }
+            for target in targets where removexattr(target.path, "com.apple.quarantine", XATTR_NOFOLLOW) == 0 { cleared += 1 }
+        }
+        return FileActionRunner.Outcome(message: cleared == 0 ? "There was no download warning to remove" : "Removed the download warning", reveal: [])
+    }
+
+    /// Makes a Finder alias beside each item, named like the item with " alias" after it.
+    static func makeAliases(_ urls: [URL]) throws -> FileActionRunner.Outcome {
+        let fm = FileManager.default
+        var made: [URL] = []
+        for url in urls {
+            let folder = url.deletingLastPathComponent()
+            // "photo.jpg alias", then "photo.jpg alias 2": the number goes at the very end, as Finder does it.
+            let existing = Set((try? fm.contentsOfDirectory(atPath: folder.path)) ?? [])
+            var name = url.lastPathComponent + " alias"
+            var number = 2
+            while existing.contains(name) {
+                name = url.lastPathComponent + " alias \(number)"
+                number += 1
+            }
+            let alias = folder.appendingPathComponent(name)
+            let data = try url.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil)
+            try URL.writeBookmarkData(data, to: alias)
+            made.append(alias)
+        }
+        return FileActionRunner.Outcome(message: made.count == 1 ? "Made an alias" : "Made \(made.count) aliases", reveal: made)
     }
 }
