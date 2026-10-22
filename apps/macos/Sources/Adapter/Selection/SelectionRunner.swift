@@ -181,9 +181,30 @@ final class SelectionActionRunner {
         case .workflow(let id):
             runWorkflow(id, snapshot.text)
         case .intelligence(let task):
-            // The text is not logged, and not sent anywhere but the model on this Mac.
-            runIntelligence(task, snapshot.text, pointer, snapshot.editable ? { [weak self] result in self?.replace(snapshot, with: result) ?? false } : nil)
+            // The text is not logged, and not sent anywhere but the model on this Mac. An app can report only part of a
+            // selection when the bar first appears, so it is read again now, and the fuller reading is used.
+            let (_, config) = store.current
+            let canCopy = selectionBehavior(config: config, appId: snapshot.appID).allowCopyFallback && !snapshot.editable
+            let monitor = clipboard.monitor
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                var text = snapshot.text
+                text = Self.fuller(text, SelectionReader.read()?.text)
+                if canCopy { text = Self.fuller(text, SelectionReader.readByCopying(monitor: monitor)) }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.runIntelligence(task, text, pointer, snapshot.editable ? { [weak self] result in self?.replace(snapshot, with: result) ?? false } : nil)
+                }
+            }
         }
+    }
+
+    /// `first`, unless `later` is a longer reading of the same selection (it contains what was read before), in which
+    /// case that. Something unrelated, such as a different selection made since, is never taken.
+    static func fuller(_ first: String, _ later: String?) -> String {
+        guard let later, later.count > first.count else { return first }
+        let a = first.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !a.isEmpty, later.contains(a) else { return first }
+        return later
     }
 
     // MARK: Pieces

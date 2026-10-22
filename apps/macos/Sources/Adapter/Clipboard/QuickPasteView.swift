@@ -1,6 +1,68 @@
 import AppKit
 import SwiftUI
 
+/// One more thing a right-click can do with an item. Those with the same `submenu` share a sub-menu.
+struct QuickMenuAction: Identifiable {
+    let id = UUID()
+    let title: String
+    let symbol: String
+    var submenu: String?
+    let run: () -> Void
+}
+
+/// Where the quick paste window opens.
+enum QuickPanelPlacement: String, CaseIterable, Identifiable {
+    case atPointer, remembered
+    var id: String { rawValue }
+    var title: String { self == .atPointer ? "At the pointer" : "Where I left it" }
+
+    private static let key = "quickPastePlacement"
+    static var current: QuickPanelPlacement {
+        get { UserDefaults.standard.string(forKey: key).flatMap(QuickPanelPlacement.init(rawValue:)) ?? .atPointer }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    }
+}
+
+/// Keeping the window where the person put it.
+enum QuickPanelPosition {
+    private static let key = "quickPasteOrigin"
+
+    static var saved: NSPoint? {
+        guard let text = UserDefaults.standard.string(forKey: key) else { return nil }
+        let parts = text.split(separator: ",").compactMap { Double($0) }
+        return parts.count == 2 ? NSPoint(x: parts[0], y: parts[1]) : nil
+    }
+
+    static func save(_ origin: NSPoint) { UserDefaults.standard.set("\(origin.x),\(origin.y)", forKey: key) }
+
+    /// The saved place, if most of the window would still be on a screen (a display may have been unplugged), moved fully
+    /// inside the screen it mostly overlaps. Nil when it would be mostly off every screen.
+    static func usable(_ saved: NSPoint?, size: NSSize, screens: [CGRect]) -> NSPoint? {
+        guard let saved, size.width > 0, size.height > 0 else { return nil }
+        let frame = CGRect(origin: saved, size: size)
+        let best = screens.max { overlap(frame, $0) < overlap(frame, $1) }
+        guard let screen = best, overlap(frame, screen) >= size.width * size.height * 0.5 else { return nil }
+        let x = min(max(saved.x, screen.minX + 4), max(screen.maxX - size.width - 4, screen.minX + 4))
+        let y = min(max(saved.y, screen.minY + 4), max(screen.maxY - size.height - 4, screen.minY + 4))
+        return NSPoint(x: x, y: y)
+    }
+
+    private static func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        let both = a.intersection(b)
+        return both.isNull ? 0 : both.width * both.height
+    }
+}
+
+/// A strip that moves the window when it is dragged.
+private struct WindowGrip: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { GripView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class GripView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+    }
+}
+
 /// The quick paste panel: a search box, a few type filters and the history grouped by day. The row you are on opens up to
 /// show everything it holds, so there is no separate preview to look at. Click a row, or press Return, to paste it.
 struct QuickAccessView: View {
@@ -8,14 +70,17 @@ struct QuickAccessView: View {
     @ObservedObject var store: ClipboardStore
     let onChoose: (ClipItem, Bool) -> Void
     let onClose: () -> Void
+    var onCopy: (ClipItem) -> Void = { _ in }
+    var menuActions: (ClipItem) -> [QuickMenuAction] = { _ in [] }
     @FocusState private var searchFocused: Bool
     @State private var hovered: String?
 
     /// The filters shown here. Pinned items have no place in this panel, so that filter is left out.
-    private static let chips: [ClipChip] = [.all, .text, .links, .images, .files, .snippets]
+    private static let chips: [ClipChip] = [.all, .pinned, .text, .links, .images, .files, .snippets]
 
     var body: some View {
         VStack(spacing: 0) {
+            grip
             searchBar
             chipRow
             Divider().opacity(0.6)
@@ -30,6 +95,17 @@ struct QuickAccessView: View {
     }
 
     // MARK: Search and filters
+
+    /// A small bar to take hold of, to move the window.
+    private var grip: some View {
+        ZStack {
+            WindowGrip()
+            Capsule().fill(Color.primary.opacity(0.22)).frame(width: 38, height: 4)
+        }
+        .frame(height: 14)
+        .padding(.top, 2)
+        .help("Drag to move this window")
+    }
 
     private var searchBar: some View {
         HStack(spacing: 8) {
@@ -141,6 +217,7 @@ struct QuickAccessView: View {
                                     isSelected: entry.index == model.selected, isHovered: hovered == entry.item.id, blob: entry.index == model.selected ? model.blob : nil
                                 )
                                 .id(entry.item.id)
+                                .contextMenu { menu(for: entry.item) }
                                 .onHover { inside in hovered = inside ? entry.item.id : (hovered == entry.item.id ? nil : hovered) }
                                 .onTapGesture { onChoose(entry.item, NSEvent.modifierFlags.contains(.command)) }
                             }
@@ -157,12 +234,43 @@ struct QuickAccessView: View {
         }
     }
 
+    // MARK: Right-click menu
+
+    @ViewBuilder
+    private func menu(for item: ClipItem) -> some View {
+        let isText = item.kind == .text || item.kind == .richText || item.kind == .url
+        Button { onChoose(item, false) } label: { Label("Paste", systemImage: "arrow.turn.down.left") }
+        if isText { Button { onChoose(item, true) } label: { Label("Paste as Plain Text", systemImage: "textformat") } }
+        Button { onCopy(item) } label: { Label("Copy", systemImage: "doc.on.doc") }
+        Divider()
+        Button { model.togglePin(item) } label: { Label(item.pinned ? "Unpin" : "Pin to the Top", systemImage: item.pinned ? "pin.slash" : "pin") }
+        Button { model.toggleSnippet(item) } label: { Label(item.favorite ? "Remove from Snippets" : "Save as Snippet", systemImage: item.favorite ? "star.slash" : "star") }
+        let extras = menuActions(item)
+        if !extras.isEmpty {
+            Divider()
+            ForEach(extras.filter { $0.submenu == nil }) { action in
+                Button { action.run() } label: { Label(action.title, systemImage: action.symbol) }
+            }
+            let groups = extras.compactMap(\.submenu).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            ForEach(groups, id: \.self) { group in
+                Menu {
+                    ForEach(extras.filter { $0.submenu == group }) { action in
+                        Button { action.run() } label: { Label(action.title, systemImage: action.symbol) }
+                    }
+                } label: { Label(group, systemImage: "sparkles") }
+            }
+        }
+        Divider()
+        Button(role: .destructive) { model.remove(item) } label: { Label("Delete", systemImage: "trash") }
+    }
+
     // MARK: Footer and keys
 
     private var footer: some View {
         HStack(spacing: 12) {
             hint("↩", "Paste")
-            hint("⌘↩", "Plain text")
+            hint("⌘↩", "Plain")
+            hint("⌘P", "Pin")
             hint("⌘⌫", "Delete")
             hint("⎋", "Close")
             Spacer(minLength: 4)
@@ -191,6 +299,7 @@ struct QuickAccessView: View {
             return .ignored
         case .delete where command: model.deleteCurrent(); return .handled
         default:
+            if command, press.characters.lowercased() == "p" { model.togglePin(); return .handled }
             if command, let digit = Int(press.characters), (1...9).contains(digit), model.results.indices.contains(digit - 1) {
                 onChoose(model.results[digit - 1], false)
                 return .handled
@@ -317,6 +426,7 @@ private struct QuickRow: View {
                 Image(nsImage: icon).resizable().frame(width: 12, height: 12)
             }
             Text(detailText)
+            if item.pinned { Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Theme.warn) }
             if item.favorite { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(Theme.warn) }
             ForEach(item.tags.prefix(2), id: \.self) { Text("#\($0)").foregroundStyle(Theme.accent) }
         }

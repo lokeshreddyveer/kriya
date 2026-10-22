@@ -474,6 +474,7 @@ private struct ClipSettingsTab: View {
 
     @State private var newCollection = ""
     @State private var confirmClear = false
+    @State private var placement = QuickPanelPlacement.current
 
     private var config: ClipConfig { clip.config }
 
@@ -506,6 +507,9 @@ private struct ClipSettingsTab: View {
             } header: { Text("Privacy") }
 
             Section {
+                Picker("The quick paste window opens", selection: Binding(get: { placement }, set: { placement = $0; QuickPanelPlacement.current = $0 })) {
+                    ForEach(QuickPanelPlacement.allCases) { Text($0.title).tag($0) }
+                }
                 shortcutRow("Open the clipboard window", key: \.quickKey, mods: \.quickModifiers)
                 shortcutRow("Paste as plain text", key: \.plainKey, mods: \.plainModifiers)
                 shortcutRow("Remove formatting from the clipboard", key: \.stripKey, mods: \.stripModifiers)
@@ -517,7 +521,9 @@ private struct ClipSettingsTab: View {
                         Button("Allow…") { permissions.request(.accessibility) }.controlSize(.small)
                     }
                 }
-            } header: { Text("Shortcuts") }
+            } header: { Text("Shortcuts") } footer: {
+                Text("Drag the quick paste window by the bar at its top (or any empty part) to move it. “Where I left it” brings it back to the place you moved it to. Right-click an item for Paste, Copy, Pin, Save as Snippet and Delete.")
+            }
 
             Section {
                 ForEach(clip.collections) { c in

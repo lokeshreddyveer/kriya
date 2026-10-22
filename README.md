@@ -321,3 +321,9 @@ Kriya uses Apple Intelligence's on-device model through the Foundation Models fr
 - Existing selection-bar setups get the new actions once; ones you remove do not come back.
 
 Verified: it compiles, its tests pass with a stand-in model, and a real call to this Mac's on-device model fixed a test sentence. Not verified by hand: the selection bar actions, the result window, the launcher "ask" and the clipboard actions on real windows.
+
+## Quick paste window, and Apple Intelligence fixes (0.2.10)
+
+- **The quick paste window can be moved:** drag the bar at its top, or any empty part. Clipboard › Settings can make it open where you left it instead of at the pointer.
+- **Right-click an item:** Paste, Paste as Plain Text, Copy (without pasting), Pin to the Top, Save as Snippet, Show in Finder or Copy Path for files, Open Link for links, an Apple Intelligence submenu for text (never for items labelled sensitive), and Delete. ⌘P pins the highlighted item. Pinned items show a pin mark and have their own filter.
+- **Apple Intelligence:** the selection is read again when you choose an action, and the longer reading is used when it contains the first (some apps report only part of a selection at first). The result window shows how many characters were used, stays on the screen the pointer is on, and Summarize or Key points on under 140 characters says there is nothing to summarize instead of repeating the text.

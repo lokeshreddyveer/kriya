@@ -43,6 +43,8 @@ enum IntelligenceAvailability: Equatable {
 enum IntelligenceError: Error, Equatable, LocalizedError {
     case unavailable(IntelligenceAvailability)
     case emptyText
+    /// Too little text to summarize: the answer would only repeat it.
+    case tooShortToSummarize(Int)
     case tooLong
     case refused
     case unsupportedLanguage
@@ -54,6 +56,7 @@ enum IntelligenceError: Error, Equatable, LocalizedError {
         switch self {
         case .unavailable(let why): return why.explanation
         case .emptyText: return "There is no text to work on."
+        case .tooShortToSummarize(let count): return "That is only \(count) characters, so there is nothing to summarize. If you selected more than that, the app reported only part of it: select it again, or copy it and use the launcher's “Summarize the clipboard text”."
         case .tooLong: return "That text is too long for the on-device model, even after cutting it down."
         case .refused: return "Apple Intelligence declined to work on that text."
         case .unsupportedLanguage: return "Apple Intelligence does not support the language of that text yet."
@@ -143,6 +146,8 @@ struct IntelligenceSettings: Codable, Equatable {
 /// person allowed. It records nothing about what was sent.
 final class AppleIntelligence: ObservableObject {
     static let maxInputCharacters = 6000
+    /// Fewer characters than this are not worth summarizing or listing key points from.
+    static let minimumToSummarize = 140
     /// When the model says the text is still too long, it is tried again with this share of the limit.
     static let retryShare = 0.4
 
@@ -204,7 +209,9 @@ final class AppleIntelligence: ObservableObject {
         // A custom instruction with nothing in it, or too much, is refused before anything is sent.
         if intelligenceCheck(task: task) != nil { throw IntelligenceError.failed }
         let instructions = withLanguage(intelligenceInstructions(task: task))
-        return try await send(text: text, instructions: instructions, rewriting: true, original: text) { "Text to work on:\n<<<\n\($0)\n>>>" }
+        // A summary of a couple of lines would only repeat them, so that is said instead of returning the same words.
+        let minimum = (task == .summarize || task == .keyPoints) ? Self.minimumToSummarize : 0
+        return try await send(minimumLength: minimum, text: text, instructions: instructions, rewriting: true, original: text) { "Text to work on:\n<<<\n\($0)\n>>>" }
     }
 
     /// Answers a question typed in.
@@ -218,10 +225,12 @@ final class AppleIntelligence: ObservableObject {
         return language.isEmpty ? instructions : instructions + "\nWrite the result in \(language)."
     }
 
-    private func send(text: String, instructions: String, rewriting: Bool, original: String, prompt: (String) -> String) async throws -> Output {
+    private func send(minimumLength: Int = 0, text: String, instructions: String, rewriting: Bool, original: String, prompt: (String) -> String) async throws -> Output {
         refresh()
         guard availability.isAvailable else { throw IntelligenceError.unavailable(availability) }
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw IntelligenceError.emptyText }
+        let length = text.trimmingCharacters(in: .whitespacesAndNewlines).count
+        guard length > 0 else { throw IntelligenceError.emptyText }
+        guard length >= minimumLength else { throw IntelligenceError.tooShortToSummarize(length) }
         await MainActor.run { requestsInFlight += 1 }
         defer { Task { @MainActor in self.requestsInFlight = max(0, self.requestsInFlight - 1) } }
 

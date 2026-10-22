@@ -12,6 +12,8 @@ final class IntelligenceJob: ObservableObject {
     let title: String
     /// A short look at what it was asked about, shown above the result. Cut to a couple of lines.
     let source: String
+    /// How many characters of the person's text were used, so a partial read is never hidden.
+    let characterCount: Int
     /// Puts the result in place of the selection. Nil when the text cannot be replaced.
     let replace: ((String) -> Bool)?
     let start: () async throws -> AppleIntelligence.Output
@@ -22,7 +24,9 @@ final class IntelligenceJob: ObservableObject {
 
     init(title: String, source: String, replace: ((String) -> Bool)?, start: @escaping () async throws -> AppleIntelligence.Output) {
         self.title = title
-        self.source = String(source.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.source = String(trimmed.prefix(240))
+        self.characterCount = trimmed.count
         self.replace = replace
         self.start = start
     }
@@ -91,21 +95,31 @@ final class IntelligencePanel: NSObject, NSWindowDelegate {
         panel.contentView = NSHostingView(rootView: IntelligenceResultView(job: job, onClose: { [weak self] in self?.close() }))
         self.panel = panel
 
-        let screen = NSScreen.screens.first { screen in pointer.map { screen.frame.contains(NSPoint(x: $0.x, y: screen.frame.height - $0.y)) } ?? false } ?? NSScreen.main
-        if let frame = screen?.visibleFrame {
-            let size = panel.frame.size
-            var origin = NSPoint(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2 + frame.height * 0.1)
-            if let pointer {
-                // Next to where the text was selected, kept fully on the screen.
-                let fromBottom = (NSScreen.screens.first?.frame.height ?? frame.maxY) - pointer.y
-                origin = NSPoint(x: min(max(pointer.x - size.width / 2, frame.minX + 8), frame.maxX - size.width - 8), y: min(max(fromBottom - size.height - 24, frame.minY + 8), frame.maxY - size.height - 8))
-            }
-            panel.setFrameOrigin(origin)
+        // The display the pointer is on (measured the way AppKit measures), and the part of it windows may use.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        if let visible = screen?.visibleFrame {
+            let anchor: NSPoint? = pointer == nil ? nil : mouse
+            panel.setFrameOrigin(Self.origin(size: panel.frame.size, near: anchor, in: visible))
         }
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
         NSAnimationContext.runAnimationGroup { $0.duration = 0.14; panel.animator().alphaValue = 1 }
         job.run()
+    }
+
+    /// Where a window of this size goes: just below `point` (AppKit coordinates, origin at the bottom left), above it when
+    /// there is no room below, centred when there is no point, and always completely inside `visible`.
+    static func origin(size: NSSize, near point: NSPoint?, in visible: CGRect, gap: CGFloat = 24, margin: CGFloat = 8) -> NSPoint {
+        guard let point else {
+            return NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2 + visible.height * 0.1)
+        }
+        var y = point.y - gap - size.height
+        if y < visible.minY + margin { y = point.y + gap }
+        let x = point.x - size.width / 2
+        let maxX = max(visible.maxX - size.width - margin, visible.minX + margin)
+        let maxY = max(visible.maxY - size.height - margin, visible.minY + margin)
+        return NSPoint(x: min(max(x, visible.minX + margin), maxX), y: min(max(y, visible.minY + margin), maxY))
     }
 
     func close() {
@@ -136,9 +150,13 @@ private struct IntelligenceResultView: View {
                 Button { onClose() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
             }
             if !job.source.isEmpty {
-                Text(job.source).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(job.source).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text("Using \(job.characterCount.formatted()) character\(job.characterCount == 1 ? "" : "s")").font(.caption2).foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
             content
             footer

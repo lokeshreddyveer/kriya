@@ -66,6 +66,28 @@ final class QuickClipModel: ObservableObject {
         reloadKeepingSelection(item.id)
     }
 
+    /// Pins or unpins one item (a right-click on any row, not only the selected one).
+    func togglePin(_ item: ClipItem) {
+        store.setPinned(item.id, !item.pinned)
+        reloadKeepingSelection(current?.id ?? item.id)
+    }
+
+    /// Makes an item a snippet, or takes it back to an ordinary item. Its name is kept either way.
+    func toggleSnippet(_ item: ClipItem) {
+        store.setFavorite(item.id, !item.favorite, title: item.title)
+        reloadKeepingSelection(current?.id ?? item.id)
+    }
+
+    /// Removes one item, leaving the selection where it was.
+    func remove(_ item: ClipItem) {
+        let keep = selected
+        let keepID = current?.id
+        store.delete(item.id)
+        results = store.search(query, filter: chip.filter(collection: collection), limit: 200)
+        selected = keepID.flatMap { id in results.firstIndex { $0.id == id } } ?? min(keep, max(0, results.count - 1))
+        loadPreview()
+    }
+
     func deleteCurrent() {
         guard let item = current else { return }
         let keep = selected
@@ -92,6 +114,12 @@ final class QuickAccessPanel: NSObject, NSWindowDelegate {
     private let paster: ClipboardPaster
     private let model: QuickClipModel
     private var panel: Panel?
+    private let toast = Toast()
+    /// True while Kriya itself places the window, so that is not taken for the person moving it.
+    private var placing = false
+
+    /// More right-click items for an item, such as Apple Intelligence. Set by the app.
+    var extraMenuActions: (ClipItem) -> [QuickMenuAction] = { _ in [] }
 
     init(store: ClipboardStore, paster: ClipboardPaster) {
         self.store = store
@@ -113,18 +141,26 @@ final class QuickAccessPanel: NSObject, NSWindowDelegate {
         model.open()
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        if let frame = screen?.visibleFrame {
-            // Right at the pointer, kept fully on the screen.
-            let size = panel.frame.size
-            let x = min(max(mouse.x - 20, frame.minX + 8), frame.maxX - size.width - 8)
-            let y = min(max(mouse.y - size.height + 20, frame.minY + 8), frame.maxY - size.height - 8)
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
+        placing = true
+        let size = panel.frame.size
+        let screens = NSScreen.screens.map(\.visibleFrame)
+        if QuickPanelPlacement.current == .remembered, let saved = QuickPanelPosition.usable(QuickPanelPosition.saved, size: size, screens: screens) {
+            // Where the person left it last time.
+            panel.setFrameOrigin(saved)
+        } else {
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+            if let frame = screen?.visibleFrame {
+                // Right at the pointer, kept fully on the screen.
+                let x = min(max(mouse.x - 20, frame.minX + 8), frame.maxX - size.width - 8)
+                let y = min(max(mouse.y - size.height + 20, frame.minY + 8), frame.maxY - size.height - 8)
+                panel.setFrameOrigin(NSPoint(x: x, y: y))
+            }
         }
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
         NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
+        DispatchQueue.main.async { [weak self] in self?.placing = false }
     }
 
     func close() { panel?.orderOut(nil) }
@@ -143,12 +179,60 @@ final class QuickAccessPanel: NSObject, NSWindowDelegate {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        // Drag it by any part that is not a control, or by the grip at the top.
+        panel.isMovableByWindowBackground = true
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: QuickAccessView(model: model, store: store, onChoose: { [weak self] in self?.choose($0, plain: $1) }, onClose: { [weak self] in self?.close() }))
+        panel.contentView = NSHostingView(rootView: QuickAccessView(
+            model: model, store: store,
+            onChoose: { [weak self] in self?.choose($0, plain: $1) },
+            onClose: { [weak self] in self?.close() },
+            onCopy: { [weak self] in self?.copy($0) },
+            menuActions: { [weak self] in self?.menuActions(for: $0) ?? [] }
+        ))
         return panel
     }
 
     func windowDidResignKey(_ notification: Notification) { close() }
+
+    /// Remembers where the person put the window, when they asked for that.
+    func windowDidMove(_ notification: Notification) {
+        guard !placing, QuickPanelPlacement.current == .remembered, let origin = panel?.frame.origin else { return }
+        QuickPanelPosition.save(origin)
+    }
+
+    // MARK: Right-click
+
+    /// Copies an item without pasting it, and keeps the window open.
+    private func copy(_ item: ClipItem) {
+        if paster.put(item, plain: false) {
+            store.markUsed(item.id)
+            toast.show("Copied")
+        } else {
+            toast.show("That item could not be copied.", isError: true)
+        }
+    }
+
+    /// What a right-click offers for an item beyond the usual: reveal files, open links, and whatever the app adds.
+    private func menuActions(for item: ClipItem) -> [QuickMenuAction] {
+        var list: [QuickMenuAction] = []
+        switch item.kind {
+        case .files:
+            let urls = item.files.map { URL(fileURLWithPath: $0) }
+            list.append(QuickMenuAction(title: "Show in Finder", symbol: "folder") { NSWorkspace.shared.activateFileViewerSelecting(urls) })
+            list.append(QuickMenuAction(title: "Copy Path", symbol: "doc.on.doc") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(item.files.joined(separator: "\n"), forType: .string)
+            })
+        case .url:
+            if let url = URL(string: item.preview), ["http", "https"].contains(url.scheme?.lowercased()) {
+                list.append(QuickMenuAction(title: "Open Link", symbol: "safari") { NSWorkspace.shared.open(url) })
+            }
+        default:
+            break
+        }
+        list.append(contentsOf: extraMenuActions(item))
+        return list
+    }
 }
 
 /// One line in a list of clipboard items.

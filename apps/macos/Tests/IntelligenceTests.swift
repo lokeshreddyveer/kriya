@@ -21,6 +21,9 @@ private struct ModelFailure: Error, CustomStringConvertible {
     var description: String { "\(name)(secret text the user selected)" }
 }
 
+/// Enough text that a summary is worth asking for.
+private let longEnough = String(repeating: "This sentence is here so there is something to summarize. ", count: 4)
+
 final class AppleIntelligenceTests: XCTestCase {
     private func make(_ model: FakeTextModel) -> AppleIntelligence {
         AppleIntelligence(model: model, defaults: UserDefaults(suiteName: "kriya-ai-\(UUID().uuidString)")!, watchSystem: false)
@@ -32,7 +35,7 @@ final class AppleIntelligenceTests: XCTestCase {
         let service = make(model)
         XCTAssertFalse(service.isAvailable)
         do {
-            _ = try await service.run(.summarize, on: "Hello there")
+            _ = try await service.run(.summarize, on: longEnough)
             XCTFail("should not run")
         } catch {
             XCTAssertEqual(error as? IntelligenceError, .unavailable(.notTurnedOn))
@@ -70,6 +73,22 @@ final class AppleIntelligenceTests: XCTestCase {
         XCTAssertEqual(out.text, "It is a tool.")
         XCTAssertEqual(model.asked.first?.prompt, "What is a monad?")
         XCTAssertEqual(model.asked.first?.rewriting, false)
+    }
+
+    func testAShortTextIsNotSummarizedAndTheErrorSaysWhy() async throws {
+        let model = FakeTextModel()
+        let service = make(model)
+        let partial = "Start cheaply with local normalization, fuzzy matching, guide search, and p"
+        do { _ = try await service.run(.summarize, on: partial); XCTFail("should not run") } catch {
+            XCTAssertEqual(error as? IntelligenceError, .tooShortToSummarize(partial.count))
+            XCTAssertTrue((error as? IntelligenceError)?.errorDescription?.contains("\(partial.count) characters") == true)
+        }
+        do { _ = try await service.run(.keyPoints, on: "Too short."); XCTFail() } catch { XCTAssertNotNil(error as? IntelligenceError) }
+        XCTAssertTrue(model.asked.isEmpty, "nothing was sent")
+        // Rewrites and explanations are still fine on a short text.
+        model.answers = [.success("Fixed.")]
+        let out = try await service.run(.fixGrammar, on: "teh cat")
+        XCTAssertEqual(out.text, "Fixed.")
     }
 
     func testLongTextIsCutAndTheResultSaysSo() async throws {
@@ -115,7 +134,7 @@ final class AppleIntelligenceTests: XCTestCase {
         let service = make(model)
         do { _ = try await service.run(.summarize, on: "   \n"); XCTFail() } catch { XCTAssertEqual(error as? IntelligenceError, .emptyText) }
         model.answers = [.success("   ")]
-        do { _ = try await service.run(.summarize, on: "real text"); XCTFail() } catch { XCTAssertEqual(error as? IntelligenceError, .failed) }
+        do { _ = try await service.run(.fixGrammar, on: "real text"); XCTFail() } catch { XCTAssertEqual(error as? IntelligenceError, .failed) }
         do { _ = try await service.run(.custom(instruction: ""), on: "real text"); XCTFail() } catch { XCTAssertEqual(error as? IntelligenceError, .failed) }
         XCTAssertEqual(model.asked.count, 1, "a task that fails its own check is never sent")
     }
@@ -125,14 +144,14 @@ final class AppleIntelligenceTests: XCTestCase {
         let model = FakeTextModel()
         let first = AppleIntelligence(model: model, defaults: defaults, watchSystem: false)
         first.update { $0.outputLanguage = "  French  "; $0.inLauncher = false }
-        _ = try await first.run(.summarize, on: "Some text")
+        _ = try await first.run(.summarize, on: longEnough)
         XCTAssertTrue(model.asked[0].instructions.hasSuffix("Write the result in French."))
         let again = AppleIntelligence(model: model, defaults: defaults, watchSystem: false)
         XCTAssertEqual(again.settings.outputLanguage, "French")
         XCTAssertFalse(again.settings.inLauncher)
         XCTAssertTrue(again.settings.inSelectionBar)
         first.update { $0.outputLanguage = "" }
-        _ = try await first.run(.summarize, on: "Some text")
+        _ = try await first.run(.summarize, on: longEnough)
         XCTAssertFalse(model.asked[1].instructions.contains("Write the result in"))
     }
 
@@ -216,5 +235,133 @@ final class LauncherIntelligenceTests: XCTestCase {
         XCTAssertTrue(LauncherCategory.allCases.contains(.intelligence))
         XCTAssertEqual(LauncherCategory.intelligence.label, "AI")
         XCTAssertFalse(LauncherCategory.intelligence.detail.isEmpty)
+    }
+}
+
+final class IntelligenceReadingTests: XCTestCase {
+    func testALongerReadingOfTheSameSelectionReplacesAPartialOne() {
+        let partial = "Start cheaply with local normalization, fuzzy matching, guide search, and p"
+        let whole = partial + "lay with it. Then add the rest of the plan in a second paragraph."
+        XCTAssertEqual(SelectionActionRunner.fuller(partial, whole), whole)
+        XCTAssertEqual(SelectionActionRunner.fuller(whole, partial), whole, "a shorter reading never replaces a fuller one")
+        XCTAssertEqual(SelectionActionRunner.fuller(partial, nil), partial)
+        XCTAssertEqual(SelectionActionRunner.fuller(partial, partial), partial)
+    }
+
+    func testADifferentSelectionIsNeverTaken() {
+        let first = "The first thing the person selected."
+        let other = "Something else entirely that the person selected afterwards and is longer."
+        XCTAssertEqual(SelectionActionRunner.fuller(first, other), first)
+        XCTAssertEqual(SelectionActionRunner.fuller("   ", other), "   ", "nothing to match against")
+    }
+}
+
+final class IntelligencePanelPlacementTests: XCTestCase {
+    private let screen = CGRect(x: 0, y: 80, width: 1440, height: 800)   // 80 points taken by the Dock at the bottom
+    private let size = NSSize(width: 440, height: 300)
+
+    private func inside(_ point: NSPoint) -> Bool {
+        CGRect(origin: point, size: size).insetBy(dx: -0.01, dy: -0.01).intersection(screen) == CGRect(origin: point, size: size).insetBy(dx: -0.01, dy: -0.01)
+    }
+
+    func testItSitsJustBelowThePointerWhenThereIsRoom() {
+        let origin = IntelligencePanel.origin(size: size, near: NSPoint(x: 700, y: 700), in: screen)
+        XCTAssertEqual(origin.y, 700 - 24 - 300, accuracy: 0.01)
+        XCTAssertEqual(origin.x, 700 - 220, accuracy: 0.01)
+        XCTAssertTrue(inside(origin))
+    }
+
+    func testItGoesAboveWhenThePointerIsLowOnTheScreen() {
+        let origin = IntelligencePanel.origin(size: size, near: NSPoint(x: 700, y: 200), in: screen)
+        XCTAssertGreaterThan(origin.y, 200, "above the pointer, not under the Dock")
+        XCTAssertTrue(inside(origin))
+    }
+
+    func testItNeverLeavesTheScreenInAnyCorner() {
+        for x in stride(from: CGFloat(0), through: 1440, by: 240) {
+            for y in stride(from: CGFloat(80), through: 880, by: 100) {
+                XCTAssertTrue(inside(IntelligencePanel.origin(size: size, near: NSPoint(x: x, y: y), in: screen)), "pointer at \(x), \(y)")
+            }
+        }
+        XCTAssertTrue(inside(IntelligencePanel.origin(size: size, near: nil, in: screen)))
+    }
+
+    func testASmallScreenStillGetsAWindowAsFarOnAsItCanBe() {
+        let tiny = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let origin = IntelligencePanel.origin(size: size, near: NSPoint(x: 150, y: 100), in: tiny)
+        XCTAssertGreaterThanOrEqual(origin.x, tiny.minX)
+        XCTAssertGreaterThanOrEqual(origin.y, tiny.minY)
+    }
+}
+
+final class QuickPanelTests: XCTestCase {
+    private let size = NSSize(width: 420, height: 500)
+    private let screen = CGRect(x: 0, y: 40, width: 1440, height: 860)
+
+    func testASavedPlaceIsUsedWhileMostOfTheWindowIsStillOnAScreen() {
+        XCTAssertEqual(QuickPanelPosition.usable(NSPoint(x: 300, y: 200), size: size, screens: [screen]), NSPoint(x: 300, y: 200))
+        // Partly off the right edge (more than half still on the screen): moved back in, not forgotten.
+        let nudged = QuickPanelPosition.usable(NSPoint(x: 1200, y: 200), size: size, screens: [screen])
+        XCTAssertNotNil(nudged)
+        XCTAssertLessThanOrEqual((nudged?.x ?? 0) + size.width, screen.maxX)
+    }
+
+    func testAPlaceThatIsNowOffEveryScreenIsNotUsed() {
+        XCTAssertNil(QuickPanelPosition.usable(NSPoint(x: 5000, y: 200), size: size, screens: [screen]), "the display it was on is gone")
+        XCTAssertNil(QuickPanelPosition.usable(nil, size: size, screens: [screen]))
+        XCTAssertNil(QuickPanelPosition.usable(NSPoint(x: 10, y: 10), size: size, screens: []))
+    }
+
+    func testTheSecondDisplayIsUsedWhenThatIsWhereItWasLeft() {
+        let second = CGRect(x: 1440, y: 0, width: 1920, height: 1080)
+        let place = QuickPanelPosition.usable(NSPoint(x: 2000, y: 300), size: size, screens: [screen, second])
+        XCTAssertEqual(place, NSPoint(x: 2000, y: 300))
+    }
+
+    func testThePlaceAndThePreferenceSurviveBeingSaved() {
+        let defaults = UserDefaults.standard
+        let savedBefore = defaults.string(forKey: "quickPasteOrigin"), placementBefore = defaults.string(forKey: "quickPastePlacement")
+        defer {
+            defaults.set(savedBefore, forKey: "quickPasteOrigin")
+            defaults.set(placementBefore, forKey: "quickPastePlacement")
+        }
+        QuickPanelPosition.save(NSPoint(x: 123.5, y: 456.25))
+        XCTAssertEqual(QuickPanelPosition.saved, NSPoint(x: 123.5, y: 456.25))
+        defaults.removeObject(forKey: "quickPastePlacement")
+        XCTAssertEqual(QuickPanelPlacement.current, .atPointer, "opening at the pointer is the default")
+        QuickPanelPlacement.current = .remembered
+        XCTAssertEqual(QuickPanelPlacement.current, .remembered)
+        defaults.set("not a place", forKey: "quickPasteOrigin")
+        XCTAssertNil(QuickPanelPosition.saved)
+    }
+
+    func testPinningSavingAsASnippetAndDeletingWorkOnTheItemThatWasRightClicked() throws {
+        let world = try TestWorld()
+        defer { world.cleanUp() }
+        let store = ClipboardStore(core: world.core, keyStore: MemoryVaultKeyStore())
+        func copy(_ text: String) { _ = store.record(NewClip(text: text, rich: nil, richFormat: nil, image: nil, imageFormat: nil, imageWidth: nil, imageHeight: nil, files: [], sourceApp: "app.test", concealed: false)) }
+        copy("first"); copy("second"); copy("third")
+        let model = QuickClipModel(store: store)
+        model.open()
+        // Items copied in the same second have no set order among themselves, so they are found by what they say.
+        XCTAssertEqual(Set(model.results.map(\.preview)), ["first", "second", "third"])
+        let first = try XCTUnwrap(model.results.first { $0.preview == "first" })
+        model.togglePin(first)
+        XCTAssertEqual(model.results.first?.preview, "first", "pinned items come first")
+        XCTAssertTrue(model.results.first?.pinned == true)
+        model.togglePin(try XCTUnwrap(model.results.first))
+        XCTAssertFalse(try XCTUnwrap(model.results.first { $0.preview == "first" }).pinned)
+        let second = try XCTUnwrap(model.results.first { $0.preview == "second" })
+        model.toggleSnippet(second)
+        XCTAssertTrue(try XCTUnwrap(model.results.first { $0.preview == "second" }).favorite)
+        model.select(0)
+        let selectedID = model.current?.id
+        let other = try XCTUnwrap(model.results.last { $0.id != selectedID })
+        model.remove(other)
+        XCTAssertEqual(model.results.count, 2)
+        XCTAssertEqual(model.current?.id, selectedID, "the selection stays on the same item")
+        model.remove(try XCTUnwrap(model.results.first))
+        XCTAssertEqual(model.results.count, 1)
+        XCTAssertNotNil(model.current)
     }
 }

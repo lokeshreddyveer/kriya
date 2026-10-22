@@ -315,6 +315,17 @@ final class AppEnvironment {
         // Apps, open windows, files, clipboard history, macOS settings, a calculator, timers and emoji.
         let sources = LauncherSources(inventory: inventory, clipboard: clipboard, prefs: keyboard.palette.prefs)
         sources.intelligence = intelligence
+        clipboard.quick.extraMenuActions = { [weak intelligence, weak clipboard] item in
+            guard let intelligence, intelligence.service.isAvailable, intelligence.service.settings.onClipboardItems, !item.sensitive,
+                  item.kind == .text || item.kind == .richText || item.kind == .url,
+                  let text = clipboard?.store.blob(item.id)?.plain, !text.isEmpty else { return [] }
+            return [
+                ("Summarize", IntelligenceTask.summarize, "text.append"), ("Explain", .explain, "questionmark.bubble"),
+                ("Fix Grammar", .fixGrammar, "checkmark.circle"), ("Make Professional", .professional, "briefcase"),
+            ].map { title, task, symbol in
+                QuickMenuAction(title: title, symbol: symbol, submenu: "Apple Intelligence") { intelligence.perform(task, on: text) }
+            }
+        }
         sources.register(in: keyboard.palette)
         // Apple Intelligence on the selection: the bar offers its actions only where it can run and the person allows it.
         selection.runner.runIntelligence = { [weak intelligence] task, text, pointer, replace in
