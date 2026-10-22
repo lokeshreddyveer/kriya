@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         env.mouse.start()
         env.services.start()
         env.backup.startICloud()
+        // The installed apps, their leftovers and their updates are kept up to date from the start, not only while Apps is open.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { env.inventory.startWatching() }
 
         if !env.config.settings.hasCompletedOnboarding {
             setupGuide?.show()
@@ -105,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         env.traffic.flushPendingSaves()
         env.backup.flushICloud()
         env.remap.stopAndWait()
+        env.inventory.stopWatching()
         env.hotCorners.stop()
         env.fileShelf.stop()
         env.displayTools.stop()

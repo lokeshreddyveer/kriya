@@ -95,9 +95,8 @@ struct DiagnosticsPane: View {
                 }
                 .frame(height: 220)
                 HStack {
-                    Toggle("Update automatically", isOn: $autoRefresh)
+                    Toggle("Keep this log up to date", isOn: $autoRefresh)
                     Spacer()
-                    Button("Refresh") { refresh() }
                     Button("Copy") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)

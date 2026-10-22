@@ -28,6 +28,65 @@ final class HomebrewTests: XCTestCase {
         XCTAssertEqual(HomebrewParsing.parseSearch(many).count, 40, "no more than forty are shown")
     }
 
+    func testOnlyWhatIsUnderCasksIsOfferedAsACask() {
+        let output = """
+        ==> Formulae
+        only-a-formula
+        ==> Casks
+        real-cask
+        another-cask
+        ==> Formulae
+        later-formula
+        """
+        XCTAssertEqual(HomebrewParsing.parseSearch(output), ["real-cask", "another-cask"], "formulae are never shown as installable apps")
+        XCTAssertEqual(HomebrewParsing.parseSearch("plain-one\nplain-two"), ["plain-one", "plain-two"], "no headings: all casks")
+        XCTAssertEqual(HomebrewParsing.parseSearch("==> Formulae\nx\n"), [])
+    }
+
+    func testStopPressedBeforeTheProcessStartsStillStopsEverything() throws {
+        let standIn = try makeStandIn()
+        defer { standIn.cleanup() }
+        let manager = HomebrewManager(brewPath: standIn.path)
+        manager.install(["first", "second"])
+        manager.cancel()   // straight away, before the first one can have started
+        XCTAssertTrue(waitUntil(8) { !manager.isRunning }, "it does not hang")
+        XCTAssertTrue(manager.log.contains("Stopped."))
+        XCTAssertFalse(manager.log.contains("ARG["), "nothing was started after Stop")
+    }
+
+    func testUpgradesRunOneAtATimeAndOnlyForValidNames() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-upg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let log = folder.appendingPathComponent("log.txt")
+        let script = folder.appendingPathComponent("brew")
+        try """
+        #!/bin/sh
+        echo "start $3" >> "\(log.path)"
+        sleep 0.4
+        echo "end $3" >> "\(log.path)"
+        exit 0
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let inventory = AppInventory()
+        inventory.brewExecutableOverride = script.path
+        let done = expectation(description: "both finished")
+        done.expectedFulfillmentCount = 2
+        inventory.runBrewUpgrade("alpha") { _ in done.fulfill() }
+        inventory.runBrewUpgrade("beta") { _ in done.fulfill() }
+        var refused = ""
+        inventory.runBrewUpgrade("bad name;x") { refused = $0 }
+        XCTAssertTrue(refused.contains("not a name"), "an invalid name is turned away at once")
+        wait(for: [done], timeout: 15)
+        let lines = try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.count, 4)
+        XCTAssertEqual(lines[0].prefix(5), "start")
+        XCTAssertEqual(lines[1].prefix(3), "end", "the first upgrade finishes before the second starts")
+        XCTAssertEqual(lines[2].prefix(5), "start")
+        XCTAssertEqual(lines[3].prefix(3), "end")
+    }
+
     func testAnAppListSurvivesSavingAndReading() throws {
         let data = try HomebrewParsing.encodeList(casks: ["zoom", "firefox", "bad name", "firefox"], apps: [("Zoom", "us.zoom.xos")])
         XCTAssertEqual(try HomebrewParsing.decodeList(data), ["firefox", "zoom"], "sorted, tidy, and invalid names left out")

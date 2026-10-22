@@ -7,10 +7,21 @@ import Sparkle
 /// shows a confusing error.
 final class UpdateManager: ObservableObject {
     @Published private(set) var isConfigured: Bool
+    @Published private(set) var lastChecked: Date?
+    /// Kriya's own updates are downloaded and installed without asking, once they are checked as signed. On unless turned off.
+    @Published var installAutomatically: Bool {
+        didSet {
+            UserDefaults.standard.set(installAutomatically, forKey: Self.installKey)
+            controller?.updater.automaticallyDownloadsUpdates = installAutomatically
+        }
+    }
+
+    private static let installKey = "installKriyaUpdatesAutomatically"
     private var controller: SPUStandardUpdaterController?
     private var cancellable: AnyCancellable?
 
     init(config: ConfigStore) {
+        installAutomatically = UserDefaults.standard.object(forKey: Self.installKey) as? Bool ?? true
         let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? ""
         isConfigured = !key.trimmingCharacters(in: .whitespaces).isEmpty
         guard isConfigured else {
@@ -19,14 +30,21 @@ final class UpdateManager: ObservableObject {
         }
         let controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
         controller.updater.automaticallyChecksForUpdates = config.settings.automaticallyCheckForUpdates
+        controller.updater.automaticallyDownloadsUpdates = installAutomatically
+        controller.updater.updateCheckInterval = 3600
         self.controller = controller
+        // Sparkle does the scheduling: it checks when it starts if one is due, and then every `updateCheckInterval`. Kriya adds no
+        // timer of its own, so a check is never done twice.
+        lastChecked = controller.updater.lastUpdateCheckDate
         cancellable = config.$settings
             .map(\.automaticallyCheckForUpdates)
             .removeDuplicates()
             .sink { [weak controller] on in controller?.updater.automaticallyChecksForUpdates = on }
     }
 
-    func checkForUpdates() {
-        controller?.checkForUpdates(nil)
+    /// When Sparkle last finished looking, which is what "last looked" shows. A failed look does not count.
+    func refreshLastChecked() {
+        lastChecked = controller?.updater.lastUpdateCheckDate
     }
+
 }

@@ -143,8 +143,6 @@ final class ActionExecutor {
 
     // MARK: Processes
 
-    private final class Flag { var set = false }
-
     private func runProcess(_ executable: String, _ arguments: [String]) async -> ActionOutcome {
         let front = await MainActor.run { NSWorkspace.shared.frontmostApplication }
         var environment = ProcessInfo.processInfo.environment
@@ -167,10 +165,10 @@ final class ActionExecutor {
                     continuation.resume(returning: .failure("Could not start \(executable): \(error.localizedDescription)"))
                     return
                 }
-                let timedOut = Flag()
+                let timedOut = SyncFlag()
                 let watchdog = DispatchWorkItem {
                     if process.isRunning {
-                        timedOut.set = true
+                        timedOut.value = true
                         process.terminate()
                     }
                 }
@@ -179,7 +177,7 @@ final class ActionExecutor {
                 process.waitUntilExit()
                 watchdog.cancel()
 
-                if timedOut.set {
+                if timedOut.value {
                     continuation.resume(returning: .failure("It took longer than \(Int(Self.processTimeout)) seconds and was stopped."))
                 } else if process.terminationStatus != 0 {
                     let text = String(data: output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

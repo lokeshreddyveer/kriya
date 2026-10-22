@@ -66,6 +66,49 @@ final class ShortcutRegistryTests: XCTestCase {
         XCTAssertEqual(received["Clipboard"], ["clipboard.quick", "clipboard.quick"])
     }
 
+    func testRegisteringFromManyThreadsWhileKeysArePressedIsSafe() {
+        final class LockedBackend: HotKeyBackend {
+            var onPressed: ((UInt32) -> Bool)?
+            private let lock = NSLock()
+            private var taken = Set<String>()
+            private var live: [UInt32: String] = [:]
+            func register(keyCode: UInt16, modifiers: UInt64, id: UInt32) -> Bool {
+                lock.lock(); defer { lock.unlock() }
+                let key = "\(keyCode):\(modifiers)"
+                if taken.contains(key) { return false }
+                taken.insert(key)
+                live[id] = key
+                return true
+            }
+            func unregister(id: UInt32) {
+                lock.lock(); defer { lock.unlock() }
+                if let key = live.removeValue(forKey: id) { taken.remove(key) }
+            }
+            func someID() -> UInt32? {
+                lock.lock(); defer { lock.unlock() }
+                return live.keys.first
+            }
+        }
+        let backend = LockedBackend()
+        let registry = ShortcutRegistry(backend: backend)
+        let fired = NSLock()
+        var count = 0
+        DispatchQueue.concurrentPerform(iterations: 400) { i in
+            let owner = "Feature \(i % 8)"
+            registry.register(owner: owner, bindings: [ShortcutBinding(command: "c\(i)", keyCode: UInt16(i % 50), modifiers: UInt64(i % 3))], title: { $0 }) { _ in
+                fired.lock(); count += 1; fired.unlock()
+            }
+            if let id = backend.someID() { _ = backend.onPressed?(id) }
+            if i % 7 == 0 { registry.unregister(owner: owner) }
+            registry.setPassive(owner: "Passive", entries: [])
+        }
+        // Reaching here without a crash or a hang is the point; the list is still self-consistent.
+        let waited = expectation(description: "main queue drained")
+        DispatchQueue.main.async { waited.fulfill() }
+        wait(for: [waited], timeout: 5)
+        XCTAssertEqual(Set(registry.entries.map(\.id)).count, registry.entries.count, "no entry is listed twice")
+    }
+
     func testAPressThatIsNotOursIsPassedOn() {
         let backend = FakeHotKeyBackend()
         let registry = ShortcutRegistry(backend: backend)

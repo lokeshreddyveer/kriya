@@ -100,9 +100,6 @@ final class StatusItemController: NSObject {
         let menu = NSMenu()
         let settings = menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",")
         settings.target = self
-        let updates = menu.addItem(withTitle: "Check for Updates…", action: #selector(menuUpdates), keyEquivalent: "")
-        updates.target = self
-        updates.isEnabled = env.updates.isConfigured
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Kriya", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         // Attaching the menu only for this click keeps the left click free to open the popover.
@@ -112,7 +109,6 @@ final class StatusItemController: NSObject {
     }
 
     @objc private func menuSettings() { openSettings(nil) }
-    @objc private func menuUpdates() { env.updates.checkForUpdates() }
 }
 
 extension StatusItemController: NSPopoverDelegate {

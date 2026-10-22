@@ -7,6 +7,7 @@ on the machine that built it; it is too large for this repository.
 
 | Version | Build | DMG SHA-256 | Swift tests | Notes |
 |---|---|---|---|---|
+| 0.2.6 | 13 | `68c8e9924414bc25c98f584565f72f3b2c20c53f8c29508073960659426392de` | 119 passed, 0 failed | Updates and scans run by themselves (no check buttons), tab bars fit their tabs, Homebrew upgrades serialized, Stop race and search-section fixes, shortcut registry made thread-safe. Rust: 373 passed |
 | 0.2.5 | 12 | `db7b6c5beb4c4eca801368cefb7b471c469333548b243f8f5e2b7dffed3286c9` | 115 passed, 0 failed | One shortcut registry for all hotkeys (fixes only the last feature's shortcuts firing), Shortcut Map pane, Homebrew install tab with app lists. Rust: 373 passed |
 | 0.2.4 | 11 | `69503430273e4a99ea70ada43af73de6cdc323ef9b1d540918617b937091ab8d` | 99 passed, 0 failed | Text tools, Finder checksum/alias/download-warning actions, display warmth, focus follows mouse, hide pointer while typing, app sizes and last-used, Keep Awake until a time, link app rules |
 | 0.2.1 | 8 | `e834c9032af872fcfcce4a9a68f56cb446d430370de03cffced2496a4d47c7c9` | 85 passed | First release in this repository |

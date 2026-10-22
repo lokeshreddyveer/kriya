@@ -70,6 +70,9 @@ final class ShortcutRegistry: ObservableObject {
     }
 
     private let backend: HotKeyBackend
+    /// Guards everything below. Registering can come from any feature's thread while a press arrives from macOS, and this
+    /// keeps the two from seeing each other half done. It is never held while a feature's own callback runs.
+    private let lock = NSLock()
     private var nextID: UInt32 = 1
     private var owners: [String: Owned] = [:]
     private var passive: [String: [ShortcutEntry]] = [:]
@@ -82,6 +85,7 @@ final class ShortcutRegistry: ObservableObject {
     /// Replaces everything this owner has registered. Returns the commands the system refused.
     @discardableResult
     func register(owner: String, bindings: [ShortcutBinding], title: (String) -> String, onFire: @escaping (String) -> Void) -> [String] {
+        lock.lock()
         release(owner)
         var ids: [UInt32: String] = [:]
         var list: [ShortcutEntry] = []
@@ -97,6 +101,7 @@ final class ShortcutRegistry: ObservableObject {
             ))
         }
         owners[owner] = Owned(callback: onFire, ids: ids, entries: list)
+        lock.unlock()
         publish()
         if !failed.isEmpty { Log.warning("Shortcuts", "\(owner): \(failed.count) shortcut(s) were refused; another app or feature may use the keys") }
         return failed
@@ -104,14 +109,18 @@ final class ShortcutRegistry: ObservableObject {
 
     /// Takes back everything this owner registered.
     func unregister(owner: String) {
+        lock.lock()
         release(owner)
         owners[owner] = nil
+        lock.unlock()
         publish()
     }
 
     /// Lists shortcuts Kriya finds by watching key presses, so they take part in the conflict check.
     func setPassive(owner: String, entries list: [ShortcutEntry]) {
+        lock.lock()
         passive[owner] = list.isEmpty ? nil : list.map { var entry = $0; entry.viaHotKey = false; return entry }
+        lock.unlock()
         publish()
     }
 
@@ -144,18 +153,32 @@ final class ShortcutRegistry: ObservableObject {
     }
 
     private func fire(_ id: UInt32) -> Bool {
+        lock.lock()
+        var target: ((String) -> Void, String)?
         for owned in owners.values {
             if let command = owned.ids[id] {
-                owned.callback(command)
-                return true
+                target = (owned.callback, command)
+                break
             }
         }
-        return false
+        lock.unlock()
+        // The feature's own code runs without the lock, so it may register or release shortcuts itself.
+        guard let (callback, command) = target else { return false }
+        callback(command)
+        return true
     }
 
+    /// Updates the list the interface reads, on the main thread.
     private func publish() {
+        lock.lock()
         let all = owners.values.flatMap(\.entries) + passive.values.flatMap { $0 }
-        entries = all.sorted { ($0.owner, $0.title, $0.keyCode) < ($1.owner, $1.title, $1.keyCode) }
+        lock.unlock()
+        let sorted = all.sorted { ($0.owner, $0.title, $0.keyCode) < ($1.owner, $1.title, $1.keyCode) }
+        if Thread.isMainThread {
+            entries = sorted
+        } else {
+            DispatchQueue.main.async { self.entries = sorted }
+        }
     }
 }
 

@@ -3,10 +3,11 @@ import SwiftUI
 /// The tab strip at the top of a pane: the segmented picker in a bordered, softly filled frame.
 extension View {
     func paneTabBar(maxWidth: CGFloat? = nil) -> some View {
+        // The frame is as wide as the tabs inside it, on every screen. (`maxWidth` is kept so existing callers still compile.)
         self
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: maxWidth)
+            .fixedSize()
             .padding(3)
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.16), lineWidth: 1))

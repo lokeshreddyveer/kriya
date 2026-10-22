@@ -52,19 +52,20 @@ struct GeneralPane: View {
             }
 
             Section {
-                Toggle("Check for updates automatically", isOn: $config.settings.automaticallyCheckForUpdates)
+                Toggle("Look for updates automatically", isOn: $config.settings.automaticallyCheckForUpdates)
                     .disabled(!updates.isConfigured)
-                HStack {
-                    Button("Check Now…") { updates.checkForUpdates() }
-                        .disabled(!updates.isConfigured)
-                    if !updates.isConfigured {
-                        Text("Updates are not set up in this build.").font(.callout).foregroundStyle(.secondary)
-                    }
+                Toggle("Install them automatically", isOn: $updates.installAutomatically)
+                    .disabled(!updates.isConfigured || !config.settings.automaticallyCheckForUpdates)
+                if !updates.isConfigured {
+                    Text("Updates are not set up in this build.").font(.callout).foregroundStyle(.secondary)
+                } else if let last = updates.lastChecked {
+                    Text("Last looked \(RelativeDateTimeFormatter().localizedString(for: last, relativeTo: Date())).")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
             } header: {
                 Text("Updates")
             } footer: {
-                Text("Each update is signed. One that is not signed with Kriya's key is refused. Only the app's version is sent.")
+                Text("Kriya looks when it starts and then about every hour, and installs what it finds. Each update is signed. One that is not signed with Kriya's key is refused. Only the app's version is sent.")
             }
 
             Section {
@@ -76,6 +77,7 @@ struct GeneralPane: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { updates.refreshLastChecked() }
         .animation(.smooth(duration: 0.25), value: loginStatus)
         .animation(.smooth(duration: 0.25), value: loginError)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

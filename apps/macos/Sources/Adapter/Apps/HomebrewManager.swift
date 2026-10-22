@@ -10,11 +10,19 @@ enum HomebrewParsing {
         token.range(of: #"^[a-z0-9][a-z0-9@._+-]{0,80}$"#, options: .regularExpression) != nil
     }
 
-    /// The cask names in the output of `brew search --cask`, without its headings.
+    /// The cask names in the output of `brew search --cask`. Homebrew may print a "Casks" part and a "Formulae" part; only
+    /// what is under Casks counts, and output with no headings at all is all casks.
     static func parseSearch(_ output: String) -> [String] {
-        let tokens = output.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("==>") && isValidToken($0) }
+        var inCasks = true
+        var tokens: [String] = []
+        for raw in output.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("==>") {
+                inCasks = line.lowercased().contains("cask")
+                continue
+            }
+            if inCasks, !line.isEmpty, isValidToken(line) { tokens.append(line) }
+        }
         var seen = Set<String>()
         return Array(tokens.filter { seen.insert($0).inserted }.prefix(40))
     }
@@ -70,9 +78,16 @@ final class HomebrewManager: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var status: String?
 
+    // The running process and the Stop request are touched from the main thread and from the install queue, so they are
+    // guarded by one lock. The process is started while the lock is held, so Stop either comes before it starts (and it never
+    // does) or after it is running (and it is ended).
+    private let stateLock = NSLock()
     private var process: Process?
     private var cancelRequested = false
-    private let queue = DispatchQueue(label: "app.kriya.homebrew", qos: .userInitiated)
+    /// Installs and upgrades run one after another on this queue, shared with the automatic upgrades in the Apps pane.
+    private let queue = HomebrewQueue.shared
+    /// Searching and listing only read, so they do not wait behind an install.
+    private let readQueue = DispatchQueue(label: "app.kriya.homebrew.read", qos: .userInitiated)
 
     /// `brewPath` is for tests, which point it at a stand-in program. Normally it is found on the Mac.
     init(brewPath: String? = nil) {
@@ -95,7 +110,7 @@ final class HomebrewManager: ObservableObject {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let brewPath, !text.isEmpty, text.count <= 60, !text.contains("\0"), !text.hasPrefix("-") else { return }
         status = "Searching…"
-        queue.async { [self] in
+        readQueue.async { [self] in
             let output = (try? ToolRunner.run(brewPath, ["search", "--cask", text], environment: Self.environment, timeout: 60)) ?? ""
             let found = HomebrewParsing.parseSearch(output)
             DispatchQueue.main.async {
@@ -107,7 +122,7 @@ final class HomebrewManager: ObservableObject {
 
     func refreshInstalled() {
         guard let brewPath else { return }
-        queue.async { [self] in
+        readQueue.async { [self] in
             let output = (try? ToolRunner.run(brewPath, ["list", "--cask"], environment: Self.environment, timeout: 60)) ?? ""
             let tokens = output.split(whereSeparator: \.isNewline).map { String($0).trimmingCharacters(in: .whitespaces) }.filter(HomebrewParsing.isValidToken)
             DispatchQueue.main.async { self.installed = tokens.sorted() }
@@ -119,18 +134,17 @@ final class HomebrewManager: ObservableObject {
         let wanted = tokens.filter(HomebrewParsing.isValidToken)
         guard let brewPath, !wanted.isEmpty, !isRunning else { return }
         isRunning = true
-        cancelRequested = false
+        setCancelRequested(false)
         log = ""
         queue.async { [self] in
             for token in wanted {
-                if cancelRequested { append("Stopped.\n"); break }
+                if isCancelRequested { append("Stopped.\n"); break }
                 append("$ \(Self.command(install: token))\n")
                 let code = runStreaming(brewPath, ["install", "--cask", token])
                 append(code == 0 ? "\nInstalled \(token).\n\n" : "\nHomebrew stopped with code \(code) for \(token).\n\n")
             }
             DispatchQueue.main.async {
                 self.isRunning = false
-                self.process = nil
                 self.refreshInstalled()
             }
         }
@@ -138,8 +152,22 @@ final class HomebrewManager: ObservableObject {
 
     /// Stops the install in progress, and the ones waiting behind it.
     func cancel() {
+        stateLock.lock()
         cancelRequested = true
-        process?.terminate()
+        if let process, process.isRunning { process.terminate() }
+        stateLock.unlock()
+    }
+
+    private var isCancelRequested: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return cancelRequested
+    }
+
+    private func setCancelRequested(_ value: Bool) {
+        stateLock.lock()
+        cancelRequested = value
+        stateLock.unlock()
     }
 
     // MARK: Lists
@@ -180,13 +208,29 @@ final class HomebrewManager: ObservableObject {
             let data = handle.availableData
             if !data.isEmpty, let text = String(data: data, encoding: .utf8) { self?.append(text) }
         }
-        DispatchQueue.main.async { self.process = task }
+        // Start it under the lock: a Stop that arrives first is seen here, and one that arrives later finds it running.
+        stateLock.lock()
+        if cancelRequested {
+            stateLock.unlock()
+            return -2
+        }
         do { try task.run() } catch {
+            stateLock.unlock()
             append("Could not start Homebrew.\n")
             return -1
         }
+        process = task
+        stateLock.unlock()
         task.waitUntilExit()
         pipe.fileHandleForReading.readabilityHandler = nil
+        stateLock.lock()
+        process = nil
+        stateLock.unlock()
         return task.terminationStatus
     }
+}
+
+/// The one place Homebrew installs and upgrades run, so two of them never run at once.
+enum HomebrewQueue {
+    static let shared = DispatchQueue(label: "app.kriya.homebrew", qos: .userInitiated)
 }

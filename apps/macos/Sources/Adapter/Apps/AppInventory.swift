@@ -66,8 +66,78 @@ final class AppInventory: ObservableObject {
     private let fm = FileManager.default
     private let home = FileManager.default.homeDirectoryForCurrentUser
 
+    /// Upgrade Homebrew apps by themselves when an update is found. On unless turned off.
+    @Published var upgradeHomebrewAutomatically: Bool {
+        didSet { UserDefaults.standard.set(upgradeHomebrewAutomatically, forKey: Self.upgradeKey) }
+    }
+    /// What the automatic upgrades did, newest last, for the person to read.
+    @Published private(set) var activity: [String] = []
+    @Published private(set) var lastUpdateCheck: Date?
+    @Published private(set) var orphanList: [Leftover] = []
+    @Published private(set) var isFindingLeftovers = false
+
+    private static let upgradeKey = "upgradeHomebrewAppsAutomatically"
+    private var watchers: [DispatchSourceFileSystemObject] = []
+    private var rescanWork: DispatchWorkItem?
+    private var updateTimer: Timer?
+    private var started = false
+    private var upgrading = Set<String>()
+    /// For tests: a stand-in program used instead of the real Homebrew.
+    var brewExecutableOverride: String?
+
     init() {
         ignoredUpdates = Set(UserDefaults.standard.stringArray(forKey: "ignoredAppUpdates") ?? [])
+        upgradeHomebrewAutomatically = UserDefaults.standard.object(forKey: Self.upgradeKey) as? Bool ?? true
+    }
+
+    /// Starts keeping everything up to date: the list of apps follows the Applications folders, leftovers are found again
+    /// whenever the list changes, and updates are looked for now and then every hour. Safe to call more than once.
+    func startWatching() {
+        guard !started else { return }
+        started = true
+        scan()
+        for folder in ["/Applications", NSHomeDirectory() + "/Applications"] where FileManager.default.fileExists(atPath: folder) {
+            let descriptor = open(folder, O_EVTONLY)
+            guard descriptor >= 0 else { continue }
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .delete, .rename, .link], queue: .main)
+            source.setEventHandler { [weak self] in self?.foldersChanged() }
+            source.setCancelHandler { close(descriptor) }
+            source.resume()
+            watchers.append(source)
+        }
+        let timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.checkUpdates() }
+        updateTimer = timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in self?.checkUpdates() }
+    }
+
+    /// Stops watching the Applications folders and the hourly check.
+    func stopWatching() {
+        for watcher in watchers { watcher.cancel() }
+        watchers.removeAll()
+        updateTimer?.invalidate()
+        updateTimer = nil
+        rescanWork?.cancel()
+        started = false
+    }
+
+    private func foldersChanged() {
+        rescanWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.scan() }
+        rescanWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
+    }
+
+    /// Finds leftovers of apps that are no longer installed, in the background.
+    func refreshLeftovers() {
+        guard !isFindingLeftovers, !apps.isEmpty else { return }
+        isFindingLeftovers = true
+        DispatchQueue.global(qos: .utility).async { [self] in
+            let found = orphans()
+            DispatchQueue.main.async {
+                self.orphanList = found
+                self.isFindingLeftovers = false
+            }
+        }
     }
 
     // MARK: Installed apps
@@ -86,9 +156,12 @@ final class AppInventory: ObservableObject {
             }
             found.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             DispatchQueue.main.async {
+                let changed = found.map(\.id) != self.apps.map(\.id)
                 self.apps = found
                 self.isScanning = false
                 self.measure(found)
+                // A different set of apps means different leftovers.
+                if changed { self.refreshLeftovers() }
             }
         }
     }
@@ -250,6 +323,8 @@ final class AppInventory: ObservableObject {
                 self.updates = sorted
                 self.updateNote = note
                 self.isCheckingUpdates = false
+                self.lastUpdateCheck = Date()
+                self.upgradeAutomatically(sorted)
             }
         }
     }
@@ -279,9 +354,35 @@ final class AppInventory: ObservableObject {
         }
     }
 
+    /// Upgrades the Homebrew apps that have an update, one at a time, unless the person ignores them or turned this off.
+    private func upgradeAutomatically(_ list: [AppUpdate]) {
+        guard upgradeHomebrewAutomatically else { return }
+        for update in list {
+            guard case .brew(let token) = update.action, HomebrewParsing.isValidToken(token),
+                  !ignoredUpdates.contains(update.appName), !upgrading.contains(token) else { continue }
+            upgrading.insert(token)
+            note("Updating \(token)…")
+            runBrewUpgrade(token) { [weak self] result in
+                self?.upgrading.remove(token)
+                self?.note(result)
+            }
+        }
+    }
+
+    private func note(_ line: String) {
+        activity.append("\(Date().formatted(date: .omitted, time: .shortened))  \(line)")
+        if activity.count > 40 { activity.removeFirst(activity.count - 40) }
+    }
+
+    /// Upgrades one Homebrew app. Upgrades (and installs) run one after another on a single queue, never side by side.
     func runBrewUpgrade(_ token: String, done: @escaping (String) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            guard let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+        guard HomebrewParsing.isValidToken(token) else {
+            done("“\(token)” is not a name Homebrew would use.")
+            return
+        }
+        let override = brewExecutableOverride
+        HomebrewQueue.shared.async {
+            guard let brew = override ?? ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
                 DispatchQueue.main.async { done("Homebrew was not found.") }
                 return
             }

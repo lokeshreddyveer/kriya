@@ -16,12 +16,15 @@ extension InstalledApp.Source {
 /// Installed apps: remove one with the files it leaves behind, find leftovers of apps that are gone, and check for updates.
 struct AppsPane: View {
     @EnvironmentObject private var inventory: AppInventory
+    #if DEBUG
+    // For the screenshot harness: KRIYA_SHOT_TAB=install opens this pane on its Install tab.
+    @State private var tab: Tab = ProcessInfo.processInfo.environment["KRIYA_SHOT_TAB"] == "install" ? .install : .installed
+    #else
     @State private var tab: Tab = .installed
+    #endif
     @State private var query = ""
     @State private var sort: Sort = .name
     @State private var removing: InstalledApp?
-    @State private var orphans: [Leftover] = []
-    @State private var orphansScanned = false
     @State private var message: String?
 
     enum Tab: String, CaseIterable, Identifiable {
@@ -51,7 +54,12 @@ struct AppsPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
-        .onAppear { if inventory.apps.isEmpty { inventory.scan() } }
+        .onAppear {
+            inventory.startWatching()
+            inventory.scan()
+            inventory.refreshLeftovers()
+            if inventory.lastUpdateCheck.map({ Date().timeIntervalSince($0) > 600 }) ?? true { inventory.checkUpdates() }
+        }
         .sheet(item: $removing) { app in
             RemoveSheet(app: app) { failures in
                 removing = nil
@@ -99,7 +107,6 @@ struct AppsPane: View {
                 if inventory.isScanning { ProgressView().controlSize(.small) }
                 Picker("", selection: $sort) { ForEach(Sort.allCases) { Text($0.rawValue).tag($0) } }
                     .labelsHidden().pickerStyle(.menu).fixedSize()
-                Button { inventory.scan() } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless).help("Scan again")
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
             .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -127,19 +134,21 @@ struct AppsPane: View {
     private var leftoversTab: some View {
         Form {
             Section {
-                Button(orphansScanned ? "Scan Again" : "Look for Leftovers") {
-                    orphans = inventory.orphans()
-                    orphansScanned = true
+                HStack {
+                    Text(inventory.isFindingLeftovers ? "Looking for leftovers…" : "Kriya looks by itself, and again whenever an app is added or removed.")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if inventory.isFindingLeftovers { ProgressView().controlSize(.small) }
                 }
             } footer: {
-                Text("Finds files in your Library named after apps that are no longer installed. Nothing is removed until you choose it, and removed files go to the Trash. Apple's own files are never listed.")
+                Text("These are files in your Library named after apps that are no longer installed. Nothing is removed until you choose it, and removed files go to the Trash. Apple's own files are never listed.")
             }
-            if orphansScanned {
-                Section("Found \(orphans.count)") {
-                    if orphans.isEmpty { Text("No leftovers found.").foregroundStyle(.secondary) }
-                    LeftoverList(items: orphans) { chosen in
+            do {
+                Section("Found \(inventory.orphanList.count)") {
+                    if inventory.orphanList.isEmpty && !inventory.isFindingLeftovers { Text("No leftovers found.").foregroundStyle(.secondary) }
+                    LeftoverList(items: inventory.orphanList) { chosen in
                         let failures = inventory.trash(app: nil, leftovers: chosen)
-                        orphans = inventory.orphans()
+                        inventory.refreshLeftovers()
                         message = failures.isEmpty ? "Moved \(chosen.count) item\(chosen.count == 1 ? "" : "s") to the Trash." : failures.joined(separator: "\n")
                     }
                 }
@@ -154,11 +163,22 @@ struct AppsPane: View {
         Form {
             Section {
                 HStack {
-                    Button("Check for Updates") { inventory.checkUpdates() }.disabled(inventory.isCheckingUpdates)
-                    if inventory.isCheckingUpdates { ProgressView().controlSize(.small) }
+                    if inventory.isCheckingUpdates {
+                        Text("Checking…").foregroundStyle(.secondary)
+                        ProgressView().controlSize(.small)
+                    } else if let last = inventory.lastUpdateCheck {
+                        Text("Checked \(RelativeDateTimeFormatter().localizedString(for: last, relativeTo: Date())).").foregroundStyle(.secondary)
+                    }
+                    Spacer()
                 }
+                Toggle("Upgrade Homebrew apps automatically", isOn: $inventory.upgradeHomebrewAutomatically)
             } footer: {
-                Text("Checks apps that update themselves (through their own update feed) and Homebrew apps if Homebrew is installed. Nothing is installed without you pressing its button.")
+                Text("Kriya checks apps that update themselves (through their own update feed) and Homebrew apps when this opens and then every hour. Homebrew apps are upgraded by themselves unless you ignore them or turn this off. An app that updates itself is only listed here, because it installs its own updates.")
+            }
+            if !inventory.activity.isEmpty {
+                Section("What was done") {
+                    ForEach(Array(inventory.activity.enumerated()), id: \.offset) { _, line in Text(line).font(.caption.monospaced()).foregroundStyle(.secondary) }
+                }
             }
             let visible = inventory.updates.filter { !inventory.ignoredUpdates.contains($0.appName) }
             Section("Updates available") {
@@ -308,7 +328,7 @@ private struct InstallTab: View {
                     HStack {
                         Link("About Homebrew", destination: URL(string: "https://brew.sh")!)
                         Spacer()
-                        Button("Check Again") { brew.locate() }
+                        Text("Kriya notices when it is installed.").font(.caption).foregroundStyle(.secondary)
                     }
                 } footer: {
                     Text("Kriya uses Homebrew, if you have it, to find and install apps. It never installs Homebrew itself.")
@@ -380,6 +400,13 @@ private struct InstallTab: View {
         }
         .formStyle(.grouped)
         .onAppear { brew.locate() }
+        // Homebrew installed while this is open: it shows up within a few seconds, with no button to press.
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if brew.brewPath == nil { brew.locate() }
+            }
+        }
     }
 
     /// Shows the exact commands and installs only if the person agrees.

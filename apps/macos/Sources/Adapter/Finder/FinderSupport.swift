@@ -156,6 +156,25 @@ final class CancelToken {
     }
 }
 
+/// A yes-or-no that one thread sets and another reads.
+final class SyncFlag {
+    private let lock = NSLock()
+    private var stored = false
+
+    var value: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return stored
+        }
+        set {
+            lock.lock()
+            stored = newValue
+            lock.unlock()
+        }
+    }
+}
+
 /// Runs a system tool with an argument list, never through a shell, and reports what it printed on failure.
 enum ToolRunner {
     @discardableResult
@@ -171,15 +190,15 @@ enum ToolRunner {
         process.standardInput = FileHandle.nullDevice
         do { try process.run() } catch { throw FileActionError("Could not start \((executable as NSString).lastPathComponent).") }
         cancel?.attach(process)
-        var timedOut = false
-        let watchdog = DispatchWorkItem { if process.isRunning { timedOut = true; process.terminate() } }
+        let timedOut = SyncFlag()
+        let watchdog = DispatchWorkItem { if process.isRunning { timedOut.value = true; process.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         watchdog.cancel()
         let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if cancel?.isCancelled == true { throw FileActionError("Stopped.") }
-        if timedOut { throw FileActionError("It took too long and was stopped.") }
+        if timedOut.value { throw FileActionError("It took too long and was stopped.") }
         if process.terminationStatus != 0 {
             throw FileActionError(output.isEmpty ? "It failed (code \(process.terminationStatus))." : String(output.suffix(300)))
         }
