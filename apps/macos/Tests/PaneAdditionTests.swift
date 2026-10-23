@@ -1219,3 +1219,20 @@ final class OCRLanguageTests: XCTestCase {
         XCTAssertTrue(OCRLanguages.summary(chosen: ["fr-FR"], locale: Locale(identifier: "en_US")).contains("French"))
     }
 }
+
+final class PowerSavingTests: XCTestCase {
+    func testEachModeSavesInTheRightSituation() {
+        XCTAssertFalse(PowerSaving.isActive(mode: .off, lowPowerMode: true, onBattery: true))
+        XCTAssertTrue(PowerSaving.isActive(mode: .lowPowerOnly, lowPowerMode: true, onBattery: false))
+        XCTAssertFalse(PowerSaving.isActive(mode: .lowPowerOnly, lowPowerMode: false, onBattery: true))
+        XCTAssertTrue(PowerSaving.isActive(mode: .onBattery, lowPowerMode: false, onBattery: true))
+        XCTAssertFalse(PowerSaving.isActive(mode: .onBattery, lowPowerMode: false, onBattery: false))
+        XCTAssertTrue(PowerSaving.isActive(mode: .always, lowPowerMode: false, onBattery: false))
+    }
+
+    func testWaitsGrowButNeverPastTenMinutes() {
+        XCTAssertEqual(PowerSaving.interval(2, saving: false), 2)
+        XCTAssertEqual(PowerSaving.interval(2, saving: true), 8)
+        XCTAssertEqual(PowerSaving.interval(300, saving: true), 600)
+    }
+}

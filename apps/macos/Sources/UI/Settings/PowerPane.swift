@@ -4,6 +4,7 @@ import SwiftUI
 struct PowerPane: View {
     @EnvironmentObject private var awake: KeepAwake
     @State private var assertions: [PowerAssertions.Assertion] = []
+    @ObservedObject private var saving = PowerSavingState.shared
     @State private var untilTime = Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: Date()) ?? Date()
 
     private static let durations: [(title: String, minutes: Int?)] = [
@@ -59,6 +60,18 @@ struct PowerPane: View {
                 } label: { Label("Add an App", systemImage: "plus") }
             } header: { Text("While these apps are running") } footer: {
                 Text("The Mac stays awake for as long as any of these apps is open, then goes back to normal.")
+            }
+
+            Section {
+                LabeledContent("Low Power Mode", value: saving.lowPowerMode ? "On" : "Off")
+                Picker("Make Kriya use less power", selection: Binding(get: { saving.mode }, set: { saving.mode = $0 })) {
+                    ForEach(PowerSaving.Mode.allCases) { Text($0.title).tag($0) }
+                }
+                if saving.isActive { Label("Kriya is saving power now.", systemImage: "leaf").font(.callout).foregroundStyle(Theme.ok) }
+                ForEach(PowerSaving.whatItDoes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+                Button("Open Battery Settings") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Battery-Settings.extension")!) }.controlSize(.small)
+            } header: { Text("Low Power Mode") } footer: {
+                Text("macOS does not let an app switch Low Power Mode on or off, so Kriya shows its state and opens the Battery settings where you can. Saving power here only changes what Kriya itself does.")
             }
 
             Section {

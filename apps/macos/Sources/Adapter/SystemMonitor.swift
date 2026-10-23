@@ -75,7 +75,12 @@ final class SystemMonitor: ObservableObject {
         }
     }
 
+    private var sampleTick = 0
+
     private func sample() {
+        // Saving power: look a third as often, unless a window is open and showing the numbers.
+        sampleTick += 1
+        if viewers == 0, PowerSavingState.shared.activeNow, sampleTick % 3 != 0 { return }
         let withPrograms = viewers > 0 && (ticksSincePrograms % 2 == 0)
         ticksSincePrograms += 1
         let heavy = viewers > 0

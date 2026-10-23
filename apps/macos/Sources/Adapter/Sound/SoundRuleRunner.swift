@@ -83,7 +83,11 @@ final class SoundRuleRunner: ObservableObject {
         observers = []
     }
 
+    private var checkTick = 0
+
     private func checkDevices() {
+        checkTick += 1
+        if PowerSavingState.shared.activeNow, checkTick % 3 != 0 { return }
         FeatureTimings.shared.measure("Sound devices check") { checkDevicesNow() }
     }
 

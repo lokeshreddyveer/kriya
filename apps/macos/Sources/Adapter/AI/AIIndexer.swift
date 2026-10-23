@@ -65,7 +65,13 @@ final class AIIndexer: ObservableObject {
 
     func start() {
         guard enabled, timer == nil else { return }
-        let t = Timer(timeInterval: 3600, repeats: true) { [weak self] _ in Task { await self?.refresh() } }
+        // While saving power the hourly refresh waits for the next round, which is four hours on.
+        var rounds = 0
+        let t = Timer(timeInterval: 3600, repeats: true) { [weak self] _ in
+            rounds += 1
+            if PowerSavingState.shared.activeNow, rounds % 4 != 0 { return }
+            Task { await self?.refresh() }
+        }
         RunLoop.main.add(t, forMode: .common)
         timer = t
         Task { await refresh() }
