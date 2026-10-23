@@ -69,6 +69,15 @@ extension WorkflowTrigger {
 extension StepKind {
     var risk: StepRisk { workflowStepRisk(kind: self) }
     var summary: String { workflowStepSummary(step: WorkflowStep(id: "", label: nil, when: nil, onError: .stop, kind: self)) }
+
+    /// The steps inside a loop or a group of steps that run side by side.
+    var children: [WorkflowStep] {
+        switch self {
+        case .repeat(_, let steps): return steps
+        case .parallel(let steps): return steps
+        default: return []
+        }
+    }
 }
 
 /// Workflows and their history. The automation engine reads `current` from any thread.
@@ -118,7 +127,24 @@ final class WorkflowStore: ObservableObject {
     }
 
     func newStep(_ kind: StepKind) -> WorkflowStep {
-        WorkflowStep(id: UUID().uuidString, label: nil, when: nil, onError: .stop, kind: kind)
+        WorkflowStep(id: UUID().uuidString, label: nil, when: nil, onError: .stop, kind: Self.withFreshIDs(kind))
+    }
+
+    /// The steps inside a loop or group get ids of their own, so adding the same template twice never clashes.
+    static func withFreshIDs(_ kind: StepKind) -> StepKind {
+        func fresh(_ steps: [WorkflowStep]) -> [WorkflowStep] {
+            steps.map { step in
+                var next = step
+                next.id = UUID().uuidString
+                next.kind = withFreshIDs(step.kind)
+                return next
+            }
+        }
+        switch kind {
+        case .repeat(let times, let steps): return .repeat(times: times, steps: fresh(steps))
+        case .parallel(let steps): return .parallel(steps: fresh(steps))
+        default: return kind
+        }
     }
 
     // MARK: Editing

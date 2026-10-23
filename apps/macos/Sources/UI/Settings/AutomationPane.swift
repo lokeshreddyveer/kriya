@@ -328,6 +328,16 @@ struct WorkflowEditor: View {
             TextField("Name", text: $workflow.name).textFieldStyle(.roundedBorder).font(.title3.bold())
             TextField("Notes", text: Binding(get: { workflow.notes ?? "" }, set: { workflow.notes = $0.isEmpty ? nil : $0 }), prompt: Text("What is this for? (optional)")).textFieldStyle(.roundedBorder)
             Toggle("Turned on", isOn: $workflow.enabled)
+            TextField("Macro menu group", text: Binding(get: { workflow.group ?? "" }, set: { workflow.group = $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }), prompt: Text("Show in the macro menu under this heading (optional)")).textFieldStyle(.roundedBorder)
+            if workflow.group != nil {
+                HStack {
+                    Text(workflow.appIds.isEmpty ? "In every app" : "Only in: " + workflow.appIds.map { AppChoice.name(for: $0) }.joined(separator: ", ")).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer()
+                    Button("Add App…") { if let id = AppChoice.choose(), !workflow.appIds.contains(id) { workflow.appIds.append(id) } }.controlSize(.small)
+                    if !workflow.appIds.isEmpty { Button("Every App") { workflow.appIds = [] }.controlSize(.small) }
+                }
+                Text("Run the command “Show the macro menu” (give it a shortcut under Keyboard › Shortcuts, or a mouse button) to get a menu at the pointer of the workflows for the app in front. Workflows for that app come first.").font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -577,29 +587,40 @@ struct ConditionRow: View {
 
 private struct StepsEditor: View {
     @Binding var workflow: Workflow
+
+    var body: some View {
+        StepListEditor(steps: $workflow.steps, workflowID: workflow.id, nested: false)
+    }
+}
+
+/// A list of steps with a button to add more. Used for a workflow's steps and again inside loops and groups.
+private struct StepListEditor: View {
+    @Binding var steps: [WorkflowStep]
+    let workflowID: String
+    let nested: Bool
     @EnvironmentObject private var store: WorkflowStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if workflow.steps.isEmpty { Text("No steps yet. Add the first one below.").font(.callout).foregroundStyle(.secondary) }
-            ForEach(Array(workflow.steps.enumerated()), id: \.element.id) { index, step in
+            if steps.isEmpty { Text(nested ? "No steps inside yet." : "No steps yet. Add the first one below.").font(.callout).foregroundStyle(.secondary) }
+            ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                 StepCard(
-                    index: index, step: Binding(get: { workflow.steps.indices.contains(index) ? workflow.steps[index] : step }, set: { if workflow.steps.indices.contains(index) { workflow.steps[index] = $0 } }),
-                    workflowID: workflow.id, count: workflow.steps.count,
-                    move: { delta in withAnimation(.smooth) { workflow.steps.swapAt(index, index + delta) } },
-                    delete: { withAnimation(.smooth) { _ = workflow.steps.remove(at: index) } }
+                    index: index, step: Binding(get: { steps.indices.contains(index) ? steps[index] : step }, set: { if steps.indices.contains(index) { steps[index] = $0 } }),
+                    workflowID: workflowID, count: steps.count,
+                    move: { delta in withAnimation(.smooth) { steps.swapAt(index, index + delta) } },
+                    delete: { withAnimation(.smooth) { _ = steps.remove(at: index) } }
                 )
             }
             Menu {
                 ForEach(Dictionary(grouping: workflowStepCatalog(), by: \.category).sorted { $0.key < $1.key }, id: \.key) { category, list in
                     Section(category) {
                         ForEach(list) { template in
-                            Button { withAnimation(.smooth) { workflow.steps.append(store.newStep(template.kind)) } } label: { Label(template.title + (template.risk == .needsAuthorization ? "  ⚠︎" : ""), systemImage: template.symbol) }
+                            Button { withAnimation(.smooth) { steps.append(store.newStep(template.kind)) } } label: { Label(template.title + (template.risk == .needsAuthorization ? "  ⚠︎" : ""), systemImage: template.symbol) }
                         }
                     }
                 }
             } label: { Label("Add Step", systemImage: "plus") }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
-            Text("⚠︎ marks steps that need your authorization.").font(.caption).foregroundStyle(.secondary)
+            if !nested { Text("⚠︎ marks steps that need your authorization.").font(.caption).foregroundStyle(.secondary) }
         }
     }
 }
@@ -627,6 +648,18 @@ private struct StepCard: View {
             HStack(spacing: 14) {
                 Toggle("Only if…", isOn: Binding(get: { step.when != nil }, set: { step.when = $0 ? ConditionGroup(mode: .all, items: [ConditionItem(kind: .frontApp(appIds: []), negate: false)]) : nil })).toggleStyle(.checkbox)
                 Picker("If it fails", selection: $step.onError) { Text("Stop").tag(OnError.stop); Text("Carry on").tag(OnError.continue) }.frame(maxWidth: 200)
+                Spacer()
+            }
+            .font(.callout)
+            HStack(spacing: 14) {
+                Stepper(step.retries == 0 ? "No retries" : "Try again \(step.retries) time\(step.retries == 1 ? "" : "s")", value: Binding(get: { Int(step.retries) }, set: { step.retries = UInt32(min(max($0, 0), Int(workflowMaxRetries()))) }), in: 0...Int(workflowMaxRetries()))
+                if step.retries > 0 {
+                    Stepper("Wait \(String(format: "%.1f", Double(step.retryDelayMs) / 1000)) s between", value: Binding(get: { Int(step.retryDelayMs) }, set: { step.retryDelayMs = UInt32($0) }), in: 0...60_000, step: 250)
+                }
+                Toggle("Time limit", isOn: Binding(get: { step.timeoutSeconds != nil }, set: { step.timeoutSeconds = $0 ? 30 : nil })).toggleStyle(.checkbox)
+                if let limit = step.timeoutSeconds {
+                    Stepper("\(limit) s", value: Binding(get: { Int(limit) }, set: { step.timeoutSeconds = UInt32(min(max($0, 1), 600)) }), in: 1...600, step: 5)
+                }
                 Spacer()
             }
             .font(.callout)
@@ -703,6 +736,34 @@ private struct StepFields: View {
             templateEditor(template, "Copied to the clipboard") { kind = .copyText(template: $0) }
         case .insertText(let template):
             templateEditor(template, "Typed into the app in front") { kind = .insertText(template: $0) }
+        case .setVariable(let name, let template):
+            TextField("Name", text: Binding(get: { name }, set: { kind = .setVariable(name: $0, template: template) }), prompt: Text("letters, digits and _"))
+            if let problem = workflowVariableNameProblem(name: name) { Text(problem).font(.caption).foregroundStyle(Theme.danger) }
+            templateEditor(template, "The value. Use {{name}} later to put it in any text") { kind = .setVariable(name: name, template: $0) }
+        case .repeat(let times, let steps):
+            Stepper("Repeat \(times) time\(times == 1 ? "" : "s")", value: Binding(get: { Int(times) }, set: { kind = .repeat(times: UInt32(min(max($0, 1), 100)), steps: steps) }), in: 1...100)
+            Text("Inside the loop, {{loop}} is the round number, starting at 1.").font(.caption).foregroundStyle(.secondary)
+            StepListEditor(steps: Binding(get: { steps }, set: { kind = .repeat(times: times, steps: $0) }), workflowID: workflowID, nested: true).padding(.leading, 16)
+        case .parallel(let steps):
+            Text("These run at the same time. The workflow goes on when all are done, and stops if one fails and is set to stop.").font(.caption).foregroundStyle(.secondary)
+            StepListEditor(steps: Binding(get: { steps }, set: { kind = .parallel(steps: $0) }), workflowID: workflowID, nested: true).padding(.leading, 16)
+        case .confirm(let message):
+            TextField("Question", text: Binding(get: { message }, set: { kind = .confirm(message: $0) }))
+            Text("Shows Continue and Stop. Stop ends the workflow without an error.").font(.caption).foregroundStyle(.secondary)
+        case .ask(let prompt, let variable):
+            TextField("Question", text: Binding(get: { prompt }, set: { kind = .ask(prompt: $0, variable: variable) }))
+            TextField("Keep the answer as", text: Binding(get: { variable }, set: { kind = .ask(prompt: prompt, variable: $0) }))
+            if let problem = workflowVariableNameProblem(name: variable) { Text(problem).font(.caption).foregroundStyle(Theme.danger) }
+        case .choose(let prompt, let options, let variable):
+            TextField("Title", text: Binding(get: { prompt }, set: { kind = .choose(prompt: $0, options: options, variable: variable) }))
+            TextEditor(text: Binding(get: { options.joined(separator: "\n") }, set: { kind = .choose(prompt: prompt, options: $0.split(separator: "\n", omittingEmptySubsequences: false).map(String.init), variable: variable) }))
+                .font(.system(.callout, design: .monospaced)).frame(height: 70)
+            TextField("Keep the choice as", text: Binding(get: { variable }, set: { kind = .choose(prompt: prompt, options: options, variable: $0) }))
+            if let problem = workflowVariableNameProblem(name: variable) { Text(problem).font(.caption).foregroundStyle(Theme.danger) }
+            Text("One choice per line. A menu opens at the pointer; dismissing it stops the workflow.").font(.caption).foregroundStyle(.secondary)
+        case .javaScript(let source):
+            TextEditor(text: Binding(get: { source }, set: { kind = .javaScript(source: $0) })).font(.system(.callout, design: .monospaced)).frame(height: 100)
+            Text("`input` is the workflow's text and `vars` its variables (change them to keep a value). The last expression becomes the text. The script can reach no files, network or apps. You authorize the workflow, with this exact script, before it runs.").font(.caption).foregroundStyle(.secondary)
         }
     }
 

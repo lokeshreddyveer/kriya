@@ -104,7 +104,7 @@ pub use windows::{
 };
 pub use workflow::{
     ConditionGroup, ConditionItem, ConditionKind, ConditionMode, ConditionTemplate, Corner, Edge,
-    EvalContext, OnError, Risk, RunStatus, StepKind, StepResult, StepRisk, StepStatus,
+    EvalContext, MacroGroup, MacroItem, OnError, Risk, RunStatus, StepKind, StepResult, StepRisk, StepStatus,
     StepTemplate, SystemOp, TrackpadGesture, TriggerTemplate, Workflow, WorkflowRun, WorkflowStep,
     WorkflowTrigger,
 };
@@ -987,6 +987,29 @@ pub fn workflow_problem(workflow: Workflow) -> Option<String> {
 #[uniffi::export]
 pub fn workflow_step_summary(step: WorkflowStep) -> String {
     step.title()
+}
+
+/// Puts variables into text: each `{{name}}` becomes the value in the same place in `values`.
+#[uniffi::export]
+pub fn workflow_render_variables(template: String, names: Vec<String>, values: Vec<String>) -> String {
+    workflow::render_variables(&template, &names, &values)
+}
+
+/// The macro menu for the app in front: grouped workflows, this app's first.
+#[uniffi::export]
+pub fn workflow_macro_menu(workflows: Vec<Workflow>, front_app: Option<String>) -> Vec<MacroGroup> {
+    workflow::macro_menu(&workflows, front_app.as_deref())
+}
+
+/// Whether a name can be used for a variable.
+#[uniffi::export]
+pub fn workflow_variable_name_problem(name: String) -> Option<String> {
+    workflow::check_variable_name(&name).err().map(|e| e.to_string())
+}
+
+#[uniffi::export]
+pub fn workflow_max_retries() -> u32 {
+    workflow::MAX_RETRIES
 }
 
 #[uniffi::export]

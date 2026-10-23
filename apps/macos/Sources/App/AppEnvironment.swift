@@ -371,7 +371,8 @@ final class AppEnvironment {
             }
         }
         KeyboardCommands.extra = { [weak automation] in
-            (automation?.store.workflows ?? []).filter(\.enabled).map { (command: workflowCommand(workflow: $0), title: "Workflow: \($0.name)") }
+            [(command: "automation.macros", title: "Show the macro menu (workflows by group, for the front app)")]
+                + (automation?.store.workflows ?? []).filter(\.enabled).map { (command: workflowCommand(workflow: $0), title: "Workflow: \($0.name)") }
         }
         keyboard.palette.addProvider { [weak automation] in
             (automation?.store.workflows ?? []).filter(\.enabled).map { workflow in

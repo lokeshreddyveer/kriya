@@ -28,6 +28,18 @@ pub const MAX_TIMEOUT_SECONDS: u32 = 600;
 pub const MAX_CHAIN_DEPTH: u32 = 5;
 pub const MAX_PACKAGE_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_RUNS_KEPT: i64 = 300;
+/// A step may be tried again this many times after it fails.
+pub const MAX_RETRIES: u32 = 5;
+pub const DEFAULT_RETRY_DELAY_MS: u32 = 1_000;
+/// A loop runs its steps at most this many times.
+pub const MAX_REPEAT: u32 = 100;
+/// Steps that run side by side.
+pub const MAX_PARALLEL: usize = 8;
+/// Loops and parallel groups inside one another, at most this deep.
+pub const MAX_NESTING: usize = 3;
+pub const MAX_STEP_TIMEOUT_SECONDS: u32 = 600;
+pub const MAX_VARIABLE_NAME: usize = 32;
+pub const MAX_CHOICES: usize = 20;
 
 // ---- conditions ------------------------------------------------------------------------------------------------------
 
@@ -361,6 +373,41 @@ pub enum StepKind {
     InsertText {
         template: String,
     },
+    /// Keeps a value under a name for later steps. `{{name}}` in any text a step uses stands for it; `{{loop}}` is the
+    /// number of the round a loop is on (from 1).
+    SetVariable {
+        name: String,
+        template: String,
+    },
+    /// Runs the steps again and again, `times` times.
+    Repeat {
+        times: u32,
+        steps: Vec<WorkflowStep>,
+    },
+    /// Runs the steps side by side and waits for all of them.
+    Parallel {
+        steps: Vec<WorkflowStep>,
+    },
+    /// Asks the person whether to go on. If they say no, the workflow stops.
+    Confirm {
+        message: String,
+    },
+    /// Asks the person for a line of text and keeps it under `variable`. Cancelling stops the workflow.
+    Ask {
+        prompt: String,
+        variable: String,
+    },
+    /// Shows a short menu at the pointer and keeps the choice under `variable`. Cancelling stops the workflow.
+    Choose {
+        prompt: String,
+        options: Vec<String>,
+        variable: String,
+    },
+    /// Runs JavaScript on this Mac with no access to files, the network or other apps. `input` is the workflow's text, `vars`
+    /// holds its variables, and the result becomes the workflow's text.
+    JavaScript {
+        source: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
@@ -390,7 +437,14 @@ impl StepKind {
             StepKind::QuitApp { .. }
             | StepKind::Script { .. }
             | StepKind::System { .. }
-            | StepKind::InsertText { .. } => Ask,
+            | StepKind::InsertText { .. }
+            | StepKind::JavaScript { .. } => Ask,
+            // A group is as risky as the riskiest step inside it.
+            StepKind::Repeat { steps, .. } | StepKind::Parallel { steps } => steps
+                .iter()
+                .map(|s| s.kind.risk())
+                .find(|r| *r == Ask)
+                .unwrap_or(Safe),
             _ => Safe,
         }
     }
@@ -445,6 +499,26 @@ impl StepKind {
             ),
             StepKind::CopyText { template } => format!("Copy “{}”", first_line(template)),
             StepKind::InsertText { template } => format!("Type “{}”", first_line(template)),
+            StepKind::SetVariable { name, template } => {
+                format!("Set {{{{{name}}}}} to “{}”", first_line(template))
+            }
+            StepKind::Repeat { times, steps } => format!(
+                "Repeat {times} time{}: {} step{}",
+                if *times == 1 { "" } else { "s" },
+                steps.len(),
+                if steps.len() == 1 { "" } else { "s" }
+            ),
+            StepKind::Parallel { steps } => {
+                format!("Run {} steps at the same time", steps.len())
+            }
+            StepKind::Confirm { message } => format!("Ask “{}” before going on", first_line(message)),
+            StepKind::Ask { prompt, variable } => {
+                format!("Ask “{}” and keep it as {{{{{variable}}}}}", first_line(prompt))
+            }
+            StepKind::Choose {
+                prompt, variable, ..
+            } => format!("Offer a menu “{}” and keep it as {{{{{variable}}}}}", first_line(prompt)),
+            StepKind::JavaScript { source } => format!("Run JavaScript: {}", first_line(source)),
         }
     }
 
@@ -489,10 +563,123 @@ impl StepKind {
             {
                 return Err(CoreError::invalid("the text is empty or too long"));
             }
+            StepKind::SetVariable { name, template } => {
+                check_variable_name(name)?;
+                if template.len() > 100_000 {
+                    return Err(CoreError::invalid("the value is too long"));
+                }
+            }
+            StepKind::Repeat { times, steps } => {
+                if !(1..=MAX_REPEAT).contains(times) {
+                    return Err(CoreError::invalid("a loop runs 1 to 100 times"));
+                }
+                if steps.is_empty() {
+                    return Err(CoreError::invalid("a loop needs at least one step"));
+                }
+            }
+            StepKind::Parallel { steps } => {
+                if steps.len() < 2 || steps.len() > MAX_PARALLEL {
+                    return Err(CoreError::invalid(
+                        "steps side by side need 2 to 8 steps",
+                    ));
+                }
+            }
+            StepKind::Confirm { message }
+                if message.trim().is_empty() || message.chars().count() > 300 =>
+            {
+                return Err(CoreError::invalid("a question needs 1 to 300 characters"));
+            }
+            StepKind::Ask { prompt, variable } => {
+                if prompt.trim().is_empty() || prompt.chars().count() > 200 {
+                    return Err(CoreError::invalid("a question needs 1 to 200 characters"));
+                }
+                check_variable_name(variable)?;
+            }
+            StepKind::Choose {
+                prompt,
+                options,
+                variable,
+            } => {
+                if prompt.chars().count() > 200 {
+                    return Err(CoreError::invalid("the title is at most 200 characters"));
+                }
+                if options.len() < 2 || options.len() > MAX_CHOICES {
+                    return Err(CoreError::invalid("a menu needs 2 to 20 choices"));
+                }
+                if options
+                    .iter()
+                    .any(|o| o.trim().is_empty() || o.chars().count() > 80)
+                {
+                    return Err(CoreError::invalid(
+                        "each choice needs 1 to 80 characters",
+                    ));
+                }
+                check_variable_name(variable)?;
+            }
+            StepKind::JavaScript { source }
+                if source.trim().is_empty() || source.len() > 100_000 =>
+            {
+                return Err(CoreError::invalid(
+                    "a JavaScript step needs a script of a sensible length",
+                ));
+            }
             _ => {}
         }
         Ok(())
     }
+
+    /// The steps inside a loop or a parallel group.
+    pub fn children(&self) -> &[WorkflowStep] {
+        match self {
+            StepKind::Repeat { steps, .. } | StepKind::Parallel { steps } => steps,
+            _ => &[],
+        }
+    }
+}
+
+/// A variable name is a letter or underscore, then letters, digits and underscores, up to 32 characters. `loop` is the
+/// loop counter and cannot be set.
+pub fn check_variable_name(name: &str) -> Result<(), CoreError> {
+    let mut chars = name.chars();
+    let ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && name.len() <= MAX_VARIABLE_NAME;
+    if !ok {
+        return Err(CoreError::invalid(
+            "a variable name is letters, digits and underscores, starting with a letter",
+        ));
+    }
+    if name == "loop" {
+        return Err(CoreError::invalid("“loop” is the loop counter; pick another name"));
+    }
+    Ok(())
+}
+
+/// Puts variables into text: each `{{name}}` becomes its value. A name without a value is left as it is, and a value is
+/// never searched again, so a value that contains `{{other}}` stays as typed.
+pub fn render_variables(template: &str, names: &[String], values: &[String]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find("}}") {
+            Some(end) => {
+                let name = after[..end].trim();
+                match names.iter().position(|n| n == name) {
+                    Some(i) => out.push_str(values.get(i).map(String::as_str).unwrap_or("")),
+                    None => out.push_str(&rest[start..start + 2 + end + 2]),
+                }
+                rest = &after[end + 2..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn first_line(s: &str) -> String {
@@ -545,9 +732,39 @@ pub struct WorkflowStep {
     pub when: Option<ConditionGroup>,
     pub on_error: OnError,
     pub kind: StepKind,
+    /// How many more times to try after a failure (0 to 5).
+    #[serde(default)]
+    #[uniffi(default = 0)]
+    pub retries: u32,
+    /// How long to wait between tries.
+    #[serde(default = "default_retry_delay")]
+    #[uniffi(default = 1000)]
+    pub retry_delay_ms: u32,
+    /// A time limit for this step alone, in seconds. None is only the workflow's limit.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub timeout_seconds: Option<u32>,
+}
+
+fn default_retry_delay() -> u32 {
+    DEFAULT_RETRY_DELAY_MS
 }
 
 impl WorkflowStep {
+    /// A plain step: no condition, stops the workflow if it fails, no retries.
+    pub fn new(id: &str, kind: StepKind) -> Self {
+        WorkflowStep {
+            id: id.to_string(),
+            label: None,
+            when: None,
+            on_error: OnError::Stop,
+            kind,
+            retries: 0,
+            retry_delay_ms: DEFAULT_RETRY_DELAY_MS,
+            timeout_seconds: None,
+        }
+    }
+
     pub fn title(&self) -> String {
         self.label
             .clone()
@@ -579,6 +796,14 @@ pub struct Workflow {
     pub authorized_fingerprint: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// A name for the macro menu. A workflow with a group is offered in the menu that opens at the pointer.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub group: Option<String>,
+    /// The apps whose macro menu offers this workflow. Empty means every app.
+    #[serde(default)]
+    #[uniffi(default = [])]
+    pub app_ids: Vec<String>,
 }
 
 impl Default for Workflow {
@@ -598,8 +823,62 @@ impl Default for Workflow {
             authorized_fingerprint: None,
             created_at: 0,
             updated_at: 0,
+            group: None,
+            app_ids: Vec::new(),
         }
     }
+}
+
+/// One workflow in the macro menu.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MacroItem {
+    pub id: String,
+    pub name: String,
+}
+
+/// A heading in the macro menu and the workflows under it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MacroGroup {
+    pub name: String,
+    /// Offered only in some apps, so the menu can show these first.
+    pub app_specific: bool,
+    pub items: Vec<MacroItem>,
+}
+
+/// The menu of macros for the app in front: the enabled workflows that have a group, those meant for this app first, then
+/// those for every app. Within a group, by name.
+pub fn macro_menu(all: &[Workflow], front_app: Option<&str>) -> Vec<MacroGroup> {
+    let mut groups: Vec<MacroGroup> = Vec::new();
+    let mut offered: Vec<&Workflow> = all
+        .iter()
+        .filter(|w| w.enabled && w.group.as_deref().is_some_and(|g| !g.trim().is_empty()))
+        .filter(|w| {
+            w.app_ids.is_empty()
+                || front_app.is_some_and(|app| w.app_ids.iter().any(|a| a == app))
+        })
+        .collect();
+    offered.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    for w in offered {
+        let name = w.group.clone().unwrap_or_default().trim().to_string();
+        let specific = !w.app_ids.is_empty();
+        let slot = groups
+            .iter()
+            .position(|g| g.name == name && g.app_specific == specific);
+        let item = MacroItem {
+            id: w.id.clone(),
+            name: w.name.clone(),
+        };
+        match slot {
+            Some(i) => groups[i].items.push(item),
+            None => groups.push(MacroGroup {
+                name,
+                app_specific: specific,
+                items: vec![item],
+            }),
+        }
+    }
+    groups.sort_by(|a, b| b.app_specific.cmp(&a.app_specific));
+    groups
 }
 
 impl Workflow {
@@ -625,37 +904,81 @@ impl Workflow {
         }
         self.trigger.check()?;
         let mut ids = HashSet::new();
-        for (i, step) in self.steps.iter().enumerate() {
-            if step.id.trim().is_empty() || !ids.insert(step.id.as_str()) {
-                return Err(CoreError::invalid(format!(
-                    "step {} needs its own id",
-                    i + 1
-                )));
-            }
-            step.kind
-                .check()
-                .map_err(|e| CoreError::invalid(format!("step {}: {e}", i + 1)))?;
+        let mut total = 0;
+        check_steps(&self.steps, 0, &mut ids, &mut total, "")?;
+        if total > MAX_STEPS {
+            return Err(CoreError::invalid(
+                "a workflow can have up to 100 steps, counting those inside loops",
+            ));
         }
         Ok(())
     }
 
-    /// Which workflows this one starts.
+    /// Which workflows this one starts, including from inside loops.
     pub fn references(&self) -> Vec<String> {
-        self.steps
-            .iter()
-            .filter_map(|s| {
+        fn collect(steps: &[WorkflowStep], out: &mut Vec<String>) {
+            for s in steps {
                 if let StepKind::RunWorkflow { workflow_id } = &s.kind {
-                    Some(workflow_id.clone())
-                } else {
-                    None
+                    out.push(workflow_id.clone());
                 }
-            })
-            .collect()
+                collect(s.kind.children(), out);
+            }
+        }
+        let mut out = Vec::new();
+        collect(&self.steps, &mut out);
+        out
     }
 
     pub fn command(&self) -> String {
         format!("workflow.{}", self.id.to_lowercase())
     }
+}
+
+/// Checks steps and the steps inside them. `path` is "3." for the third step's children, so a message says where.
+fn check_steps(
+    steps: &[WorkflowStep],
+    depth: usize,
+    ids: &mut HashSet<String>,
+    total: &mut usize,
+    path: &str,
+) -> Result<(), CoreError> {
+    for (i, step) in steps.iter().enumerate() {
+        *total += 1;
+        let place = format!("{path}{}", i + 1);
+        if step.id.trim().is_empty() || !ids.insert(step.id.clone()) {
+            return Err(CoreError::invalid(format!("step {place} needs its own id")));
+        }
+        step.kind
+            .check()
+            .map_err(|e| CoreError::invalid(format!("step {place}: {e}")))?;
+        if step.retries > MAX_RETRIES {
+            return Err(CoreError::invalid(format!(
+                "step {place}: it can be tried again up to {MAX_RETRIES} times"
+            )));
+        }
+        if step.retry_delay_ms > MAX_DELAY_MS {
+            return Err(CoreError::invalid(format!(
+                "step {place}: the wait between tries can be up to 60 seconds"
+            )));
+        }
+        if let Some(t) = step.timeout_seconds {
+            if !(1..=MAX_STEP_TIMEOUT_SECONDS).contains(&t) {
+                return Err(CoreError::invalid(format!(
+                    "step {place}: the time limit should be between 1 and 600 seconds"
+                )));
+            }
+        }
+        let children = step.kind.children();
+        if !children.is_empty() {
+            if depth + 1 > MAX_NESTING {
+                return Err(CoreError::invalid(format!(
+                    "step {place}: loops can be inside each other up to {MAX_NESTING} levels"
+                )));
+            }
+            check_steps(children, depth + 1, ids, total, &format!("{place}."))?;
+        }
+    }
+    Ok(())
 }
 
 /// What a workflow does, for deciding whether to trust it. The same content gives the same fingerprint, whatever its
@@ -756,17 +1079,31 @@ pub fn duplicate(w: &Workflow, new_id: &str, now: i64) -> Workflow {
         revision: 0,
         created_at: now,
         updated_at: now,
-        steps: w
-            .steps
-            .iter()
-            .enumerate()
-            .map(|(i, s)| WorkflowStep {
-                id: format!("s{i}"),
-                ..s.clone()
-            })
-            .collect(),
+        steps: renumber(&w.steps, &mut 0),
         ..w.clone()
     }
+}
+
+/// The same steps with new ids in order, including those inside loops.
+fn renumber(steps: &[WorkflowStep], next: &mut usize) -> Vec<WorkflowStep> {
+    steps
+        .iter()
+        .map(|s| {
+            let id = format!("s{}", *next);
+            *next += 1;
+            let kind = match &s.kind {
+                StepKind::Repeat { times, steps } => StepKind::Repeat {
+                    times: *times,
+                    steps: renumber(steps, next),
+                },
+                StepKind::Parallel { steps } => StepKind::Parallel {
+                    steps: renumber(steps, next),
+                },
+                other => other.clone(),
+            };
+            WorkflowStep { id, kind, ..s.clone() }
+        })
+        .collect()
 }
 
 // ---- history ---------------------------------------------------------------------------------------------------------
@@ -940,6 +1277,70 @@ pub fn step_catalog() -> Vec<StepTemplate> {
             "doc.on.clipboard",
             StepKind::CopyText {
                 template: String::new(),
+            },
+        ),
+        t(
+            "Flow",
+            "Keep a value in a variable",
+            "character.textbox",
+            StepKind::SetVariable {
+                name: "value".into(),
+                template: String::new(),
+            },
+        ),
+        t(
+            "Flow",
+            "Repeat steps",
+            "repeat",
+            StepKind::Repeat {
+                times: 3,
+                steps: vec![WorkflowStep::new("r1", StepKind::Delay { ms: 500 })],
+            },
+        ),
+        t(
+            "Flow",
+            "Run steps at the same time",
+            "arrow.triangle.branch",
+            StepKind::Parallel {
+                steps: vec![
+                    WorkflowStep::new("p1", StepKind::Delay { ms: 500 }),
+                    WorkflowStep::new("p2", StepKind::Delay { ms: 500 }),
+                ],
+            },
+        ),
+        t(
+            "Flow",
+            "Ask before going on",
+            "questionmark.circle",
+            StepKind::Confirm {
+                message: "Go on?".into(),
+            },
+        ),
+        t(
+            "Flow",
+            "Ask for a line of text",
+            "text.bubble",
+            StepKind::Ask {
+                prompt: "What should it use?".into(),
+                variable: "answer".into(),
+            },
+        ),
+        t(
+            "Flow",
+            "Offer a menu to choose from",
+            "list.bullet.rectangle",
+            StepKind::Choose {
+                prompt: "Choose".into(),
+                options: vec!["One".into(), "Two".into()],
+                variable: "choice".into(),
+            },
+        ),
+        t(
+            "Scripts",
+            "Run JavaScript",
+            "curlybraces",
+            StepKind::JavaScript {
+                source: "input.toUpperCase()".into(),
             },
         ),
         t(
@@ -1351,13 +1752,7 @@ mod tests {
     use crate::actions::modifiers as m;
 
     fn step(id: &str, kind: StepKind) -> WorkflowStep {
-        WorkflowStep {
-            id: id.into(),
-            label: None,
-            when: None,
-            on_error: OnError::Stop,
-            kind,
-        }
+        WorkflowStep::new(id, kind)
     }
 
     fn workflow(id: &str, steps: Vec<WorkflowStep>) -> Workflow {
@@ -1969,6 +2364,229 @@ mod tests {
         assert!(import_package(&export_package(&[], 1).unwrap(), &[], 1).is_err());
     }
 
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn variables_are_put_into_text_once() {
+        let n = names(&["who", "n"]);
+        let v = names(&["World", "3"]);
+        assert_eq!(render_variables("Hi {{who}} x{{ n }}", &n, &v), "Hi World x3");
+        assert_eq!(render_variables("{{missing}} stays", &n, &v), "{{missing}} stays");
+        // A value that looks like a variable is not expanded again.
+        let v2 = names(&["{{n}}", "3"]);
+        assert_eq!(render_variables("{{who}}", &n, &v2), "{{n}}");
+        assert_eq!(render_variables("open {{ brace", &n, &v), "open {{ brace");
+        assert_eq!(render_variables("", &n, &v), "");
+        assert_eq!(render_variables("é{{who}}é", &n, &v), "éWorldé");
+    }
+
+    #[test]
+    fn variable_names_are_checked() {
+        for good in ["a", "_x", "Name_2", "a_very_long_name_of_thirty_two_ch"] {
+            if good.len() <= 32 {
+                assert!(check_variable_name(good).is_ok(), "{good}");
+            }
+        }
+        for bad in ["", "2a", "a b", "a-b", "loop", &"x".repeat(33), "é"] {
+            assert!(check_variable_name(bad).is_err(), "{bad}");
+        }
+    }
+
+    fn repeat(times: u32, steps: Vec<WorkflowStep>) -> StepKind {
+        StepKind::Repeat { times, steps }
+    }
+
+    #[test]
+    fn loops_and_parallel_groups_are_checked_inside() {
+        let ok = workflow(
+            "a",
+            vec![step(
+                "1",
+                repeat(3, vec![step("2", StepKind::Delay { ms: 10 })]),
+            )],
+        );
+        assert!(ok.check().is_ok());
+        let empty = workflow("a", vec![step("1", repeat(3, vec![]))]);
+        assert!(empty.check().is_err());
+        let zero = workflow("a", vec![step("1", repeat(0, vec![step("2", StepKind::Delay { ms: 1 })]))]);
+        assert!(zero.check().is_err());
+        let too_many = workflow("a", vec![step("1", repeat(101, vec![step("2", StepKind::Delay { ms: 1 })]))]);
+        assert!(too_many.check().is_err());
+        let bad_inner = workflow(
+            "a",
+            vec![step("1", repeat(2, vec![step("2", StepKind::Delay { ms: MAX_DELAY_MS + 1 })]))],
+        );
+        let message = bad_inner.check().unwrap_err().to_string();
+        assert!(message.contains("step 1.1"), "{message}");
+        let clash = workflow(
+            "a",
+            vec![step("1", repeat(2, vec![step("1", StepKind::Delay { ms: 1 })]))],
+        );
+        assert!(clash.check().is_err(), "ids are unique across nested steps");
+        let lone = workflow(
+            "a",
+            vec![step("1", StepKind::Parallel { steps: vec![step("2", StepKind::Delay { ms: 1 })] })],
+        );
+        assert!(lone.check().is_err(), "parallel needs at least two steps");
+    }
+
+    #[test]
+    fn nesting_is_limited() {
+        let mut inner = step("deep", StepKind::Delay { ms: 1 });
+        for level in 0..=MAX_NESTING {
+            inner = step(&format!("l{level}"), repeat(2, vec![inner]));
+        }
+        assert!(workflow("a", vec![inner]).check().is_err());
+        let mut fine = step("deep", StepKind::Delay { ms: 1 });
+        for level in 0..MAX_NESTING {
+            fine = step(&format!("l{level}"), repeat(2, vec![fine]));
+        }
+        assert!(workflow("a", vec![fine]).check().is_ok());
+    }
+
+    #[test]
+    fn steps_inside_loops_count_toward_the_limit() {
+        let inner: Vec<_> = (0..MAX_STEPS).map(|i| step(&format!("i{i}"), StepKind::Delay { ms: 1 })).collect();
+        assert!(workflow("a", vec![step("outer", repeat(2, inner))]).check().is_err());
+    }
+
+    #[test]
+    fn a_loop_is_as_risky_as_what_is_inside() {
+        let safe = repeat(2, vec![step("2", StepKind::Delay { ms: 1 })]);
+        assert_eq!(safe.risk(), StepRisk::Safe);
+        let risky = repeat(
+            2,
+            vec![step("2", StepKind::Script { language: FinderScript::Shell, source: "ls".into() })],
+        );
+        assert_eq!(risky.risk(), StepRisk::NeedsAuthorization);
+        assert_eq!(StepKind::JavaScript { source: "1".into() }.risk(), StepRisk::NeedsAuthorization);
+        let w = workflow("a", vec![step("1", risky)]);
+        assert!(needs_authorization(&w));
+    }
+
+    #[test]
+    fn workflows_started_from_inside_a_loop_are_found() {
+        let w = workflow(
+            "a",
+            vec![step(
+                "1",
+                repeat(2, vec![step("2", StepKind::RunWorkflow { workflow_id: "b".into() })]),
+            )],
+        );
+        assert_eq!(w.references(), vec!["b".to_string()]);
+        let b = workflow("b", vec![step("1", StepKind::RunWorkflow { workflow_id: "a".into() })]);
+        assert!(find_cycle(&[w, b]).is_some(), "a cycle through a loop is still a cycle");
+    }
+
+    #[test]
+    fn retries_and_step_time_limits_are_checked() {
+        let mut s = step("1", StepKind::Delay { ms: 1 });
+        s.retries = MAX_RETRIES;
+        s.timeout_seconds = Some(30);
+        assert!(workflow("a", vec![s.clone()]).check().is_ok());
+        s.retries = MAX_RETRIES + 1;
+        assert!(workflow("a", vec![s.clone()]).check().is_err());
+        s.retries = 1;
+        s.timeout_seconds = Some(0);
+        assert!(workflow("a", vec![s.clone()]).check().is_err());
+        s.timeout_seconds = Some(MAX_STEP_TIMEOUT_SECONDS + 1);
+        assert!(workflow("a", vec![s.clone()]).check().is_err());
+        s.timeout_seconds = None;
+        s.retry_delay_ms = MAX_DELAY_MS + 1;
+        assert!(workflow("a", vec![s]).check().is_err());
+    }
+
+    #[test]
+    fn prompts_and_menus_are_checked() {
+        let ask = |p: &str, v: &str| step("1", StepKind::Ask { prompt: p.into(), variable: v.into() });
+        assert!(workflow("a", vec![ask("Name?", "who")]).check().is_ok());
+        assert!(workflow("a", vec![ask("", "who")]).check().is_err());
+        assert!(workflow("a", vec![ask("Name?", "loop")]).check().is_err());
+        let choose = |options: Vec<&str>| {
+            step("1", StepKind::Choose { prompt: "Pick".into(), options: options.into_iter().map(String::from).collect(), variable: "c".into() })
+        };
+        assert!(workflow("a", vec![choose(vec!["a", "b"])]).check().is_ok());
+        assert!(workflow("a", vec![choose(vec!["a"])]).check().is_err());
+        assert!(workflow("a", vec![choose(vec!["a", " "])]).check().is_err());
+        assert!(workflow("a", vec![step("1", StepKind::Confirm { message: "Sure?".into() })]).check().is_ok());
+        assert!(workflow("a", vec![step("1", StepKind::Confirm { message: " ".into() })]).check().is_err());
+        assert!(workflow("a", vec![step("1", StepKind::JavaScript { source: " ".into() })]).check().is_err());
+    }
+
+    #[test]
+    fn a_duplicate_renumbers_steps_inside_loops_too() {
+        let w = workflow(
+            "a",
+            vec![
+                step("x", repeat(2, vec![step("y", StepKind::Delay { ms: 1 }), step("s0", StepKind::Delay { ms: 1 })])),
+                step("z", StepKind::Delay { ms: 1 }),
+            ],
+        );
+        assert!(w.check().is_ok());
+        let copy = duplicate(&w, "b", 5);
+        assert!(copy.check().is_ok(), "no id clashes after renumbering");
+        let ids: Vec<_> = copy.steps[0].kind.children().iter().map(|s| s.id.clone()).collect();
+        assert_eq!(ids, vec!["s1".to_string(), "s2".to_string()]);
+    }
+
+    #[test]
+    fn the_macro_menu_offers_grouped_workflows_for_the_front_app() {
+        let mut a = workflow("a", vec![step("1", StepKind::Delay { ms: 1 })]);
+        a.name = "Zoom in".into();
+        a.group = Some("View".into());
+        let mut b = workflow("b", vec![step("1", StepKind::Delay { ms: 1 })]);
+        b.name = "Export".into();
+        b.group = Some("File".into());
+        b.app_ids = vec!["com.apple.Safari".into()];
+        let mut c = workflow("c", vec![step("1", StepKind::Delay { ms: 1 })]);
+        c.name = "Another".into();
+        c.group = Some("File".into());
+        c.app_ids = vec!["com.apple.Safari".into()];
+        let mut off = workflow("d", vec![step("1", StepKind::Delay { ms: 1 })]);
+        off.group = Some("File".into());
+        off.enabled = false;
+        let ungrouped = workflow("e", vec![step("1", StepKind::Delay { ms: 1 })]);
+        let all = vec![a, b, c, off, ungrouped];
+
+        let safari = macro_menu(&all, Some("com.apple.Safari"));
+        assert_eq!(safari.len(), 2);
+        assert_eq!(safari[0].name, "File", "this app's groups come first");
+        assert!(safari[0].app_specific);
+        assert_eq!(
+            safari[0].items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(),
+            vec!["Another", "Export"],
+            "by name"
+        );
+        assert_eq!(safari[1].name, "View");
+
+        let other = macro_menu(&all, Some("com.apple.Notes"));
+        assert_eq!(other.len(), 1, "app-specific macros are hidden elsewhere");
+        assert_eq!(other[0].name, "View");
+        assert!(macro_menu(&all, None).iter().all(|g| !g.app_specific));
+    }
+
+    #[test]
+    fn old_saved_steps_without_the_new_fields_still_load() {
+        let json = r#"{"id":"1","label":null,"when":null,"on_error":"stop","kind":{"type":"delay","ms":5}}"#;
+        let step: WorkflowStep = serde_json::from_str(json).unwrap();
+        assert_eq!(step.retries, 0);
+        assert_eq!(step.retry_delay_ms, DEFAULT_RETRY_DELAY_MS);
+        assert_eq!(step.timeout_seconds, None);
+    }
+
+    #[test]
+    fn the_catalog_has_flow_steps_that_pass_their_own_checks() {
+        for template in step_catalog() {
+            if matches!(template.kind, StepKind::Repeat { .. } | StepKind::Parallel { .. } | StepKind::SetVariable { .. } | StepKind::Ask { .. } | StepKind::Choose { .. } | StepKind::Confirm { .. } | StepKind::JavaScript { .. }) {
+                let w = workflow("a", vec![step("1", template.kind.clone())]);
+                assert!(w.check().is_ok(), "{}: {:?}", template.title, w.check());
+            }
+        }
+        assert!(step_catalog().iter().any(|t| t.category == "Flow"));
+    }
+
     #[test]
     fn workflows_round_trip_through_json() {
         let mut w = workflow(
@@ -1984,6 +2602,9 @@ mod tests {
                 kind: StepKind::TextTransform {
                     ops: vec![TextOp::Uppercase],
                 },
+                retries: 2,
+                retry_delay_ms: 250,
+                timeout_seconds: Some(5),
             }],
         );
         w.trigger = WorkflowTrigger::WindowPlaced {

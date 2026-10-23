@@ -293,7 +293,7 @@ mod tests {
     use crate::finder::FinderScript;
     use crate::keyboard::{KeyShortcut, ShortcutScope, ShortcutTarget};
     use crate::workflow::{
-        needs_authorization, OnError, RunStatus, StepResult, StepStatus, WorkflowStep,
+        needs_authorization, RunStatus, StepResult, StepStatus, WorkflowStep,
     };
 
     fn open() -> Store {
@@ -301,13 +301,7 @@ mod tests {
     }
 
     fn step(id: &str, kind: StepKind) -> WorkflowStep {
-        WorkflowStep {
-            id: id.into(),
-            label: None,
-            when: None,
-            on_error: OnError::Stop,
-            kind,
-        }
+        WorkflowStep::new(id, kind)
     }
 
     fn wf(id: &str, steps: Vec<WorkflowStep>) -> Workflow {

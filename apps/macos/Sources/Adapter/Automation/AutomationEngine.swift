@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import JavaScriptCore
 
 extension Notification.Name {
     static let kriyaClipboardRecorded = Notification.Name("app.kriya.clipboardRecorded")
@@ -86,11 +87,47 @@ final class AutomationEngine: ObservableObject {
     private func registerCommands(_ list: [Workflow]) {
         guard let executor = context?.executor else { return }
         unregisterCommands()
+        executor.registerCommand("automation.macros") { [weak self] in self?.showMacroMenu() }
+        registered.insert("automation.macros")
         for workflow in list where workflow.enabled {
             let id = workflow.id
             let command = workflowCommand(workflow: workflow)
             executor.registerCommand(command) { [weak self] in self?.fire(id, source: "Command") }
             registered.insert(command)
+        }
+    }
+
+    /// A menu at the pointer of the workflows that belong to a group, those for the app in front first.
+    func showMacroMenu() {
+        DispatchQueue.main.async {
+            let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            let groups = workflowMacroMenu(workflows: self.store.workflows, frontApp: front)
+            let menu = NSMenu(title: "Macros")
+            menu.autoenablesItems = false
+            let chosen = MenuChoice()
+            var ids: [String] = []
+            if groups.isEmpty {
+                let none = NSMenuItem(title: "No macros for this app. Give a workflow a macro menu group.", action: nil, keyEquivalent: "")
+                none.isEnabled = false
+                menu.addItem(none)
+            }
+            for (position, group) in groups.enumerated() {
+                if position > 0 { menu.addItem(.separator()) }
+                let header = NSMenuItem(title: group.name, action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+                for item in group.items {
+                    let entry = NSMenuItem(title: item.name, action: #selector(MenuChoice.pick(_:)), keyEquivalent: "")
+                    entry.target = chosen
+                    entry.tag = ids.count
+                    entry.indentationLevel = 1
+                    ids.append(item.id)
+                    menu.addItem(entry)
+                }
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            if let index = chosen.index, ids.indices.contains(index) { self.fire(ids[index], source: "Macro menu") }
         }
     }
 
@@ -187,49 +224,13 @@ final class AutomationEngine: ObservableObject {
         }
 
         // 2. The steps.
-        var rc = RunContext(text: input, handle: handle, deadline: Date().addingTimeInterval(TimeInterval(workflow.timeoutSeconds)), depth: depth, dryRun: dryRun, test: test, approvedForTest: approvedForTest)
+        var rc = RunContext(text: input, handle: handle, deadline: Date().addingTimeInterval(TimeInterval(workflow.timeoutSeconds)), limitSeconds: Int(workflow.timeoutSeconds), depth: depth, dryRun: dryRun, test: test, approvedForTest: approvedForTest)
         var results: [StepResult] = []
         var status = RunStatus.succeeded
         var failure: String?
-        for (index, step) in workflow.steps.enumerated() {
-            if handle.isCancelled { status = .cancelled; failure = "Stopped."; break }
-            if Date() >= rc.deadline { status = .timedOut; failure = "It ran for more than \(workflow.timeoutSeconds) seconds and was stopped."; break }
-            let title = workflowStepSummary(step: step)
-            let t0 = DispatchTime.now()
-            func duration() -> UInt32 { UInt32(min(60_000_000.0, Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000)) }
-            func record(_ status: StepStatus, _ message: String?) {
-                let result = StepResult(index: UInt32(index), title: title, status: status, message: message, durationMs: duration())
-                results.append(result)
-                progress?(result)
-            }
-            if let when = step.when, !(await conditionsHold(when)) {
-                record(.skipped, "Its condition did not hold.")
-                continue
-            }
-            if dryRun {
-                record(.planned, "Would: " + step.kind.summary)
-                continue
-            }
-            do {
-                let message = try await perform(step.kind, &rc)
-                record(.ok, message)
-            } catch is CancellationError {
-                record(.cancelled, "Stopped.")
-                status = .cancelled
-                failure = "Stopped."
-                break
-            } catch {
-                let timedOut = Date() >= rc.deadline
-                let cancelled = handle.isCancelled
-                record(cancelled ? .cancelled : .failed, error.localizedDescription)
-                if cancelled { status = .cancelled; failure = "Stopped."; break }
-                if timedOut { status = .timedOut; failure = "It ran for more than \(workflow.timeoutSeconds) seconds and was stopped."; break }
-                if step.onError == .stop {
-                    status = .failed
-                    failure = "Step \(index + 1) (\(title)): \(error.localizedDescription)"
-                    break
-                }
-            }
+        if case .stop(let why, let message) = await runSteps(workflow.steps, prefix: "", rc: &rc, results: &results, progress: progress) {
+            status = why
+            failure = message
         }
         let run = finish(status, failure, results)
         recordAndReport(run, workflow)
@@ -294,12 +295,140 @@ final class AutomationEngine: ObservableObject {
     struct RunContext {
         var text: String
         let handle: RunHandle
-        let deadline: Date
+        var deadline: Date
+        /// The workflow's whole time limit, for saying so.
+        let limitSeconds: Int
+        /// Values kept by Keep-a-value, Ask and Choose steps, and `loop` inside a loop. `{{name}}` in a step's text becomes the value.
+        var variables: [String: String] = [:]
         let depth: Int
         let dryRun: Bool
         let test: Bool
         let approvedForTest: Bool
         var remaining: TimeInterval { max(1, deadline.timeIntervalSinceNow) }
+    }
+
+    /// How a list of steps ended: all done (or carried on past a failure), or the run must stop.
+    enum Flow: Sendable {
+        case proceed
+        case stop(RunStatus, String?)
+    }
+
+    /// The person said no to a question, which ends the run without it being a failure.
+    struct WorkflowDeclined: Error {}
+    /// A step inside a loop or a group ended the run; it has already written its own result.
+    struct ChildStopped: Error { let status: RunStatus; let message: String? }
+
+    /// Carries out steps in order. Used for the whole workflow and again for the steps inside loops and groups, where `prefix`
+    /// says where they are ("Round 2 · ").
+    private func runSteps(_ steps: [WorkflowStep], prefix: String, rc: inout RunContext, results: inout [StepResult], progress: ((StepResult) -> Void)?) async -> Flow {
+        for (index, step) in steps.enumerated() {
+            if rc.handle.isCancelled { return .stop(.cancelled, "Stopped.") }
+            if Date() >= rc.deadline { return .stop(.timedOut, "It ran for more than \(rc.limitSeconds) seconds and was stopped.") }
+            let title = prefix + workflowStepSummary(step: step)
+            let t0 = DispatchTime.now()
+            func duration() -> UInt32 { UInt32(min(60_000_000.0, Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000)) }
+            func record(_ status: StepStatus, _ message: String?) {
+                let result = StepResult(index: UInt32(index), title: title, status: status, message: message, durationMs: duration())
+                results.append(result)
+                progress?(result)
+            }
+            if let when = step.when, !(await conditionsHold(when)) {
+                record(.skipped, "Its condition did not hold.")
+                continue
+            }
+            if rc.dryRun {
+                record(.planned, "Would: " + step.kind.summary)
+                let inner = step.kind.children
+                if !inner.isEmpty { _ = await runSteps(inner, prefix: title + " › ", rc: &rc, results: &results, progress: progress) }
+                continue
+            }
+            var attempt = 0
+            while true {
+                // A step's own time limit applies to it alone, inside the workflow's.
+                var local = rc
+                if let limit = step.timeoutSeconds { local.deadline = min(rc.deadline, Date().addingTimeInterval(TimeInterval(limit))) }
+                do {
+                    let message: String?
+                    switch step.kind {
+                    case .repeat(let times, let inner):
+                        message = try await performRepeat(Int(times), inner, title: title, &local, &results, progress)
+                    case .parallel(let branches):
+                        message = try await performParallel(branches, title: title, &local, &results, progress)
+                    default:
+                        message = try await perform(step.kind, &local)
+                    }
+                    rc.text = local.text
+                    rc.variables = local.variables
+                    record(.ok, message)
+                    break
+                } catch is CancellationError {
+                    record(.cancelled, "Stopped.")
+                    return .stop(.cancelled, "Stopped.")
+                } catch is WorkflowDeclined {
+                    record(.cancelled, "You chose not to continue.")
+                    return .stop(.cancelled, "You chose not to continue.")
+                } catch let child as ChildStopped {
+                    rc.text = local.text
+                    rc.variables = local.variables
+                    record(child.status == .cancelled ? .cancelled : .failed, child.message)
+                    return .stop(child.status, child.message)
+                } catch {
+                    let cancelled = rc.handle.isCancelled
+                    let timedOut = Date() >= rc.deadline
+                    if !cancelled, !timedOut, attempt < Int(step.retries) {
+                        attempt += 1
+                        record(.failed, "Try \(attempt) of \(Int(step.retries) + 1) failed: \(error.localizedDescription). Trying again…")
+                        try? await pause(Double(step.retryDelayMs) / 1000, rc.handle)
+                        continue
+                    }
+                    let note = attempt > 0 ? " (after \(attempt + 1) tries)" : ""
+                    record(cancelled ? .cancelled : .failed, error.localizedDescription + note)
+                    if cancelled { return .stop(.cancelled, "Stopped.") }
+                    if timedOut { return .stop(.timedOut, "It ran for more than \(rc.limitSeconds) seconds and was stopped.") }
+                    if step.onError == .stop { return .stop(.failed, "Step \(prefix)\(index + 1) (\(title)): \(error.localizedDescription)") }
+                    break
+                }
+            }
+        }
+        return .proceed
+    }
+
+    private func performRepeat(_ times: Int, _ steps: [WorkflowStep], title: String, _ rc: inout RunContext, _ results: inout [StepResult], _ progress: ((StepResult) -> Void)?) async throws -> String? {
+        for round in 1...max(1, times) {
+            rc.variables["loop"] = String(round)
+            if case .stop(let status, let message) = await runSteps(steps, prefix: "\(title) › round \(round) · ", rc: &rc, results: &results, progress: progress) {
+                throw ChildStopped(status: status, message: message)
+            }
+        }
+        rc.variables["loop"] = nil
+        return nil
+    }
+
+    /// Runs each branch at the same time, each with its own copy of the variables, and keeps the variables they set afterwards
+    /// (the last branch wins a clash). The step stops the run if any branch does.
+    private func performParallel(_ branches: [WorkflowStep], title: String, _ rc: inout RunContext, _ results: inout [StepResult], _ progress: ((StepResult) -> Void)?) async throws -> String? {
+        let snapshot = rc
+        var finished: [(Int, [StepResult], Flow, [String: String])] = []
+        await withTaskGroup(of: (Int, [StepResult], Flow, [String: String]).self) { group in
+            for (index, branch) in branches.enumerated() {
+                group.addTask { [self] in
+                    var branchContext = snapshot
+                    var branchResults: [StepResult] = []
+                    let flow = await runSteps([branch], prefix: "\(title) › ", rc: &branchContext, results: &branchResults, progress: progress)
+                    return (index, branchResults, flow, branchContext.variables)
+                }
+            }
+            for await item in group { finished.append(item) }
+        }
+        finished.sort { $0.0 < $1.0 }
+        var stop: (RunStatus, String?)?
+        for (_, branchResults, flow, variables) in finished {
+            results.append(contentsOf: branchResults)
+            rc.variables.merge(variables) { _, new in new }
+            if stop == nil, case .stop(let status, let message) = flow { stop = (status, message) }
+        }
+        if let stop { throw ChildStopped(status: stop.0, message: stop.1) }
+        return nil
     }
 
     private func perform(_ kind: StepKind, _ rc: inout RunContext) async throws -> String? {
@@ -328,10 +457,10 @@ final class AutomationEngine: ObservableObject {
             let output: String
             switch language {
             case .shell:
-                output = try await runTool("/bin/zsh", ["-c", source, "kriya", rc.text], rc, environment: ["KRIYA_INPUT": rc.text])
+                output = try await runTool("/bin/zsh", ["-c", source, "kriya", rc.text], rc, environment: Self.environment(for: rc))
             case .appleScript:
                 let script = source.contains("on run") ? source : "on run argv\n\(source)\nend run"
-                output = try await runTool("/usr/bin/osascript", ["-e", script, rc.text], rc, environment: ["KRIYA_INPUT": rc.text])
+                output = try await runTool("/usr/bin/osascript", ["-e", script, rc.text], rc, environment: Self.environment(for: rc))
             }
             return output.isEmpty ? nil : String(output.prefix(200))
 
@@ -367,7 +496,7 @@ final class AutomationEngine: ObservableObject {
             return nil
 
         case .notify(let message):
-            toast.show(message)
+            toast.show(render(message, rc))
             return nil
 
         case .textTransform(let ops):
@@ -375,7 +504,7 @@ final class AutomationEngine: ObservableObject {
             return nil
 
         case .copyText(let template):
-            let text = render(template, selection: rc.text)
+            let text = render(template, rc)
             await MainActor.run {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
@@ -384,7 +513,7 @@ final class AutomationEngine: ObservableObject {
 
         case .insertText(let template):
             guard AXIsProcessTrusted() else { throw WorkflowError("Accessibility permission is needed to type text.") }
-            let text = render(template, selection: rc.text)
+            let text = render(template, rc)
             let injector = context.keyboard.injector
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 DispatchQueue.global(qos: .userInitiated).async {
@@ -393,7 +522,128 @@ final class AutomationEngine: ObservableObject {
                 }
             }
             return nil
+
+        case .setVariable(let name, let template):
+            rc.variables[name] = render(template, rc)
+            return nil
+
+        case .repeat, .parallel:
+            // Carried out by `runSteps`, which has the results to add to.
+            return nil
+
+        case .confirm(let message):
+            let text = render(message, rc)
+            guard await Self.askToContinue(text) else { throw WorkflowDeclined() }
+            return nil
+
+        case .ask(let prompt, let variable):
+            guard let answer = await Self.askForText(render(prompt, rc)) else { throw WorkflowDeclined() }
+            rc.variables[variable] = answer
+            return nil
+
+        case .choose(let prompt, let options, let variable):
+            guard let choice = await Self.chooseFromMenu(render(prompt, rc), options: options.map { render($0, rc) }) else { throw WorkflowDeclined() }
+            rc.variables[variable] = choice
+            return nil
+
+        case .javaScript(let source):
+            let output = try await Self.runJavaScript(source, input: rc.text, variables: rc.variables, seconds: rc.remaining)
+            rc.text = output.text
+            rc.variables = output.variables
+            return output.text.isEmpty ? nil : String(output.text.prefix(200))
         }
+    }
+
+    // MARK: Asking the person
+
+    @MainActor
+    private static func frontAlert(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal()
+    }
+
+    private static func askToContinue(_ message: String) async -> Bool {
+        await MainActor.run {
+            let alert = NSAlert()
+            alert.messageText = message
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Stop")
+            return frontAlert(alert) == .alertFirstButtonReturn
+        }
+    }
+
+    private static func askForText(_ prompt: String) async -> String? {
+        await MainActor.run {
+            let alert = NSAlert()
+            alert.messageText = prompt
+            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+            alert.accessoryView = field
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            alert.window.initialFirstResponder = field
+            return frontAlert(alert) == .alertFirstButtonReturn ? field.stringValue : nil
+        }
+    }
+
+    /// A menu at the pointer. Nil if it is dismissed without a choice.
+    private static func chooseFromMenu(_ title: String, options: [String]) async -> String? {
+        await MainActor.run {
+            let menu = NSMenu(title: title)
+            menu.autoenablesItems = false
+            if !title.isEmpty {
+                let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+                menu.addItem(.separator())
+            }
+            let chosen = MenuChoice()
+            for (index, option) in options.enumerated() {
+                let item = NSMenuItem(title: option, action: #selector(MenuChoice.pick(_:)), keyEquivalent: "")
+                item.target = chosen
+                item.tag = index
+                menu.addItem(item)
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            return chosen.index.flatMap { options.indices.contains($0) ? options[$0] : nil }
+        }
+    }
+
+    /// Runs JavaScript with `input` and `vars`. The script has no way to reach files, the network or other apps. It is run on
+    /// its own thread and given up on if it takes longer than `seconds`.
+    private static func runJavaScript(_ source: String, input: String, variables: [String: String], seconds: TimeInterval) async throws -> (text: String, variables: [String: String]) {
+        try await withCheckedThrowingContinuation { continuation in
+            let box = JavaScriptRun()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let context = JSContext()
+                var failure: String?
+                context?.exceptionHandler = { _, exception in failure = exception?.toString() }
+                context?.setObject(input, forKeyedSubscript: "input" as NSString)
+                context?.setObject(variables, forKeyedSubscript: "vars" as NSString)
+                let value = context?.evaluateScript(source)
+                if let failure {
+                    box.finish(.failure(WorkflowError("JavaScript: \(failure)")), continuation)
+                    return
+                }
+                var text = input
+                if let value, !value.isUndefined, !value.isNull { text = value.toString() ?? input }
+                var next = variables
+                if let object = context?.objectForKeyedSubscript("vars")?.toDictionary() as? [String: Any] {
+                    for (key, any) in object where any is String || any is NSNumber { next[key] = "\(any)" }
+                }
+                box.finish(.success((text, next)), continuation)
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + max(1, seconds)) {
+                box.finish(.failure(WorkflowError("The JavaScript ran too long and was given up on.")), continuation)
+            }
+        }
+    }
+
+    /// What a script sees: the workflow's text as KRIYA_INPUT and each variable as KRIYA_VAR_<NAME>.
+    private static func environment(for rc: RunContext) -> [String: String] {
+        var environment = ["KRIYA_INPUT": rc.text]
+        for (name, value) in rc.variables { environment["KRIYA_VAR_" + name.uppercased()] = value }
+        return environment
     }
 
     /// Waits, in short slices, so a stop takes effect within a fraction of a second.
@@ -410,6 +660,13 @@ final class AutomationEngine: ObservableObject {
         var ctx = SnippetInserter.context(prompts: [])
         ctx.selection = selection
         return renderSnippet(body: template, context: ctx).text
+    }
+
+    /// Puts the workflow's variables into the text first, then the snippet placeholders ({selection}, {date}, …).
+    private func render(_ template: String, _ rc: RunContext) -> String {
+        let names = Array(rc.variables.keys)
+        let withVariables = workflowRenderVariables(template: template, names: names, values: names.map { rc.variables[$0] ?? "" })
+        return render(withVariables, selection: rc.text)
     }
 
     /// The shared action engine does what it can; anything that runs a program goes through the tool runner so it can be
@@ -473,5 +730,26 @@ final class AutomationEngine: ObservableObject {
         case .openSystemSettings:
             await MainActor.run { _ = NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:")!) }
         }
+    }
+}
+
+/// Remembers which item of a pop-up menu was picked.
+private final class MenuChoice: NSObject {
+    var index: Int?
+    @objc func pick(_ sender: NSMenuItem) { index = sender.tag }
+}
+
+/// Lets a JavaScript run and its time limit race, and answers only once.
+private final class JavaScriptRun {
+    private let lock = NSLock()
+    private var done = false
+
+    func finish(_ result: Result<(text: String, variables: [String: String]), Error>, _ continuation: CheckedContinuation<(text: String, variables: [String: String]), Error>) {
+        lock.lock()
+        let first = !done
+        done = true
+        lock.unlock()
+        guard first else { return }
+        continuation.resume(with: result)
     }
 }
