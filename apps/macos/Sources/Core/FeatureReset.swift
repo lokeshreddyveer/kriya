@@ -25,7 +25,7 @@ enum FeatureReset {
         ResettableArea(id: "focus", title: "Focus sessions", detail: "Focus session settings and state.", keys: ["focusSession.config.v1", "focusSession.state.v1"]),
         ResettableArea(id: "intelligence", title: "Apple Intelligence", detail: "Its settings, including web research.", keys: ["intelligenceSettings.v1"]),
         ResettableArea(id: "ai", title: "AI providers", detail: "Provider settings, which part uses which, tool approvals, usage counts and AI history. Keys stay in the Keychain: remove them in Apple Intelligence settings.",
-                       keys: ["ai.settings.v1", "ai.activity.v1", "ai.ledger.v1"]),
+                       keys: ["ai.settings.v1", "ai.activity.v1", "ai.ledger.v1", "mcpClients.v1", "mcpServer.enabled", "mcpServer.port"]),
         ResettableArea(id: "activity", title: "Activity and upgrade history", detail: "The activity log and app upgrade history.", keys: ["auditLog.v1", "appUpgradeHistory.v1"]),
     ]
 

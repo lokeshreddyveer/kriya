@@ -75,6 +75,7 @@ final class AppEnvironment {
     let links: LinkRouter
     let bridge: BrowserBridge
     let safariInbox: SafariInboxWatcher
+    let clipboardStore: ClipboardStore
     let capture: ScreenCaptureService
     let intelligence: IntelligenceCoordinator
     let timeline = PerformanceTimeline()
@@ -224,6 +225,7 @@ final class AppEnvironment {
         self.links = links
         self.bridge = bridge
         self.safariInbox = safariInbox
+        self.clipboardStore = clipStore
         self.capture = capture
         self.intelligence = intelligence
         self.workspaceStore = workspaceStore
@@ -342,8 +344,10 @@ final class AppEnvironment {
         systemMonitor.start()
         appAudio.start()
         soundRules.start()
+        configureAITools()
         MIDITriggerRunner.shared.start()
         safariInbox.start()
+        MCPHTTPServer.shared.start()
         LocationAudioRunner.shared.start()
         focusSession.start()
         worldClock.meetings = launcherTools.meetings
@@ -559,5 +563,49 @@ extension EnvironmentValues {
     var paths: AppPaths {
         get { self[PathsKey.self] }
         set { self[PathsKey.self] = newValue }
+    }
+}
+
+
+extension AppEnvironment {
+    /// Connects the tools an AI may ask for to the parts of Kriya that do the work. A tool whose part is not connected here says it
+    /// is not available.
+    fileprivate func configureAITools() {
+        let clipStore = clipboardStore
+        let engine = AIToolEngine.shared
+        let host = LiveToolHost()
+        engine.host = host
+        engine.extraTools = { MCPClientManager.shared.tools }
+        engine.extraHost = { tool, arguments in try await MCPClientManager.shared.callTool(exposedName: tool.name, arguments: arguments) }
+        host.searchClipboard = { [weak clipStore] query, limit in
+            DispatchQueue.main.sync {
+                (clipStore?.search(query, limit: UInt32(limit)) ?? []).filter { !$0.sensitive && ($0.kind == .text || $0.kind == .url) }
+                    .map { String($0.preview.prefix(120)) }
+            }
+        }
+        host.isExcludedApp = { [weak clipStore] id in DispatchQueue.main.sync { clipStore?.config.excludedAppIds.contains(id) ?? false } }
+        host.describeWorkflow = { [weak automation] id in
+            DispatchQueue.main.sync {
+                guard let workflow = automation?.store.workflow(id) else { return nil }
+                let steps = workflow.steps.enumerated().map { "\($0.offset + 1). \(workflowStepSummary(step: $0.element))" }.joined(separator: "\n")
+                return "\(workflow.name) — \(workflow.trigger.title)\(workflow.enabled ? "" : " (switched off)")\n\(steps)"
+            }
+        }
+        host.diagnostics = { [weak permissions] in
+            DispatchQueue.main.sync {
+                let list = Permission.allCases.map { "\($0.title): \(permissions?.status($0) ?? .notDetermined)" }.joined(separator: "\n")
+                return "Kriya \(SystemInfo.appVersion), macOS \(SystemInfo.osVersion), \(SystemInfo.architecture)\n\(list)"
+            }
+        }
+        host.toggleSoundMode = { [weak self] name in
+            DispatchQueue.main.sync {
+                guard let runner = self?.soundRules, let mode = runner.modes.first(where: { $0.name.lowercased() == name.lowercased() }) else { return nil }
+                let wasOn = runner.activeModeID == mode.id
+                runner.toggle(mode)
+                return wasOn ? "Turned \(mode.name) off." : "Turned \(mode.name) on."
+            }
+        }
+        host.openLauncher = { [weak keyboard] query in keyboard?.palette.show(prefill: query) }
+        host.runWorkflow = { [weak automation] id in automation?.fire(id, source: "AI tool") }
     }
 }
