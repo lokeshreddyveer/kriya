@@ -99,5 +99,27 @@
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/lokeshreddyveer/kriya/releases/download/v0.5.0/Kriya-0.5.0.dmg" length="35897747" type="application/octet-stream" sparkle:edSignature="x5Q560ytin0LJvgYcn+dlXUvf7BMGPI92jKD6lE3iy8q0pp7BTaI9cJWJPDubJctxrQxTwrdKghMuniBPiT8AA=="/>
     </item>
+    <item>
+      <title>Kriya 0.6.0</title>
+      <pubDate>Fri, 23 Oct 2026 23:05:00 -0000</pubDate>
+      <sparkle:version>26</sparkle:version>
+      <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h3>New in Kriya 0.6.0</h3>
+<ul>
+<li><b>Launcher:</b> opens at the top, middle, corners or bottom (and grows upward from the bottom); search history, browser tabs, API commands, 1Password, Get Info and Share; "why was this shown"; web search stays visible.</li>
+<li><b>AI (bring your own key):</b> OpenAI, Anthropic, Gemini and local servers with keys kept in your Keychain, budgets, redaction and approvals; a local search index with <code>?</code> search; MCP server and client; optional Wikipedia research.</li>
+<li><b>Workflows:</b> variables, loops, retries, parallel steps, JavaScript, templates, a step debugger, version history and an emergency stop.</li>
+<li><b>Recording:</b> a new screen recorder with system audio, microphone, HDR, pause, camera overlay and key display; menu capture, trim and subject cutout.</li>
+<li><b>Sound:</b> modes, device history, Bluetooth connect, location-based output, MIDI triggers.</li>
+<li><b>Windows and displays:</b> layout history and import/export, workspace undo, DDC brightness and input control.</li>
+<li><b>Files:</b> Finder tags, comments and Share; named shelves with search and expiry; iCloud clipboard sync; notes with tags, encryption and history.</li>
+<li><b>Apps:</b> Homebrew installs no longer hang (timeout, stall detection, Run in Terminal); Check Now and Stop for updates; update history.</li>
+<li><b>Browser:</b> save a page as Markdown or PDF; a Safari Web Extension; signed extension bundles.</li>
+<li><b>Also:</b> Open/Save dialog folder search, local-only mode, an audit log, a permission matrix and accessibility options.</li>
+</ul>
+<p>Many of these are new and have not yet been tried on every Mac. Tell us what misbehaves.</p>]]></description>
+      <enclosure url="https://github.com/lokeshreddyveer/kriya/releases/download/v0.6.0/Kriya-0.6.0.dmg" length="43113258" type="application/octet-stream" sparkle:edSignature="mQb8fiEt/uvMKdz7OrtEsj7NA1OOT8GTgNALTfkb/bu6sUy03eBfI9sRf9nSveJfH24koy6PnMcfYZqrmlkfDQ=="/>
+    </item>
   </channel>
 </rss>
