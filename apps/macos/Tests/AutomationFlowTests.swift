@@ -106,6 +106,106 @@ final class AutomationFlowTests: XCTestCase {
         XCTAssertEqual(workflowMacroMenu(workflows: [general, specific], frontApp: "com.apple.Notes").map(\.name), ["Tools"])
     }
 
+    private func waitUntil(_ timeout: TimeInterval = 5, _ condition: @MainActor () -> Bool) async -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        while Date() < end {
+            if await MainActor.run(body: condition) { return true }
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+        return await MainActor.run(body: condition)
+    }
+
+    func testTheDebuggerWaitsBeforeEachStepShowsVariablesAndCanBeStopped() async throws {
+        let (world, engine) = try make()
+        defer { world.cleanUp() }
+        let first = engine.store.newStep(.setVariable(name: "a", template: "1"))
+        let second = engine.store.newStep(.setVariable(name: "b", template: "2"))
+        let third = engine.store.newStep(.setVariable(name: "c", template: "3"))
+        let w = try save(engine, [first, second, third])
+        let debugger = WorkflowDebugger(stepping: true)
+        let finished = expectation(description: "the run ended")
+        var status: RunStatus?
+        Task {
+            let run = await engine.execute(w, source: "Test", input: "", depth: 0, test: true, dryRun: false, approvedForTest: true, progress: nil, debugger: debugger)
+            status = run.status
+            finished.fulfill()
+        }
+        let waitingAtFirst = await waitUntil { debugger.isWaiting }
+        XCTAssertTrue(waitingAtFirst, "it waits before the first step")
+        let startedWithNothing = await MainActor.run { debugger.variables.isEmpty }
+        XCTAssertTrue(startedWithNothing)
+        debugger.step()
+        let sawA = await waitUntil { debugger.isWaiting && debugger.variables.contains { $0.name == "a" && $0.value == "1" } }
+        XCTAssertTrue(sawA, "after one step the variable is there, and it waits again")
+        debugger.stop()
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertEqual(status, .cancelled)
+    }
+
+    func testABreakpointLetsTheRunGoOnUntilItIsReached() async throws {
+        let (world, engine) = try make()
+        defer { world.cleanUp() }
+        let steps = ["a", "b", "c"].map { engine.store.newStep(.setVariable(name: $0, template: $0.uppercased())) }
+        let w = try save(engine, steps)
+        let debugger = WorkflowDebugger(stepping: false, breakpoints: [steps[2].id])
+        let finished = expectation(description: "the run ended")
+        Task {
+            _ = await engine.execute(w, source: "Test", input: "", depth: 0, test: true, dryRun: false, approvedForTest: true, progress: nil, debugger: debugger)
+            finished.fulfill()
+        }
+        let atThird = await waitUntil { debugger.isWaiting }
+        XCTAssertTrue(atThird)
+        let names = await MainActor.run { debugger.variables.map(\.name) }
+        XCTAssertEqual(names, ["a", "b"], "the first two ran without stopping")
+        debugger.resume()
+        await fulfillment(of: [finished], timeout: 5)
+    }
+
+    func testVariablesFillAnAddressToOpenAndAreEncoded() throws {
+        let (world, engine) = try make()
+        defer { world.cleanUp() }
+        _ = engine
+        var rc = AutomationEngine.RunContext(text: "", handle: RunHandle(workflowID: "w"), deadline: Date().addingTimeInterval(5), limitSeconds: 5, depth: 0, dryRun: false, test: true, approvedForTest: true)
+        rc.variables = ["q": "a&b c/d"]
+        let replaced = AutomationEngine.substitutingVariables(in: .openUrl(url: "https://duckduckgo.com/?q={{q}}"), rc)
+        XCTAssertEqual(replaced, .openUrl(url: "https://duckduckgo.com/?q=a%26b%20c%2Fd"))
+        XCTAssertEqual(AutomationEngine.substitutingVariables(in: .openUrl(url: "https://example.com"), rc), .openUrl(url: "https://example.com"))
+    }
+
+    func testTemplatesBecomeNewWorkflowsWithTheirOwnIDs() throws {
+        let world = try TestWorld()
+        defer { world.cleanUp() }
+        let store = WorkflowStore(core: world.core)
+        let templates = workflowTemplates()
+        XCTAssertGreaterThanOrEqual(templates.count, 5)
+        for template in templates {
+            let first = store.workflow(from: template)
+            let second = store.workflow(from: template)
+            XCTAssertNotEqual(first.id, second.id)
+            XCTAssertTrue(Set(first.steps.map(\.id)).isDisjoint(with: Set(second.steps.map(\.id))))
+            XCTAssertFalse(first.enabled)
+            XCTAssertNil(workflowProblem(workflow: first), template.title)
+        }
+    }
+
+    func testAPackageIsDescribedBeforeItIsImported() throws {
+        let world = try TestWorld()
+        defer { world.cleanUp() }
+        let store = WorkflowStore(core: world.core)
+        var w = store.newWorkflow()
+        w.name = "Calls a helper"
+        w.steps = [store.newStep(.runWorkflow(workflowId: "helper")), store.newStep(.script(language: .shell, source: "ls"))]
+        let saved = try XCTUnwrap(store.save(w))
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-pkg-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try store.export([saved.id], to: file)
+        let report = store.report(for: file)
+        XCTAssertEqual(report.workflows, ["Calls a helper"])
+        XCTAssertEqual(report.missingWorkflows, ["helper"])
+        XCTAssertFalse(report.riskySteps.isEmpty)
+        XCTAssertFalse(store.report(for: FileManager.default.temporaryDirectory.appendingPathComponent("nothing-here.json")).problems.isEmpty)
+    }
+
     func testVariablesFillInTextAndUnknownNamesStay() {
         XCTAssertEqual(workflowRenderVariables(template: "Hi {{who}} {{missing}}", names: ["who"], values: ["Ann"]), "Hi Ann {{missing}}")
     }

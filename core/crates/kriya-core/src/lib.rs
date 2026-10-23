@@ -103,10 +103,11 @@ pub use windows::{
     ShortcutBinding, SwitcherItem, UnplacedPolicy, WindowConfig, WindowLayout,
 };
 pub use workflow::{
-    ConditionGroup, ConditionItem, ConditionKind, ConditionMode, ConditionTemplate, Corner, Edge,
-    EvalContext, MacroGroup, MacroItem, OnError, Risk, RunStatus, StepKind, StepResult, StepRisk,
-    StepStatus, StepTemplate, SystemOp, TrackpadGesture, TriggerTemplate, Workflow, WorkflowRun,
-    WorkflowStep, WorkflowTrigger,
+    ConditionGroup, ConditionItem, ConditionKind, ConditionMode, ConditionTemplate, Corner,
+    DependencyKind, Edge, EvalContext, MacroGroup, MacroItem, OnError, PackageReport, Risk,
+    RunStatus, StepKind, StepResult, StepRisk, StepStatus, StepTemplate, SystemOp, TrackpadGesture,
+    TriggerTemplate, Workflow, WorkflowDependency, WorkflowRun, WorkflowStep, WorkflowTemplate,
+    WorkflowTrigger,
 };
 pub use workspace::{FavoriteWindow, Workspace, WorkspaceConfig};
 
@@ -997,6 +998,27 @@ pub fn workflow_render_variables(
     values: Vec<String>,
 ) -> String {
     workflow::render_variables(&template, &names, &values)
+}
+
+/// Ready-made workflows to start from.
+#[uniffi::export]
+pub fn workflow_templates() -> Vec<WorkflowTemplate> {
+    workflow::templates()
+}
+
+/// What a workflow needs from outside itself.
+#[uniffi::export]
+pub fn workflow_dependencies(
+    workflow: Workflow,
+    known_ids: Vec<String>,
+) -> Vec<WorkflowDependency> {
+    workflow::dependencies(&workflow, &known_ids)
+}
+
+/// What importing a package would bring in, without importing it.
+#[uniffi::export]
+pub fn workflow_package_report(json: String, existing_ids: Vec<String>) -> PackageReport {
+    workflow::package_report(&json, &existing_ids)
 }
 
 /// The macro menu for the app in front: grouped workflows, this app's first.

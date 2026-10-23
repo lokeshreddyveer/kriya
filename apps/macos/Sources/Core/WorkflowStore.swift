@@ -126,6 +126,32 @@ final class WorkflowStore: ObservableObject {
         )
     }
 
+    /// A new workflow from a template: its own id and its own step ids, switched off.
+    func workflow(from template: WorkflowTemplate) -> Workflow {
+        var w = template.workflow
+        w.id = UUID().uuidString
+        w.enabled = false
+        w.authorizedFingerprint = nil
+        func fresh(_ steps: [WorkflowStep]) -> [WorkflowStep] {
+            steps.map { step in
+                var next = step
+                next.id = UUID().uuidString
+                next.kind = Self.withFreshIDs(step.kind)
+                return next
+            }
+        }
+        w.steps = fresh(w.steps)
+        return w
+    }
+
+    /// What importing this file would bring in, without importing it.
+    func report(for url: URL) -> PackageReport {
+        guard let data = try? Data(contentsOf: url), let json = String(data: data, encoding: .utf8) else {
+            return PackageReport(workflows: [], riskySteps: [], missingWorkflows: [], problems: ["The file could not be read."])
+        }
+        return workflowPackageReport(json: json, existingIds: workflows.map(\.id))
+    }
+
     func newStep(_ kind: StepKind) -> WorkflowStep {
         WorkflowStep(id: UUID().uuidString, label: nil, when: nil, onError: .stop, kind: Self.withFreshIDs(kind))
     }

@@ -142,13 +142,13 @@ final class AutomationEngine: ObservableObject {
     /// Starts a workflow. `input` is the text it works on (a selection, file paths, what was copied).
     func fire(
         _ workflowID: String, source: String, input: String? = nil, test: Bool = false, dryRun: Bool = false, approvedForTest: Bool = false,
-        progress: ((StepResult) -> Void)? = nil, completion: ((WorkflowRun) -> Void)? = nil
+        progress: ((StepResult) -> Void)? = nil, completion: ((WorkflowRun) -> Void)? = nil, debugger: WorkflowDebugger? = nil
     ) {
         guard let workflow = store.workflow(workflowID) else { return }
         if !workflow.enabled && !test { return }
         Task { [weak self] in
             guard let self else { return }
-            let run = await execute(workflow, source: source, input: input ?? "", depth: 0, test: test, dryRun: dryRun, approvedForTest: approvedForTest, progress: progress)
+            let run = await execute(workflow, source: source, input: input ?? "", depth: 0, test: test, dryRun: dryRun, approvedForTest: approvedForTest, progress: progress, debugger: debugger)
             await MainActor.run { completion?(run) }
         }
     }
@@ -177,7 +177,7 @@ final class AutomationEngine: ObservableObject {
 
     func execute(
         _ workflow: Workflow, source: String, input: String, depth: Int, test: Bool, dryRun: Bool, approvedForTest: Bool,
-        progress: ((StepResult) -> Void)?
+        progress: ((StepResult) -> Void)?, debugger: WorkflowDebugger? = nil
     ) async -> WorkflowRun {
         let started = SystemInfo.nowSeconds
         let clock = DispatchTime.now()
@@ -224,7 +224,7 @@ final class AutomationEngine: ObservableObject {
         }
 
         // 2. The steps.
-        var rc = RunContext(text: input, handle: handle, deadline: Date().addingTimeInterval(TimeInterval(workflow.timeoutSeconds)), limitSeconds: Int(workflow.timeoutSeconds), depth: depth, dryRun: dryRun, test: test, approvedForTest: approvedForTest)
+        var rc = RunContext(text: input, handle: handle, deadline: Date().addingTimeInterval(TimeInterval(workflow.timeoutSeconds)), limitSeconds: Int(workflow.timeoutSeconds), depth: depth, dryRun: dryRun, test: test, approvedForTest: approvedForTest, debugger: debugger)
         var results: [StepResult] = []
         var status = RunStatus.succeeded
         var failure: String?
@@ -304,6 +304,8 @@ final class AutomationEngine: ObservableObject {
         let dryRun: Bool
         let test: Bool
         let approvedForTest: Bool
+        /// Set when a person is watching the run step by step.
+        var debugger: WorkflowDebugger?
         var remaining: TimeInterval { max(1, deadline.timeIntervalSinceNow) }
     }
 
@@ -341,6 +343,10 @@ final class AutomationEngine: ObservableObject {
                 let inner = step.kind.children
                 if !inner.isEmpty { _ = await runSteps(inner, prefix: title + " › ", rc: &rc, results: &results, progress: progress) }
                 continue
+            }
+            if let debugger = rc.debugger, !(await debugger.beforeStep(id: step.id, title: title, variables: rc.variables, text: rc.text)) {
+                record(.cancelled, "Stopped in the debugger.")
+                return .stop(.cancelled, "Stopped in the debugger.")
             }
             var attempt = 0
             while true {
@@ -413,6 +419,7 @@ final class AutomationEngine: ObservableObject {
             for (index, branch) in branches.enumerated() {
                 group.addTask { [self] in
                     var branchContext = snapshot
+                    branchContext.debugger = nil
                     var branchResults: [StepResult] = []
                     let flow = await runSteps([branch], prefix: "\(title) › ", rc: &branchContext, results: &branchResults, progress: progress)
                     return (index, branchResults, flow, branchContext.variables)
@@ -640,6 +647,16 @@ final class AutomationEngine: ObservableObject {
         }
     }
 
+    /// `{{name}}` in an address to open becomes the variable's value, encoded so it stays one part of the address.
+    static func substitutingVariables(in action: Action, _ rc: RunContext) -> Action {
+        guard case .openUrl(let url) = action, url.contains("{{") else { return action }
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&+=#?/;:@$,")
+        let names = Array(rc.variables.keys)
+        let values = names.map { (rc.variables[$0] ?? "").addingPercentEncoding(withAllowedCharacters: allowed) ?? "" }
+        return .openUrl(url: workflowRenderVariables(template: url, names: names, values: values))
+    }
+
     /// What a script sees: the workflow's text as KRIYA_INPUT and each variable as KRIYA_VAR_<NAME>.
     private static func environment(for rc: RunContext) -> [String: String] {
         var environment = ["KRIYA_INPUT": rc.text]
@@ -673,7 +690,7 @@ final class AutomationEngine: ObservableObject {
     /// The shared action engine does what it can; anything that runs a program goes through the tool runner so it can be
     /// stopped and held to the time limit.
     private func runAction(_ action: Action, _ rc: RunContext, _ context: ServiceContext) async throws {
-        for step in try planAction(action: action) {
+        for step in try planAction(action: Self.substitutingVariables(in: action, rc)) {
             switch step {
             case .delay(let ms):
                 try await pause(min(Double(ms) / 1000, rc.remaining), rc.handle)

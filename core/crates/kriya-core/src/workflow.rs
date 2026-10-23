@@ -1115,6 +1115,269 @@ fn renumber(steps: &[WorkflowStep], next: &mut usize) -> Vec<WorkflowStep> {
         .collect()
 }
 
+// ---- templates and dependencies --------------------------------------------------------------------------------------
+
+/// A ready-made workflow to start from. It is switched off and needs authorization like any other.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct WorkflowTemplate {
+    pub title: String,
+    pub description: String,
+    pub workflow: Workflow,
+}
+
+pub fn templates() -> Vec<WorkflowTemplate> {
+    let make = |title: &str, description: &str, steps: Vec<WorkflowStep>| WorkflowTemplate {
+        title: title.into(),
+        description: description.into(),
+        workflow: Workflow {
+            id: format!("template-{}", title.to_lowercase().replace(' ', "-")),
+            name: title.into(),
+            notes: Some(description.into()),
+            steps,
+            ..Workflow::default()
+        },
+    };
+    let step = WorkflowStep::new;
+    vec![
+        make(
+            "Search the web for what I type",
+            "Asks for words, then searches DuckDuckGo for them in your browser.",
+            vec![
+                step(
+                    "ask",
+                    StepKind::Ask {
+                        prompt: "Search the web for".into(),
+                        variable: "query".into(),
+                    },
+                ),
+                step(
+                    "open",
+                    StepKind::Action {
+                        action: Action::OpenUrl {
+                            url: "https://duckduckgo.com/?q={{query}}".into(),
+                        },
+                    },
+                ),
+            ],
+        ),
+        make(
+            "Clean up the selected text",
+            "Trims it, squeezes repeated spaces and drops blank lines, then copies the result.",
+            vec![
+                step(
+                    "clean",
+                    StepKind::TextTransform {
+                        ops: vec![
+                            TextOp::Trim,
+                            TextOp::TrimLines,
+                            TextOp::CollapseSpaces,
+                            TextOp::RemoveBlankLines,
+                        ],
+                    },
+                ),
+                step(
+                    "copy",
+                    StepKind::CopyText {
+                        template: "{selection}".into(),
+                    },
+                ),
+                step(
+                    "say",
+                    StepKind::Notify {
+                        message: "Cleaned text copied".into(),
+                    },
+                ),
+            ],
+        ),
+        make(
+            "Ask before locking the screen",
+            "Shows a question first, so a stray shortcut cannot lock the screen.",
+            vec![
+                step(
+                    "ask",
+                    StepKind::Confirm {
+                        message: "Lock the screen now?".into(),
+                    },
+                ),
+                step(
+                    "lock",
+                    StepKind::System {
+                        op: SystemOp::LockScreen,
+                        value: 0,
+                    },
+                ),
+            ],
+        ),
+        make(
+            "Count to three",
+            "A loop that shows {{loop}} each round: a starting point for your own loops.",
+            vec![step(
+                "loop",
+                StepKind::Repeat {
+                    times: 3,
+                    steps: vec![
+                        step(
+                            "say",
+                            StepKind::Notify {
+                                message: "Round {{loop}}".into(),
+                            },
+                        ),
+                        step("wait", StepKind::Delay { ms: 700 }),
+                    ],
+                },
+            )],
+        ),
+        make(
+            "Pick a name, then greet it",
+            "Offers a small menu at the pointer and shows the choice.",
+            vec![
+                step(
+                    "pick",
+                    StepKind::Choose {
+                        prompt: "Who?".into(),
+                        options: vec!["Ann".into(), "Ben".into(), "Chen".into()],
+                        variable: "name".into(),
+                    },
+                ),
+                step(
+                    "greet",
+                    StepKind::Notify {
+                        message: "Hello, {{name}}".into(),
+                    },
+                ),
+            ],
+        ),
+        make(
+            "Retry a flaky shell command",
+            "Runs a command and tries again up to three times if it fails. Edit the command.",
+            vec![{
+                let mut run = step(
+                    "run",
+                    StepKind::Script {
+                        language: FinderScript::Shell,
+                        source: "echo hello".into(),
+                    },
+                );
+                run.retries = 3;
+                run.retry_delay_ms = 2000;
+                run.timeout_seconds = Some(30);
+                run
+            }],
+        ),
+    ]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum DependencyKind {
+    Workflow,
+    App,
+    Shortcut,
+    Command,
+}
+
+/// Something a workflow needs outside itself.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct WorkflowDependency {
+    pub kind: DependencyKind,
+    /// A workflow id, an app identifier, a Shortcut name or a command name.
+    pub name: String,
+    /// Only decided for workflows; the caller checks whether an app, Shortcut or command exists.
+    pub missing: bool,
+}
+
+/// What a workflow needs: other workflows (and whether they exist among `known_ids`), apps it quits, hides or brings forward,
+/// Shortcuts it runs and commands it calls, each once, inside loops too.
+pub fn dependencies(w: &Workflow, known_ids: &[String]) -> Vec<WorkflowDependency> {
+    fn add(out: &mut Vec<WorkflowDependency>, kind: DependencyKind, name: &str, missing: bool) {
+        if !name.is_empty() && !out.iter().any(|d| d.kind == kind && d.name == name) {
+            out.push(WorkflowDependency {
+                kind,
+                name: name.to_string(),
+                missing,
+            });
+        }
+    }
+    fn walk(steps: &[WorkflowStep], known: &[String], out: &mut Vec<WorkflowDependency>) {
+        for s in steps {
+            match &s.kind {
+                StepKind::RunWorkflow { workflow_id } => add(
+                    out,
+                    DependencyKind::Workflow,
+                    workflow_id,
+                    !known.contains(workflow_id),
+                ),
+                StepKind::QuitApp { app_id, .. }
+                | StepKind::HideApp { app_id }
+                | StepKind::ActivateApp { app_id } => add(out, DependencyKind::App, app_id, false),
+                StepKind::Action { action } => match action {
+                    Action::RunShortcut { name } => add(out, DependencyKind::Shortcut, name, false),
+                    Action::OpenApplication { target } => {
+                        add(out, DependencyKind::App, target, false)
+                    }
+                    Action::Builtin { command } => {
+                        add(out, DependencyKind::Command, command, false)
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            walk(s.kind.children(), known, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(&w.steps, known_ids, &mut out);
+    out
+}
+
+/// What a package holds, found without importing anything.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PackageReport {
+    pub workflows: Vec<String>,
+    /// Steps that run code or control other apps or the system, as "Workflow: step".
+    pub risky_steps: Vec<String>,
+    /// Workflows started from inside the package that are in neither the package nor `existing_ids`.
+    pub missing_workflows: Vec<String>,
+    /// Problems that would stop the import, in words.
+    pub problems: Vec<String>,
+}
+
+/// Reads a package and says what importing it would bring in, without changing anything.
+pub fn package_report(json: &str, existing_ids: &[String]) -> PackageReport {
+    let mut report = PackageReport {
+        workflows: Vec::new(),
+        risky_steps: Vec::new(),
+        missing_workflows: Vec::new(),
+        problems: Vec::new(),
+    };
+    match import_package(json, existing_ids, 0) {
+        Err(e) => report.problems.push(e.to_string()),
+        Ok(imported) => {
+            let ids: Vec<String> = imported
+                .iter()
+                .map(|w| w.id.clone())
+                .chain(existing_ids.iter().cloned())
+                .collect();
+            for w in &imported {
+                report.workflows.push(w.name.clone());
+                for r in risks(w) {
+                    report
+                        .risky_steps
+                        .push(format!("{}: {}", w.name, r.summary));
+                }
+                for d in dependencies(w, &ids) {
+                    if d.kind == DependencyKind::Workflow
+                        && d.missing
+                        && !report.missing_workflows.contains(&d.name)
+                    {
+                        report.missing_workflows.push(d.name);
+                    }
+                }
+            }
+        }
+    }
+    report
+}
+
 // ---- history ---------------------------------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
@@ -2701,6 +2964,141 @@ mod tests {
         assert_eq!(other.len(), 1, "app-specific macros are hidden elsewhere");
         assert_eq!(other[0].name, "View");
         assert!(macro_menu(&all, None).iter().all(|g| !g.app_specific));
+    }
+
+    #[test]
+    fn every_template_is_valid_off_and_unauthorized() {
+        let all = templates();
+        assert!(all.len() >= 5);
+        let mut ids = HashSet::new();
+        for t in &all {
+            let mut w = t.workflow.clone();
+            assert!(w.check().is_ok(), "{}: {:?}", t.title, w.check());
+            assert!(
+                !w.enabled && w.authorized_fingerprint.is_none(),
+                "{}",
+                t.title
+            );
+            assert!(ids.insert(w.id.clone()), "ids differ: {}", w.id);
+            assert!(!t.description.is_empty());
+            // Ask and Choose templates keep their variable names valid.
+            w.id = "x".into();
+        }
+        // The shell template needs authorization, the safe ones do not.
+        assert!(all.iter().any(|t| needs_authorization(&t.workflow)));
+        assert!(all.iter().any(|t| !needs_authorization(&t.workflow)));
+    }
+
+    #[test]
+    fn dependencies_list_what_a_workflow_needs_once_each() {
+        let mut w = workflow(
+            "a",
+            vec![
+                step(
+                    "1",
+                    StepKind::RunWorkflow {
+                        workflow_id: "b".into(),
+                    },
+                ),
+                step(
+                    "2",
+                    StepKind::RunWorkflow {
+                        workflow_id: "gone".into(),
+                    },
+                ),
+                step(
+                    "3",
+                    repeat(
+                        2,
+                        vec![
+                            step(
+                                "4",
+                                StepKind::RunWorkflow {
+                                    workflow_id: "b".into(),
+                                },
+                            ),
+                            step(
+                                "5",
+                                StepKind::QuitApp {
+                                    app_id: "com.x.App".into(),
+                                    force: false,
+                                },
+                            ),
+                            step(
+                                "6",
+                                StepKind::Action {
+                                    action: Action::RunShortcut {
+                                        name: "My Shortcut".into(),
+                                    },
+                                },
+                            ),
+                        ],
+                    ),
+                ),
+                step(
+                    "7",
+                    StepKind::Action {
+                        action: Action::Builtin {
+                            command: "window.left_half".into(),
+                        },
+                    },
+                ),
+            ],
+        );
+        w.id = "a".into();
+        let deps = dependencies(&w, &["a".to_string(), "b".to_string()]);
+        let names: Vec<_> = deps
+            .iter()
+            .map(|d| (d.kind, d.name.as_str(), d.missing))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                (DependencyKind::Workflow, "b", false),
+                (DependencyKind::Workflow, "gone", true),
+                (DependencyKind::App, "com.x.App", false),
+                (DependencyKind::Shortcut, "My Shortcut", false),
+                (DependencyKind::Command, "window.left_half", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_package_report_says_what_is_risky_and_what_is_missing() {
+        let caller = workflow(
+            "caller",
+            vec![
+                step(
+                    "1",
+                    StepKind::RunWorkflow {
+                        workflow_id: "helper".into(),
+                    },
+                ),
+                step(
+                    "2",
+                    StepKind::Script {
+                        language: FinderScript::Shell,
+                        source: "ls".into(),
+                    },
+                ),
+            ],
+        );
+        let json = export_package(&[caller], 1).unwrap();
+        let report = package_report(&json, &[]);
+        assert!(report.problems.is_empty());
+        assert_eq!(report.workflows, vec!["Workflow caller".to_string()]);
+        assert_eq!(report.missing_workflows, vec!["helper".to_string()]);
+        assert!(report
+            .risky_steps
+            .iter()
+            .any(|r| r.starts_with("Workflow caller:")));
+        // With the helper already installed, nothing is missing.
+        assert!(package_report(&json, &["helper".to_string()])
+            .missing_workflows
+            .is_empty());
+        let bad = package_report("not a package", &[]);
+        assert_eq!(bad.problems.len(), 1);
+        assert!(bad.workflows.is_empty());
     }
 
     #[test]

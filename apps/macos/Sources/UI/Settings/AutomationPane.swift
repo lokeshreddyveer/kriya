@@ -96,7 +96,13 @@ private struct WorkflowsTab: View {
             }
             Divider()
             HStack {
-                Button { editing = store.newWorkflow() } label: { Label("New Workflow", systemImage: "plus") }
+                Menu {
+                    Button("Empty Workflow") { editing = store.newWorkflow() }
+                    Divider()
+                    ForEach(Array(workflowTemplates().enumerated()), id: \.offset) { _, template in
+                        Button { editing = store.workflow(from: template) } label: { Text(template.title) }.help(template.description)
+                    }
+                } label: { Label("New Workflow", systemImage: "plus") }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
                 Menu {
                     Button("Duplicate") { selected.forEach(store.duplicate) }.disabled(selected.isEmpty)
                     Button("Import Workflows…") { importWorkflows() }
@@ -118,6 +124,28 @@ private struct WorkflowsTab: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Say what is in the file before anything is added.
+        let report = store.report(for: url)
+        let alert = NSAlert()
+        if !report.problems.isEmpty {
+            alert.alertStyle = .warning
+            alert.messageText = "This file cannot be imported"
+            alert.informativeText = report.problems.joined(separator: "\n")
+            alert.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            return
+        }
+        var lines = ["It holds \(report.workflows.count) workflow\(report.workflows.count == 1 ? "" : "s"): " + report.workflows.prefix(8).joined(separator: ", ")]
+        if !report.riskySteps.isEmpty { lines.append("\nSteps that run code or control other apps (you must authorize each workflow before it runs):\n" + report.riskySteps.prefix(8).map { "• " + $0 }.joined(separator: "\n")) }
+        if !report.missingWorkflows.isEmpty { lines.append("\nIt starts workflows that are not here: " + report.missingWorkflows.joined(separator: ", ")) }
+        lines.append("\nEverything comes in switched off.")
+        alert.messageText = "Import these workflows?"
+        alert.informativeText = lines.joined(separator: "\n")
+        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             let added = try store.importWorkflows(from: url)
             message = "Added \(added.count), switched off. Review and authorize each before turning it on."
@@ -297,7 +325,9 @@ struct WorkflowEditor: View {
                         Toggle("Allow it to start again while it is still running", isOn: $workflow.allowParallel)
                     }
                     if !risks.isEmpty { riskCard }
+                    dependenciesCard
                     testCard
+                    debugCard
                 }
                 .padding(20)
             }
@@ -354,6 +384,129 @@ struct WorkflowEditor: View {
                 } else {
                     Button("Save and Authorize…") { authorize() }.controlSize(.small).disabled(problem != nil)
                 }
+            }
+        }
+    }
+
+    // MARK: Dependencies
+
+    @State private var shortcutNames: Set<String>?
+
+    private var dependenciesCard: some View {
+        let deps = workflowDependencies(workflow: workflow, knownIds: store.workflows.map(\.id) + [workflow.id])
+        return Group {
+            if !deps.isEmpty {
+                card("What it depends on") {
+                    ForEach(deps, id: \.name) { dep in
+                        let missing = isMissing(dep)
+                        HStack(spacing: 8) {
+                            Image(systemName: missing ? "exclamationmark.triangle.fill" : "checkmark.circle").foregroundStyle(missing ? Theme.warn : Theme.ok)
+                            Text(dependencyTitle(dep))
+                            Spacer()
+                            Text(missing ? "Missing" : "Found").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("A missing item makes the step that uses it fail. Install the app, make the Shortcut, or import the workflow it starts.").font(.caption).foregroundStyle(.secondary)
+                }
+                .onAppear { loadShortcuts() }
+            }
+        }
+    }
+
+    private func dependencyTitle(_ dep: WorkflowDependency) -> String {
+        switch dep.kind {
+        case .workflow: return "Workflow: " + (store.workflow(dep.name)?.name ?? dep.name)
+        case .app: return "App: " + AppChoice.name(for: dep.name)
+        case .shortcut: return "Shortcut: " + dep.name
+        case .command: return "Command: " + KeyboardCommands.title(dep.name)
+        }
+    }
+
+    private func isMissing(_ dep: WorkflowDependency) -> Bool {
+        switch dep.kind {
+        case .workflow: return dep.missing
+        case .app: return dep.name.hasPrefix("/") ? !FileManager.default.fileExists(atPath: dep.name) : NSWorkspace.shared.urlForApplication(withBundleIdentifier: dep.name) == nil
+        case .shortcut: return shortcutNames.map { !$0.contains(dep.name) } ?? false
+        case .command: return !KeyboardCommands.all.contains { $0.command == dep.name } && !dep.name.hasPrefix("window.") && !dep.name.hasPrefix("workflow.")
+        }
+    }
+
+    private func loadShortcuts() {
+        guard shortcutNames == nil else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let output = (try? ToolRunner.run("/usr/bin/shortcuts", ["list"], timeout: 8)) ?? ""
+            let names = Set(output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) })
+            DispatchQueue.main.async { shortcutNames = names.isEmpty ? nil : names }
+        }
+    }
+
+    // MARK: Debugger
+
+    @StateObject private var debugger = WorkflowDebugger(stepping: true)
+    @State private var debugging = false
+    @State private var debugNote: String?
+
+    private func flatSteps(_ steps: [WorkflowStep], depth: Int = 0) -> [(step: WorkflowStep, depth: Int)] {
+        steps.flatMap { [(step: $0, depth: depth)] + flatSteps($0.kind.children, depth: depth + 1) }
+    }
+
+    private var debugCard: some View {
+        card("Debug it") {
+            HStack {
+                Button(debugging ? "Running…" : "Start Debugging") { startDebugging() }.disabled(debugging || problem != nil)
+                if debugging {
+                    Button("Step") { debugger.step() }.disabled(!debugger.isWaiting)
+                    Button("Continue") { debugger.resume() }.disabled(!debugger.isWaiting)
+                    Button("Stop", role: .destructive) { debugger.stop() }
+                }
+                Spacer()
+            }
+            Text("Runs it for real, one step at a time. Before each step it waits and shows the variables and the text as they are. Tick a step to make it a breakpoint, then Continue to run up to it.").font(.caption).foregroundStyle(.secondary)
+            ForEach(flatSteps(workflow.steps), id: \.step.id) { item in
+                HStack(spacing: 6) {
+                    Toggle("", isOn: Binding(get: { debugger.breakpoints.contains(item.step.id) }, set: { on in if on { debugger.breakpoints.insert(item.step.id) } else { debugger.breakpoints.remove(item.step.id) } }))
+                        .labelsHidden().toggleStyle(.checkbox).help("Breakpoint")
+                    Image(systemName: "arrow.right").opacity(debugger.isWaiting && debugger.stepTitle.hasSuffix(workflowStepSummary(step: item.step)) ? 1 : 0).foregroundStyle(Theme.accent)
+                    Text(workflowStepSummary(step: item.step)).font(.callout).lineLimit(1).padding(.leading, CGFloat(item.depth) * 14)
+                }
+            }
+            if debugger.isWaiting {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("About to run: \(debugger.stepTitle)").font(.callout.weight(.medium))
+                    Text("Variables").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    if debugger.variables.isEmpty { Text("None yet.").font(.caption).foregroundStyle(.secondary) }
+                    ForEach(debugger.variables, id: \.name) { Text("{{\($0.name)}} = \($0.value)").font(.caption.monospaced()).lineLimit(2).textSelection(.enabled) }
+                    Text("Text: \(debugger.text.isEmpty ? "(empty)" : String(debugger.text.prefix(300)))").font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(3).textSelection(.enabled)
+                }
+                .padding(8).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+            }
+            if let debugNote { Text(debugNote).font(.callout).foregroundStyle(.secondary) }
+        }
+    }
+
+    private func startDebugging() {
+        guard let saved = save() else { return }
+        var approved = false
+        if workflowNeedsAuthorization(workflow: saved) {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Debug this for real?"
+            alert.informativeText = "It is not authorized yet. Stepping through it will really do:\n\n" + risks.map { "• " + $0.summary }.joined(separator: "\n")
+            alert.addButton(withTitle: "Start Debugging")
+            alert.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            approved = true
+        }
+        debugging = true
+        debugNote = nil
+        debugger.stepping = debugger.breakpoints.isEmpty
+        let session = debugger
+        Task {
+            let run = await engine.execute(saved, source: "Debugger", input: NSPasteboard.general.string(forType: .string) ?? "", depth: 0, test: true, dryRun: false, approvedForTest: approved, progress: nil, debugger: session)
+            await MainActor.run {
+                debugging = false
+                debugNote = "\(run.status.title)" + (run.error.map { ": \($0)" } ?? "") + " after \(run.steps.count) step\(run.steps.count == 1 ? "" : "s")."
             }
         }
     }
