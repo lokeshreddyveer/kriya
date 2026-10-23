@@ -744,3 +744,51 @@ final class LauncherExplainTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(e.total ?? 0, 5000)
     }
 }
+
+final class NoteVersionTests: XCTestCase {
+    private func makeStore() -> (NoteStore, URL) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-notes-\(UUID().uuidString)", isDirectory: true)
+        return (NoteStore(folder: dir), dir)
+    }
+
+    func testEditsKeepEarlierVersionsAtMostEveryFiveMinutesAndTheyStayOutOfTheList() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let t = Date(timeIntervalSince1970: 1_760_000_000)
+        let url = try XCTUnwrap(store.create("first draft", date: t))
+        store.save("second draft", to: url, now: t.addingTimeInterval(10))
+        XCTAssertEqual(store.versions(of: url).count, 1)
+        store.save("third draft", to: url, now: t.addingTimeInterval(60))
+        XCTAssertEqual(store.versions(of: url).count, 1, "too soon after the last one")
+        store.save("fourth draft", to: url, now: t.addingTimeInterval(400))
+        XCTAssertEqual(store.versions(of: url).count, 2)
+        XCTAssertEqual(store.list().count, 1, "versions are not notes")
+        XCTAssertEqual(store.read(store.versions(of: url)[1].url), "first draft")
+    }
+
+    func testGoingBackKeepsWhatWasReplacedSoItCanBeUndone() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let t = Date(timeIntervalSince1970: 1_760_000_000)
+        let url = try XCTUnwrap(store.create("old words", date: t))
+        store.save("new words", to: url, now: t.addingTimeInterval(10))
+        let old = try XCTUnwrap(store.versions(of: url).last)
+        XCTAssertTrue(store.restore(old, to: url, now: t.addingTimeInterval(20)))
+        XCTAssertEqual(store.read(url), "old words")
+        XCTAssertTrue(store.versions(of: url).contains { store.read($0.url) == "new words" })
+    }
+
+    func testOnlyTwentyAreKeptAndEmptyOrUnchangedTextKeepsNothing() throws {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let t = Date(timeIntervalSince1970: 1_760_000_000)
+        let url = try XCTUnwrap(store.create("v0", date: t))
+        store.save("v0", to: url, now: t.addingTimeInterval(1))
+        XCTAssertTrue(store.versions(of: url).isEmpty, "nothing changed")
+        for i in 1...30 { store.save("v\(i)", to: url, now: t.addingTimeInterval(Double(i) * 400)) }
+        XCTAssertEqual(store.versions(of: url).count, NoteStore.versionLimit)
+        let blank = try XCTUnwrap(store.create("   ", date: t.addingTimeInterval(5)))
+        store.save("now words", to: blank, now: t.addingTimeInterval(6))
+        XCTAssertTrue(store.versions(of: blank).isEmpty)
+    }
+}

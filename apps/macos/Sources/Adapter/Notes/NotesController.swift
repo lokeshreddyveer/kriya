@@ -44,6 +44,15 @@ final class NotesModel: ObservableObject {
         reload()
     }
 
+    /// Brings back an earlier version of the open note. What was there is kept as a version too.
+    func restore(_ version: NoteStore.Version) {
+        guard let url = current else { return }
+        flush()
+        if store.restore(version, to: url) {
+            loading = true; text = store.read(url); loading = false
+        }
+    }
+
     func deleteCurrent() {
         guard let url = current else { newNote(); return }
         saveWork?.cancel()
@@ -90,6 +99,13 @@ private struct NotesView: View {
                         Button("Find Related or Duplicate Notes") { NotesAI.related(model) }
                         Button("Turn Into a Workflow Draft") { NotesAI.toWorkflow(model) }
                     } label: { Label("AI", systemImage: "sparkles") }.menuIndicator(.hidden).fixedSize().disabled(!AIGateway.shared.isAvailable(for: .notes) || model.text.count < 20)
+                    Menu {
+                        let versions = model.current.map { model.store.versions(of: $0) } ?? []
+                        if versions.isEmpty { Text("No earlier versions yet") }
+                        ForEach(versions.prefix(10)) { version in
+                            Button(version.date.formatted(date: .abbreviated, time: .shortened)) { model.restore(version) }
+                        }
+                    } label: { Label("History", systemImage: "clock.arrow.circlepath") }.menuIndicator(.hidden).fixedSize().disabled(model.current == nil)
                     Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.text, forType: .string) } label: { Label("Copy", systemImage: "doc.on.doc") }
                     Button { if let u = model.current { NSWorkspace.shared.activateFileViewerSelecting([u]) } } label: { Label("Show in Finder", systemImage: "folder") }.disabled(model.current == nil)
                     Spacer()
