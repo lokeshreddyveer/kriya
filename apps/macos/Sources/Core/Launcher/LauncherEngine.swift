@@ -3,7 +3,7 @@ import Foundation
 /// The kinds of thing the launcher can find. Each can be turned off in Settings › Launcher.
 enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
     case calculator, utility, command, layout, snippet, action, workflow, feature, setting
-    case app, window, clipboard, file, system, emoji, intelligence, web
+    case app, window, clipboard, file, system, emoji, intelligence, web, tools
 
     var id: String { rawValue }
 
@@ -25,7 +25,8 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .system: return "System"
         case .emoji: return "Emoji"
         case .intelligence: return "Apple Intelligence"
-        case .web: return "Web search"
+        case .web: return "Web search and quicklinks"
+        case .tools: return "Converters, generators and meetings"
         }
     }
 
@@ -49,6 +50,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .emoji: return "Emoji"
         case .intelligence: return "AI"
         case .web: return "Web"
+        case .tools: return "Tool"
         }
     }
 
@@ -71,6 +73,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .emoji: return "face.smiling"
         case .intelligence: return "sparkles"
         case .web: return "globe"
+        case .tools: return "wand.and.stars"
         }
     }
 
@@ -80,7 +83,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .app, .file, .setting, .feature, .system: return "Open"
         case .window: return "Switch to"
         case .web: return "Search"
-        case .calculator, .emoji, .clipboard: return "Copy"
+        case .calculator, .emoji, .clipboard, .tools: return "Copy"
         case .utility: return "Start"
         case .intelligence: return "Ask"
         case .command, .layout, .snippet, .action, .workflow: return "Run"
@@ -95,7 +98,8 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .window: return "Needs Accessibility, to list and raise windows."
         case .app: return "Installed and running apps."
         case .intelligence: return "Type “ask” and a question, or use the clipboard shortcuts. Handled on this Mac; needs Apple Intelligence."
-        case .web: return "Offers to search the web, or open an address you type. Only the words you choose are sent, to the site you pick."
+        case .web: return "Offers to search the web, or open an address you type, and your quicklinks. Only the words you choose are sent, to the site you pick."
+        case .tools: return "Units, time zones, colours, encodings, passwords, QR codes, currency (if switched on) and your next meeting (if switched on)."
         default: return ""
         }
     }
@@ -112,6 +116,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .emoji: return -10
         case .intelligence: return 10
         case .web: return -80
+        case .tools: return 150
         case .clipboard: return -20
         case .file: return -60
         }
@@ -135,6 +140,10 @@ struct LauncherPrefsData: Codable, Equatable {
     var titles: [String: String] = [:]
     /// The search site for plain web searches. Nil is the default, Google.
     var webEngine: String?
+    /// Currency conversion fetches daily rates, so it is off until switched on.
+    var currencyRates: Bool?
+    /// Shows the next calendar event, once the person allowed it.
+    var showMeeting: Bool?
 
     func isEnabled(_ category: LauncherCategory) -> Bool { !disabledCategories.contains(category.rawValue) }
 }
@@ -282,6 +291,9 @@ final class LauncherPrefs: ObservableObject {
             }
         }
     }
+
+    func setCurrencyRates(_ on: Bool) { change { $0.currencyRates = on } }
+    func setShowMeeting(_ on: Bool) { change { $0.showMeeting = on } }
 
     func setWebEngine(_ id: String) {
         change { $0.webEngine = id == WebSearch.defaultEngineID ? nil : id }

@@ -26,6 +26,10 @@ final class AppEnvironment {
     let workspaceStore: WorkspaceStore
     let workspaces: WorkspaceController
     let pointerStore: PointerEffectsStore
+    let launcherTools: LauncherToolSources
+    let folderRules: FolderRulesService
+    let remote: RemoteCommands
+    let menuBarHider: MenuBarHider
     let dragStore: DragToolsStore
     let pasteStack: PasteStack
     let speaker: Speaker
@@ -97,6 +101,10 @@ final class AppEnvironment {
         let intelligence = IntelligenceCoordinator(service: AppleIntelligence())
         let workspaceStore = WorkspaceStore(core: core)
         let pointerStore = PointerEffectsStore(core: core)
+        let launcherTools = LauncherToolSources(extras: LauncherExtras(), prefs: keyboard.palette.prefs)
+        let remote = RemoteCommands(support: paths.support)
+        let menuBarHider = MenuBarHider()
+        let folderRules = FolderRulesService(store: FolderRulesStore(), history: finder.runner.history)
         let pointerEffects = PointerEffects(store: pointerStore, displays: windowController.displays, executor: executor)
         let dragStore = DragToolsStore(core: core)
         let pasteStack = PasteStack(events: events)
@@ -194,6 +202,10 @@ final class AppEnvironment {
         self.workspaceStore = workspaceStore
         self.workspaces = workspaces
         self.pointerStore = pointerStore
+        self.launcherTools = launcherTools
+        self.folderRules = folderRules
+        self.remote = remote
+        self.menuBarHider = menuBarHider
         self.pointerEffects = pointerEffects
         self.dragStore = dragStore
         self.pasteStack = pasteStack
@@ -279,6 +291,12 @@ final class AppEnvironment {
             DispatchQueue.main.async { links?.chooseBrowserForClipboardLink() }
         }
         pointerEffects.start()
+        folderRules.start()
+        menuBarHider.start()
+        remote.runCommand = { [weak keyboard] id in keyboard?.run(.command(command: id)) }
+        remote.runAction = { [weak keyboard] id in keyboard?.run(.action(actionId: id)) }
+        remote.runWorkflow = { [weak automation] id in automation?.fire(id, source: "Command line") }
+        remote.showLauncher = { [weak keyboard] text in keyboard?.palette.show(prefill: text) }
         pointerMenuCancellable = pointerMenuStore.$config.receive(on: DispatchQueue.main).sink { [weak self] config in
             guard let self else { return }
             self.pointerMenu.setOptionRightClick(config.optionRightClick && self.permissions.isGranted(.inputMonitoring), events: self.events)
@@ -318,6 +336,7 @@ final class AppEnvironment {
         // Apps, open windows, files, clipboard history, macOS settings, a calculator, timers and emoji.
         let sources = LauncherSources(inventory: inventory, clipboard: clipboard, prefs: keyboard.palette.prefs)
         sources.intelligence = intelligence
+        sources.tools = launcherTools
         devices.activeDeviceID = { [weak activity] in activity?.currentDeviceID() }
         devices.lastUsedProvider = { [weak activity] id in activity?.lastUsed(id) }
         clipboard.quick.extraMenuActions = { [weak intelligence, weak clipboard] item in
@@ -368,6 +387,11 @@ extension View {
             .environmentObject(env.intelligence.service)
             .environmentObject(env.timeline)
             .environmentObject(env.keyboard.palette.prefs)
+            .environmentObject(env.launcherTools.extras)
+            .environmentObject(env.launcherTools)
+            .environmentObject(env.folderRules)
+            .environmentObject(env.folderRules.store)
+            .environmentObject(env.menuBarHider)
             .environmentObject(env.workspaceStore)
             .environmentObject(env.pointerStore)
             .environmentObject(env.dragStore)

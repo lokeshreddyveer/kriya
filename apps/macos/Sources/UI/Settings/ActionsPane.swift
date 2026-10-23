@@ -36,6 +36,7 @@ struct ActionsPane: View {
     @Environment(\.executor) private var executor
 
     @State private var showingEditor = false
+    @State private var recording = false
     @State private var results: [String: ActionOutcome] = [:]
     @State private var errorMessage: String?
     @State private var added: Int?
@@ -70,6 +71,9 @@ struct ActionsPane: View {
                     Button { added = library.addSuggested() } label: { Label("Add Common Actions", systemImage: "wand.and.stars") }
                         .controlSize(.small)
                         .help("Back, Forward, Mission Control, desktops, tabs and a few window and pointer actions")
+                    Button { recording = true } label: { Label("Record Keys", systemImage: "record.circle") }
+                        .controlSize(.small)
+                        .help("Press keys once and save them as an action that presses them again")
                     Button { showingEditor = true } label: { Label("New Action", systemImage: "plus") }
                         .controlSize(.small)
                 }
@@ -83,6 +87,7 @@ struct ActionsPane: View {
         .animation(.smooth(duration: 0.25), value: errorMessage)
         .animation(.smooth(duration: 0.25), value: added)
         .sheet(isPresented: $showingEditor) { ActionEditor() }
+        .sheet(isPresented: $recording) { KeyRecorderSheet(onClose: { recording = false }) }
     }
 
     private func run(_ saved: NamedAction) {
@@ -276,6 +281,87 @@ struct ActionEditor: View {
                 testing = false
                 if case .failure(let text) = outcome { message = text }
             }
+        }
+    }
+}
+
+/// Records some key presses and saves them as one action. The keys are listened to only while this window is open.
+private struct KeyRecorderSheet: View {
+    @EnvironmentObject private var library: ActionLibrary
+    @EnvironmentObject private var events: EventMonitor
+    @StateObject private var holder = RecorderHolder()
+    let onClose: () -> Void
+    @State private var name = ""
+    @State private var problem: String?
+
+    var body: some View {
+        let recorder = holder.make(events)
+        VStack(spacing: 0) {
+            RecorderBody(recorder: recorder, name: $name, problem: $problem, onSave: { save(recorder) }, onClose: { recorder.stop(); onClose() })
+        }
+        .frame(width: 480, height: 340)
+        .onAppear { recorder.start() }
+        .onDisappear { recorder.stop() }
+    }
+
+    private func save(_ recorder: KeystrokeRecorder) {
+        recorder.stop()
+        guard let action = KeystrokeRecording.action(from: recorder.keys) else { problem = "No keys were recorded."; return }
+        let clean = name.trimmingCharacters(in: .whitespaces)
+        guard !clean.isEmpty else { problem = "Give the action a name."; recorder.start(); return }
+        do {
+            try library.save(name: clean, action: action)
+            onClose()
+        } catch {
+            problem = error.userMessage
+        }
+    }
+}
+
+private final class RecorderHolder: ObservableObject {
+    private var recorder: KeystrokeRecorder?
+    func make(_ events: EventMonitor) -> KeystrokeRecorder {
+        if let recorder { return recorder }
+        let made = KeystrokeRecorder(events: events)
+        recorder = made
+        return made
+    }
+}
+
+private struct RecorderBody: View {
+    @ObservedObject var recorder: KeystrokeRecorder
+    @Binding var name: String
+    @Binding var problem: String?
+    let onSave: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Circle().fill(recorder.isRecording ? Color.red : Color.secondary).frame(width: 10, height: 10)
+                        .opacity(recorder.isRecording ? 1 : 0.5)
+                    Text(recorder.isRecording ? "Recording: press the keys now" : "Stopped").font(.headline)
+                }
+                Text(KeystrokeRecording.summary(recorder.keys)).font(.system(.body, design: .rounded)).foregroundStyle(recorder.keys.isEmpty ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading).padding(10)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                TextField("Name for the action", text: $name)
+                if let problem { Text(problem).font(.callout).foregroundStyle(Theme.danger) }
+                Text("Only the keys are kept, in order, with their pauses. What they type is not looked at or saved, and nothing is recorded once this window closes. Up to \(KeystrokeRecording.maxSteps) keys.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(16)
+            Spacer(minLength: 0)
+            Divider()
+            HStack {
+                Button(recorder.isRecording ? "Stop" : "Record Again") { recorder.isRecording ? recorder.stop() : { recorder.clear(); recorder.start() }() }
+                Button("Clear") { recorder.clear() }.disabled(recorder.keys.isEmpty)
+                Spacer()
+                Button("Cancel", action: onClose).keyboardShortcut(.cancelAction)
+                Button("Save Action", action: onSave).buttonStyle(.borderedProminent).disabled(recorder.keys.isEmpty)
+            }
+            .padding(12)
         }
     }
 }

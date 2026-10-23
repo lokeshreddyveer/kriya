@@ -148,6 +148,8 @@ final class LauncherSources {
     let timers = LauncherTimers()
     /// Apple Intelligence, when set up: a typed question, and actions on the clipboard.
     var intelligence: IntelligenceCoordinator?
+    /// Quicklinks, scripts, converters and meetings.
+    var tools: LauncherToolSources?
     private let files = LauncherFileSearch()
     private weak var inventory: AppInventory?
     private let clipboard: ClipboardService
@@ -171,9 +173,11 @@ final class LauncherSources {
         palette.addProvider { [weak self] in self?.systemEntries() ?? [] }
         palette.addProvider { [weak self] in self?.runningTimerEntries() ?? [] }
         palette.addProvider { [weak self] in self?.intelligenceEntries() ?? [] }
+        palette.addProvider { [weak self] in (self?.tools?.staticEntries() ?? []) + (self?.tools?.meetingEntries() ?? []) }
         palette.addQueryProvider { [weak self] text in self?.queryEntries(text) ?? [] }
         palette.willShow = { [weak self] in self?.prepare() }
         files.onResults = { [weak palette] in palette?.model.refresh() }
+        tools?.onChange = { [weak palette] in palette?.model.refresh() }
     }
 
     /// Gathers what takes a moment (the open windows) as the launcher opens.
@@ -368,6 +372,7 @@ final class LauncherSources {
         }
         if data.isEnabled(.clipboard) { found.append(contentsOf: clipboardEntries(text)) }
         if data.isEnabled(.file) { found.append(contentsOf: fileEntries(text)) }
+        if let tools { found.append(contentsOf: tools.queryEntries(text)) }
         if data.isEnabled(.web) { found.append(contentsOf: webEntries(text, engineID: data.webEngine)) }
         return found
     }

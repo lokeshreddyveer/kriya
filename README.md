@@ -214,6 +214,7 @@ Added after the first release. Every one has a shortcut you can set under Window
 - **Todo mode**: keep one app in a narrow column; every layout uses the rest of the display.
 - **Drop zones**: hold the chosen keys while dragging a window to see a saved layout's places and drop onto one.
 - **Window groups** (Windows › Layouts): pick a few open windows, name the group, and restore them together (apps that are closed are opened), move or fit the whole group into a display or half of one, or give it a shortcut.
+- **Window switcher (⌥Tab)**: opens at once from a list kept ready in the background, shows large window previews that fill in as they arrive, and works like ⌘Tab (hold ⌥, tap Tab, let go). ⌥⇧Tab goes backwards, ⌥` switches between the windows of the front app, typing filters, 1 to 9 pick a card, hover chooses and shows a close button, and ⌘W, ⌘M, ⌘H and ⌘Q close, minimize, hide or quit. Card size and which display it opens on are settings.
 - **Restore details**: after a layout restore, a report says for each window whether it was placed, went to another or the main display, or was not found and why (app not running or hidden, only minimized windows, no window open, excluded app, or a window that would not move), with a way to choose a replacement window and try again.
 - **Resizing**: almost maximize with a margin, maximize width or height only, bigger, smaller, wider, narrower, taller, shorter (with optional shape keeping), and a width limit for ultrawide displays.
 - **Arranging**: cascade or tile the windows on a display.
@@ -241,6 +242,7 @@ Not offered: Logitech-specific device features (ratchet or SmartShift control), 
 
 - **Folder tools** (Add Common Actions in the Finder pane): New Folders (one name per line), Find Large Files (lists the biggest files in a folder, nothing changed), Tidy Up This Folder (sorts loose files into Images, Documents, Archives, Audio, Video and Installers; asks first, never deletes) and Undo Last Tidy-Up.
 - **Recent file operations** (Finder › Actions): moves, copies, renames, batch renames, archives, extractions, aliases and new files are listed with Undo (items put back only if their old place is free; things an action made go to the Trash), Show, and the reason for anything that failed. A move or copy that fails for one item still does the rest. Kept for two weeks.
+- **Folder Rules** (own pane under Files & Text): watch a folder and move, copy, rename, sort by kind or send to the Trash the files that match (type, kind, name, age, size). A new rule starts off, shows a preview of exactly what it would do, only touches finished files (not downloads in progress), never overwrites, and everything it does is in Recent file operations with Undo.
 - **Move to / Copy to**: the chooser lists starred and recent folders first, with search, ⌘1–⌘9 and “Choose Another Folder…”.
 - **⌥ + right-click** (Right-Click Menu › Pointer Menu): opens the pointer menu; a plain right-click keeps the app's own menu.
 - **Pointer menu** (Right-Click Menu › Pointer Menu): a menu that opens at the pointer from any shortcut, button or gesture. It holds your own items (saved actions or workflows, optionally limited to chosen apps) and the front app's own menu bar, built live from Accessibility. Use the actions “Open the pointer menu” and “Open the app's menu at the pointer” (Actions › Add Common Actions).
@@ -285,6 +287,7 @@ Pointer Effects (Input): a master switch, then:
 - **Saved positions**: named spots on a chosen display (or the current one) that the pointer can jump to, each a command.
 - **Presenting**: presentation mode switches on the highlight and click rings together; the effects are hidden from screen sharing and recordings unless you choose to show them (some sharing tools capture regardless).
 - **Spotlight**: dims every display except a circle or rounded rectangle around the pointer (size and darkness adjustable); a command, so it can have a shortcut. Hidden from screen sharing unless you choose to show the effects.
+- **Launcher** (compact bar that grows with results, in sections): apps, windows, files, clipboard, settings, a calculator, timers and emoji, plus **quicklinks** (a saved address with {query}: “gh swift”), **scripts** (a zsh script you wrote, with what you type as $1), **converters** (“5 km to mi”, “100 f in c”, “time in tokyo”, “3pm nyc in london”, colours, base64, URL encoding, SHA-256, MD5, case, slugs, JSON, timestamps), **generators** (uuid, password, lorem, QR code, screen colour picker), optional **currency** conversion from daily reference rates (only currency codes are sent) and your **next meeting** with a Join button for Zoom, Meet, Teams and Webex links (calendar access, off until you allow it). Web search and “yt cats”-style site keywords are built in.
 
 Already there: move the pointer to the next or previous display, and to the middle of the front window.
 
@@ -299,6 +302,11 @@ Already there: move the pointer to the next or previous display, and to the midd
 - **Mouse**: double-click a button to run an action, hold a button and turn the wheel for two actions, drag to scroll with glide, window follows the pointer.
 - **Hold rules** (Mouse › Buttons): a button rule can fire on a hold instead of a click (150–1500 ms); a quick press is still an ordinary click. **Auto-scroll** (Mouse › Drag): click a chosen button and move the pointer to scroll; Escape, a click or the wheel stops it.
 - **Device status** (Mouse › Devices): battery from macOS for devices that report one (otherwise “not reported”), last used, and a note when a device came back and its settings with it.
+- **Command line, URL commands and Shortcuts**: General › Command line installs a `kriya` tool (`kriya run window.left_half`, `kriya action <id>`, `kriya workflow <id>`, `kriya launcher text`), the same commands are `kriya://run` addresses guarded by a secret only your account can read, and the Shortcuts app gets Open Launcher, Run a Kriya Command and Run a Saved Action.
+- **Menu bar icons** (General): hide icons behind an arrow by holding ⌘ and dragging them left of a divider; hides again after a time you choose. It checks that macOS really made the room and says so if not.
+- **Record keys** (Actions): press keys once and save them as an action (a single key press or a timed sequence). Only key codes are kept.
+- **Clipboard history**: drag an item straight out of the quick paste panel into another app (never a sensitive item).
+- **Settings from another Mac**: the Backup pane offers iCloud copies from another Mac that are newer than this Mac's, with Review and Not Now. Nothing is applied by itself.
 - **Windows**: radial menu colour and size, a layout grid on the green-button hover, move to the display left/right/above/below, act on the window under the pointer, and optionally place an app's windows by its rule every time it comes forward.
 - **Clipboard**: a paste stack that pastes copied items one after another, and read-aloud commands.
 - **Pointer**: hold chosen keys to show the magnifier.

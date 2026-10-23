@@ -165,6 +165,12 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         model.reloadEntries(entries())
     }
 
+    /// Opens the launcher with some text already typed (from the command line or the Shortcuts app).
+    func show(prefill text: String?) {
+        show()
+        if let text, !text.isEmpty { model.query = text }
+    }
+
     func show() {
         willShow()
         cached = nil

@@ -21,7 +21,7 @@ enum SettingsPaneGroup: CaseIterable, Identifiable {
 
 /// Declared in sidebar order, so "next pane" and the Cmd-number shortcuts follow what the person sees.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, clipboard, selection, capture, links, shelf, apps, launcher, intelligence, automation, actions, profiles
+    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, folderRules, clipboard, selection, capture, links, shelf, apps, launcher, intelligence, automation, actions, profiles
     case menuBar, power, general, permissions, backup, diagnostics, about
 
     var id: String { rawValue }
@@ -45,6 +45,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .workspaces: return "Workspaces"
         case .buttons: return "Window Buttons"
         case .finder: return "Finder Actions"
+        case .folderRules: return "Folder Rules"
         case .clipboard: return "Clipboard"
         case .selection: return "Selection Bar"
         case .links: return "Link Routing"
@@ -79,6 +80,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .workspaces: return "square.stack.3d.up"
         case .buttons: return "macwindow"
         case .finder: return "contextualmenu.and.cursorarrow"
+        case .folderRules: return "folder.badge.gearshape"
         case .clipboard: return "doc.on.clipboard"
         case .selection: return "text.cursor"
         case .links: return "arrow.triangle.branch"
@@ -99,7 +101,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .features: return .overview
         case .mouse, .pointer, .keyboard, .shortcutMap, .devices: return .input
         case .windows, .workspaces, .buttons: return .windows
-        case .finder, .clipboard, .selection, .links, .capture: return .filesAndText
+        case .finder, .folderRules, .clipboard, .selection, .links, .capture: return .filesAndText
         case .automation, .actions, .profiles, .launcher, .intelligence: return .automate
         case .displays: return .windows
         case .shelf, .apps: return .filesAndText
@@ -135,6 +137,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .buttons: return "traffic lights close minimize zoom red yellow green"
         case .workspaces: return "workspace focus mode quit all hide apps relaunch favorite previous app launch set of apps"
         case .finder: return "right click context menu new file folder convert rename terminal"
+        case .folderRules: return "hazel automatic downloads tidy sort move rename trash watch folder rule organize files"
         case .clipboard: return "copy paste history snippets"
         case .selection: return "popclip text toolbar bar highlight"
         case .links: return "browser link url default velja openin route profile work personal tracking redirect"
@@ -284,6 +287,7 @@ struct SettingsRootView: View {
         case .buttons: TrafficPane()
         case .workspaces: WorkspacesPane()
         case .finder: FinderPane()
+        case .folderRules: FolderRulesPane()
         case .clipboard: ClipboardPane()
         case .selection: SelectionPane()
         case .links: LinksPane()

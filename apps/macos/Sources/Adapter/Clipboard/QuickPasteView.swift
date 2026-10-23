@@ -220,6 +220,8 @@ struct QuickAccessView: View {
                                 .contextMenu { menu(for: entry.item) }
                                 .onHover { inside in hovered = inside ? entry.item.id : (hovered == entry.item.id ? nil : hovered) }
                                 .onTapGesture { onChoose(entry.item, NSEvent.modifierFlags.contains(.command)) }
+                                // Drag it straight into another app, a message or a folder.
+                                .onDrag { ClipDrag.provider(for: entry.item, blob: store.blob(entry.item.id)) ?? NSItemProvider() }
                             }
                         }
                     }

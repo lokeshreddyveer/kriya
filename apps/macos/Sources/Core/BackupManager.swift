@@ -8,6 +8,20 @@ struct BackupFileInfo: Identifiable, Equatable {
     var name: String { url.lastPathComponent }
 }
 
+/// Noticing that another Mac saved settings after this one did, so they can be offered, never applied by themselves.
+enum SettingsSync {
+    /// The newest iCloud copy from a different Mac that is newer than this Mac's own copy and than the moment the person last
+    /// said "not now". Copies are named "Kriya – <Mac name>.kriyabackup".
+    static func newerFromOtherMac(files: [BackupFileInfo], thisMac: String, dismissedAt: Date?) -> BackupFileInfo? {
+        let mine = "Kriya – \(thisMac).\(BackupManager.fileExtension)".lowercased()
+        let own = files.first { $0.name.lowercased() == mine }?.date ?? .distantPast
+        let floor = max(own, dismissedAt ?? .distantPast)
+        return files
+            .filter { $0.name.lowercased() != mine && $0.date > floor && $0.name.lowercased().hasPrefix("kriya") }
+            .max { $0.date < $1.date }
+    }
+}
+
 /// Backing up and restoring settings. The core writes and validates the backup; this class handles the files.
 /// A restore always saves the current settings first, so it can be undone from the list of automatic backups.
 final class BackupManager: ObservableObject {
@@ -17,6 +31,8 @@ final class BackupManager: ObservableObject {
     @Published private(set) var automaticBackups: [BackupFileInfo] = []
     @Published private(set) var iCloudBackups: [BackupFileInfo] = []
     @Published private(set) var lastICloudBackup: Date?
+    /// Settings another Mac saved after this one did. Offered in the Backup pane; nothing is applied without a click.
+    @Published private(set) var newerFromOtherMac: BackupFileInfo?
     /// Backups are sealed with a passphrase kept in the Keychain.
     @Published private(set) var isProtected = false
     @Published var iCloudEnabled: Bool {
@@ -133,6 +149,17 @@ final class BackupManager: ObservableObject {
                 return BackupFileInfo(url: url, date: date)
             }
             .sorted { $0.date > $1.date }
+        let host = (Host.current().localizedName ?? "Mac").replacingOccurrences(of: "/", with: "-")
+        let dismissed = UserDefaults.standard.object(forKey: Self.dismissedKey) as? Date
+        newerFromOtherMac = SettingsSync.newerFromOtherMac(files: iCloudBackups, thisMac: host, dismissedAt: dismissed)
+    }
+
+    private static let dismissedKey = "iCloudSyncDismissedAt"
+
+    /// "Not now": that copy is not offered again, only a newer one.
+    func dismissNewerFromOtherMac() {
+        UserDefaults.standard.set(newerFromOtherMac?.date ?? Date(), forKey: Self.dismissedKey)
+        newerFromOtherMac = nil
     }
 
     func export(to url: URL) throws {

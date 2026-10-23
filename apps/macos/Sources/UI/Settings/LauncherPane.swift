@@ -4,7 +4,12 @@ import SwiftUI
 struct LauncherPane: View {
     @EnvironmentObject private var prefs: LauncherPrefs
     @EnvironmentObject private var keyboard: KeyboardStore
+    @EnvironmentObject private var extras: LauncherExtras
+    @EnvironmentObject private var tools: LauncherToolSources
     @State private var confirmReset = false
+    @State private var editingLink: Quicklink?
+    @State private var editingScript: ScriptCommand?
+    @State private var calendarMessage: String?
 
     private var config: KeyboardConfig { keyboard.config }
 
@@ -27,6 +32,68 @@ struct LauncherPane: View {
                 }
             } header: { Text("Web search") } footer: {
                 Text("Type anything and the last row offers to search the web for it, in your browser. Type an address like “apple.com” to open it. A short word first picks another site: “yt” YouTube, “maps” Apple Maps, “gh” GitHub, “wiki” Wikipedia, “so” Stack Overflow, “ddg” DuckDuckGo, “g” Google. Only the words you type are sent, to the site you pick, and only when you press Return.")
+            }
+
+            Section {
+                if extras.quicklinks.isEmpty { Text("None. A quicklink opens a web address with what you type: “gh swift” can search GitHub.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(extras.quicklinks) { link in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(link.name)
+                            Text(link.keyword.isEmpty ? link.template : "\(link.keyword)  ·  \(link.template)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Button("Edit") { editingLink = link }.controlSize(.small)
+                        Button(role: .destructive) { extras.deleteQuicklink(link.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Quicklinks")
+                    Spacer()
+                    Button { editingLink = Quicklink(name: "", keyword: "", template: "https://") } label: { Label("Add", systemImage: "plus") }.controlSize(.small)
+                }
+            } footer: {
+                Text("Put {query} in the address where your words go. “gh swift” with the address https://github.com/search?q={query} opens that search in your browser.")
+            }
+
+            Section {
+                if extras.scripts.isEmpty { Text("None. A script is a shell command you wrote. Type its word, and anything after it arrives as $1.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(extras.scripts) { script in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(script.name)
+                            Text(script.keyword.isEmpty ? "Found by name" : "Type “\(script.keyword)”").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Edit") { editingScript = script }.controlSize(.small)
+                        Button(role: .destructive) { extras.deleteScript(script.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Scripts")
+                    Spacer()
+                    Button { editingScript = ScriptCommand(name: "", keyword: "", source: "echo \"Hello $1\"") } label: { Label("Add", systemImage: "plus") }.controlSize(.small)
+                }
+            } footer: {
+                Text("Scripts run with zsh when you choose them, with whatever access you have. Only add ones you wrote or trust.")
+            }
+
+            Section {
+                Toggle("Convert currencies", isOn: Binding(get: { prefs.data.currencyRates == true }, set: { prefs.setCurrencyRates($0) }))
+                Toggle("Show my next meeting", isOn: Binding(get: { prefs.data.showMeeting == true }, set: { on in
+                    prefs.setShowMeeting(on)
+                    if on, !tools.meetings.isAllowed {
+                        tools.meetings.requestAccess { granted in
+                            calendarMessage = granted ? nil : "Calendar access was not allowed. Turn it on in System Settings › Privacy & Security › Calendars."
+                            if !granted { prefs.setShowMeeting(false) }
+                        }
+                    }
+                }))
+                if let calendarMessage { Text(calendarMessage).font(.caption).foregroundStyle(Theme.warn) }
+            } header: { Text("Converters and meetings") } footer: {
+                Text("Type “5 km to mi”, “100 f in c”, “time in tokyo”, “3pm nyc in london”, “#ff8800”, “base64 hello”, “sha256 text”, “uuid”, “password 24”, “qr some text”. Currency (“100 usd to eur”) fetches daily reference rates from frankfurter.app and sends only the currency codes. The next meeting is read from your calendar on this Mac and shows with a Join button when it has a video link.")
             }
 
             Section {
@@ -79,6 +146,8 @@ struct LauncherPane: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(item: $editingLink) { link in QuicklinkEditor(link: link) { editingLink = nil } }
+        .sheet(item: $editingScript) { script in ScriptEditor(script: script) { editingScript = nil } }
         .animation(.smooth(duration: 0.2), value: prefs.data)
         .confirmationDialog("Reset the launcher?", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) { prefs.reset() }
@@ -86,5 +155,65 @@ struct LauncherPane: View {
         } message: {
             Text("Pins, short names, what you chose before and which kinds are searched go back to how they started.")
         }
+    }
+}
+
+private struct QuicklinkEditor: View {
+    @EnvironmentObject private var extras: LauncherExtras
+    @State var link: Quicklink
+    let onClose: () -> Void
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                TextField("Name", text: $link.name)
+                TextField("Keyword (optional)", text: $link.keyword)
+                TextField("Address", text: $link.template)
+                if let problem { Text(problem).font(.callout).foregroundStyle(Theme.danger) }
+                Text("Use {query} where what you type goes.").font(.caption).foregroundStyle(.secondary)
+            }
+            .formStyle(.grouped)
+            Divider()
+            HStack {
+                Spacer()
+                Button("Cancel", action: onClose).keyboardShortcut(.cancelAction)
+                Button("Save") { problem = extras.save(link); if problem == nil { onClose() } }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+            }
+            .padding(12)
+        }
+        .frame(width: 480, height: 300)
+    }
+}
+
+private struct ScriptEditor: View {
+    @EnvironmentObject private var extras: LauncherExtras
+    @State var script: ScriptCommand
+    let onClose: () -> Void
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                TextField("Name", text: $script.name)
+                TextField("Keyword (optional)", text: $script.keyword)
+                Picker("When it finishes", selection: $script.output) { ForEach(ScriptCommand.Output.allCases) { Text($0.title).tag($0) } }
+                VStack(alignment: .leading) {
+                    Text("Script (zsh)").font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $script.source).font(.system(.body, design: .monospaced)).frame(height: 150)
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.15)))
+                }
+                if let problem { Text(problem).font(.callout).foregroundStyle(Theme.danger) }
+            }
+            .formStyle(.grouped)
+            Divider()
+            HStack {
+                Spacer()
+                Button("Cancel", action: onClose).keyboardShortcut(.cancelAction)
+                Button("Save") { problem = extras.save(script); if problem == nil { onClose() } }.buttonStyle(.borderedProminent)
+            }
+            .padding(12)
+        }
+        .frame(width: 520, height: 470)
     }
 }

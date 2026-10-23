@@ -1,0 +1,56 @@
+#!/bin/sh
+# kriya: run Kriya commands from a terminal or a script.
+#
+#   kriya run <command>        run a command, such as window.left_half or pointer.spotlight
+#   kriya action <id>          run a saved action by its id
+#   kriya workflow <id>        run an automation workflow by its id
+#   kriya launcher [text]      open the launcher, with text already typed if you give some
+#   kriya help                 this text
+#
+# It talks to the Kriya that is running on this Mac, using a secret only your account can read. Nothing goes over the network.
+set -eu
+
+TOKEN_FILE="$HOME/Library/Application Support/Kriya/browser-bridge-token"
+
+usage() {
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+encode() {
+  # Every byte as %XX, which is a valid way to write any text in an address.
+  printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/\(..\)/%\1/g'
+}
+
+[ "$#" -ge 1 ] || { usage; exit 2; }
+verb="$1"; shift
+
+case "$verb" in
+  help|-h|--help) usage; exit 0 ;;
+esac
+
+if [ ! -r "$TOKEN_FILE" ]; then
+  echo "kriya: open Kriya once first, so it can create its secret." >&2
+  exit 1
+fi
+token=$(tr -d '[:space:]' < "$TOKEN_FILE")
+
+case "$verb" in
+  run)
+    [ "$#" -eq 1 ] || { echo "usage: kriya run <command>" >&2; exit 2; }
+    open -g "kriya://run?command=$(encode "$1")&t=$token" ;;
+  action)
+    [ "$#" -eq 1 ] || { echo "usage: kriya action <id>" >&2; exit 2; }
+    open -g "kriya://action?id=$(encode "$1")&t=$token" ;;
+  workflow)
+    [ "$#" -eq 1 ] || { echo "usage: kriya workflow <id>" >&2; exit 2; }
+    open -g "kriya://workflow?id=$(encode "$1")&t=$token" ;;
+  launcher)
+    if [ "$#" -ge 1 ]; then
+      open "kriya://launcher?q=$(encode "$*")&t=$token"
+    else
+      open "kriya://launcher?t=$token"
+    fi ;;
+  *)
+    echo "kriya: unknown command “$verb”. Try: kriya help" >&2
+    exit 2 ;;
+esac

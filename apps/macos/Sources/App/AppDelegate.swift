@@ -87,6 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             env.links.open(url, sourceAppID: source)
         } else if url.scheme?.lowercased() == "kriya", url.host?.lowercased() == "browser" {
             env.bridge.handle(url)
+        } else if url.scheme?.lowercased() == "kriya", let host = url.host?.lowercased(), RemoteCommand.hosts.contains(host) {
+            env.remote.handle(url)
         } else {
             env.finder.handle(url: url)
         }

@@ -1,0 +1,215 @@
+import Foundation
+
+/// A file as the rules see it: just what a rule can ask about, so rules can be tried without touching a disk.
+struct FolderFile: Equatable {
+    var name: String
+    var isDirectory = false
+    var isHidden = false
+    var size: Int64 = 0
+    var modified: Date
+
+    var fileExtension: String { (name as NSString).pathExtension.lowercased() }
+    var baseName: String { (name as NSString).deletingPathExtension }
+}
+
+enum FolderCondition: Codable, Equatable {
+    case extensionIs([String])
+    case nameContains(String)
+    case nameStartsWith(String)
+    /// One of "Images", "Documents", "Archives", "Audio", "Video", "Installers".
+    case kind(String)
+    case olderThanDays(Int)
+    case largerThanMB(Int)
+    case smallerThanMB(Int)
+
+    var summary: String {
+        switch self {
+        case .extensionIs(let list): return "is " + list.map { ".\($0)" }.joined(separator: " or ")
+        case .nameContains(let text): return "name contains “\(text)”"
+        case .nameStartsWith(let text): return "name starts with “\(text)”"
+        case .kind(let kind): return "is \(kind.lowercased())"
+        case .olderThanDays(let days): return "is older than \(days) day\(days == 1 ? "" : "s")"
+        case .largerThanMB(let mb): return "is larger than \(mb) MB"
+        case .smallerThanMB(let mb): return "is smaller than \(mb) MB"
+        }
+    }
+}
+
+enum FolderAction: Codable, Equatable {
+    case moveTo(String)
+    case copyTo(String)
+    /// A new name from a pattern: {name}, {ext}, {date}, {time} and {n} (a running number).
+    case rename(String)
+    /// Moves to the Trash, where Undo can bring it back.
+    case trash
+    /// Moves into folders by kind (Images, Documents, …) inside the watched folder.
+    case sortByKind
+
+    var summary: String {
+        switch self {
+        case .moveTo(let path): return "move to \((path as NSString).abbreviatingWithTildeInPath)"
+        case .copyTo(let path): return "copy to \((path as NSString).abbreviatingWithTildeInPath)"
+        case .rename(let pattern): return "rename as “\(pattern)”"
+        case .trash: return "move to the Trash"
+        case .sortByKind: return "sort into folders by kind"
+        }
+    }
+}
+
+struct FolderRule: Codable, Identifiable, Equatable {
+    var id = UUID().uuidString
+    var name: String
+    /// Starts off: a new rule does nothing until the person has looked at its preview and turned it on.
+    var enabled = false
+    var folder: String
+    var conditions: [FolderCondition]
+    var action: FolderAction
+
+    var summary: String {
+        let when = conditions.map(\.summary).joined(separator: " and ")
+        return "In \((folder as NSString).abbreviatingWithTildeInPath), when a file \(when): \(action.summary)"
+    }
+}
+
+/// One thing a rule would do.
+struct PlannedChange: Equatable {
+    enum Kind: Equatable { case move, copy, trash }
+    var kind: Kind
+    var from: String
+    /// Where it goes. Nil for the Trash, which picks its own place.
+    var to: String?
+}
+
+enum FolderRuleEngine {
+    /// A file touched in the last minute may still be downloading or being written, so it is left for the next look.
+    static let settleSeconds: TimeInterval = 60
+    static let partialExtensions: Set<String> = ["crdownload", "download", "part", "partial", "tmp", "opdownload", "aria2", "filepart"]
+    static let maxChangesPerRun = 200
+
+    /// Whether a rule may touch this file at all: a file (not a folder), visible, finished, and not a partial download.
+    static func eligible(_ file: FolderFile, now: Date) -> Bool {
+        !file.isDirectory && !file.isHidden && !file.name.hasPrefix(".") && !partialExtensions.contains(file.fileExtension)
+            && now.timeIntervalSince(file.modified) >= settleSeconds
+    }
+
+    static func matches(_ rule: FolderRule, _ file: FolderFile, now: Date) -> Bool {
+        guard eligible(file, now: now), !rule.conditions.isEmpty else { return false }
+        return rule.conditions.allSatisfy { holds($0, file, now: now) }
+    }
+
+    private static func holds(_ condition: FolderCondition, _ file: FolderFile, now: Date) -> Bool {
+        switch condition {
+        case .extensionIs(let list): return list.contains { $0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ". ")) == file.fileExtension }
+        case .nameContains(let text): return !text.isEmpty && file.name.range(of: text, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        case .nameStartsWith(let text): return !text.isEmpty && file.name.lowercased().hasPrefix(text.lowercased())
+        case .kind(let kind): return FolderTools.category(for: file.name) == kind
+        case .olderThanDays(let days): return now.timeIntervalSince(file.modified) >= Double(days) * 86_400
+        case .largerThanMB(let mb): return file.size > Int64(mb) * 1_048_576
+        case .smallerThanMB(let mb): return file.size < Int64(mb) * 1_048_576
+        }
+    }
+
+    /// What is wrong with a rule, or nil when it is safe to run.
+    static func problem(for rule: FolderRule, folderExists: (String) -> Bool = { var d: ObjCBool = false; return FileManager.default.fileExists(atPath: $0, isDirectory: &d) && d.boolValue }) -> String? {
+        if rule.name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give the rule a name." }
+        if rule.conditions.isEmpty { return "Add at least one condition, so the rule never acts on every file." }
+        for condition in rule.conditions {
+            switch condition {
+            case .extensionIs(let list) where list.filter({ !$0.trimmingCharacters(in: .whitespaces).isEmpty }).isEmpty: return "Name at least one file type."
+            case .nameContains(let t) where t.trimmingCharacters(in: .whitespaces).isEmpty, .nameStartsWith(let t) where t.trimmingCharacters(in: .whitespaces).isEmpty: return "A name condition needs some text."
+            case .olderThanDays(let d) where d < 0, .largerThanMB(let d) where d < 0, .smallerThanMB(let d) where d < 0: return "Numbers cannot be negative."
+            default: break
+            }
+        }
+        let watched = (rule.folder as NSString).standardizingPath
+        if watched.isEmpty || !watched.hasPrefix("/") { return "Choose the folder to watch." }
+        if !folderExists(watched) { return "The folder to watch does not exist." }
+        if isOffLimits(watched) { return "That folder cannot be watched: it is the home folder or a system folder. Choose a folder inside it, such as Downloads." }
+        switch rule.action {
+        case .moveTo(let path), .copyTo(let path):
+            let target = (path as NSString).standardizingPath
+            if target.isEmpty || !target.hasPrefix("/") { return "Choose where the files go." }
+            if isOffLimits(target) { return "Files cannot be sent to that place." }
+            if target == watched { return "The destination is the folder being watched." }
+            if target.hasPrefix(watched + "/") { return "The destination is inside the folder being watched, so the rule would find the files again." }
+        case .rename(let pattern):
+            if !pattern.contains("{name}") && !pattern.contains("{n}") && !pattern.contains("{date}") && !pattern.contains("{time}") { return "The new name needs {name}, {date}, {time} or {n} in it, or every file would get the same name." }
+            if pattern.contains("/") || pattern.contains(":") || pattern.count > 120 { return "That is not a usable file name." }
+        case .trash, .sortByKind:
+            break
+        }
+        return nil
+    }
+
+    /// The home folder and the system's own folders are never watched or filled.
+    static func isOffLimits(_ path: String) -> Bool {
+        let clean = (path as NSString).standardizingPath
+        return clean == "/" || clean == NSHomeDirectory() || ProtectedPaths.isProtected(clean)
+    }
+
+    /// A new name from a pattern.
+    static func renamed(_ file: FolderFile, pattern: String, number: Int) -> String {
+        let date = DateFormatter()
+        date.locale = Locale(identifier: "en_US_POSIX")
+        date.dateFormat = "yyyy-MM-dd"
+        let time = DateFormatter()
+        time.locale = Locale(identifier: "en_US_POSIX")
+        time.dateFormat = "HH-mm-ss"
+        var out = pattern
+            .replacingOccurrences(of: "{name}", with: file.baseName)
+            .replacingOccurrences(of: "{date}", with: date.string(from: file.modified))
+            .replacingOccurrences(of: "{time}", with: time.string(from: file.modified))
+            .replacingOccurrences(of: "{n}", with: String(number))
+        let hasExtensionToken = pattern.contains("{ext}")
+        out = out.replacingOccurrences(of: "{ext}", with: file.fileExtension)
+        // A pattern that does not say where the extension goes keeps the file's own.
+        if !hasExtensionToken, !file.fileExtension.isEmpty { out += "." + file.fileExtension }
+        return out
+    }
+
+    /// What the rule would do now. Names that are taken (on the disk or by an earlier change in this plan) get "name 2",
+    /// and nothing is ever overwritten.
+    static func plan(
+        _ rule: FolderRule, files: [FolderFile], now: Date,
+        existingNames: (String) -> Set<String> = { Set((try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? []) }
+    ) -> [PlannedChange] {
+        guard problem(for: rule, folderExists: { _ in true }) == nil else { return [] }
+        let watched = (rule.folder as NSString).standardizingPath
+        var taken: [String: Set<String>] = [:]
+        func unique(_ name: String, in folder: String) -> String {
+            var used = taken[folder] ?? existingNames(folder)
+            let chosen = finderUniqueName(candidate: name, existing: Array(used))
+            used.insert(chosen)
+            taken[folder] = used
+            return chosen
+        }
+        var changes: [PlannedChange] = []
+        var number = 1
+        for file in files.sorted(by: { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) where matches(rule, file, now: now) {
+            if changes.count >= maxChangesPerRun { break }
+            let from = (watched as NSString).appendingPathComponent(file.name)
+            switch rule.action {
+            case .moveTo(let path), .copyTo(let path):
+                let folder = (path as NSString).standardizingPath
+                let to = (folder as NSString).appendingPathComponent(unique(file.name, in: folder))
+                if case .copyTo = rule.action { changes.append(PlannedChange(kind: .copy, from: from, to: to)) } else { changes.append(PlannedChange(kind: .move, from: from, to: to)) }
+            case .rename(let pattern):
+                let newName = renamed(file, pattern: pattern, number: number)
+                number += 1
+                guard finderNameProblem(name: newName) == nil, newName != file.name else { continue }
+                // Renaming happens in the same folder, so the file's own old name is about to be free.
+                var names = taken[watched] ?? existingNames(watched)
+                names.remove(file.name)
+                taken[watched] = names
+                changes.append(PlannedChange(kind: .move, from: from, to: (watched as NSString).appendingPathComponent(unique(newName, in: watched))))
+            case .trash:
+                changes.append(PlannedChange(kind: .trash, from: from, to: nil))
+            case .sortByKind:
+                guard let kind = FolderTools.category(for: file.name) else { continue }
+                let folder = (watched as NSString).appendingPathComponent(kind)
+                changes.append(PlannedChange(kind: .move, from: from, to: (folder as NSString).appendingPathComponent(unique(file.name, in: folder))))
+            }
+        }
+        return changes
+    }
+}

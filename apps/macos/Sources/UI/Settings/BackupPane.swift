@@ -45,6 +45,19 @@ struct BackupPane: View {
             }
 
             Section {
+                if let newer = backup.newerFromOtherMac {
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.triangle.2.circlepath.icloud").foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Newer settings from \(newer.name.replacingOccurrences(of: "Kriya – ", with: "").replacingOccurrences(of: ".\(BackupManager.fileExtension)", with: ""))").font(.headline)
+                            Text("Saved \(newer.date.shortDescription). Restoring replaces this Mac's settings; this Mac's current ones are saved first so you can undo it.").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Not Now") { withAnimation(.smooth) { backup.dismissNewerFromOtherMac() } }.controlSize(.small)
+                        Button("Review…") { confirmRestore(newer.url) }.controlSize(.small).buttonStyle(.borderedProminent)
+                    }
+                    .padding(.vertical, 4).transition(.opacity)
+                }
                 Toggle("Back up to iCloud Drive", isOn: $backup.iCloudEnabled.animation())
                     .disabled(!backup.iCloudAvailable)
                 if backup.iCloudEnabled {
