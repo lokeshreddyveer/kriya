@@ -188,3 +188,43 @@ enum AIProviderExport {
         return list
     }
 }
+
+/// How much of each AI feature is actually connected to something the person can use. Shown next to the switches, so a provider is
+/// not switched on for a part of Kriya that never calls it.
+enum AIIntegrationLevel: String {
+    case connected, partial, notConnected
+
+    var title: String {
+        switch self {
+        case .connected: return "Connected"
+        case .partial: return "Partly connected"
+        case .notConnected: return "Not connected yet"
+        }
+    }
+}
+
+struct AIFeatureIntegration: Equatable {
+    var level: AIIntegrationLevel
+    /// What it can do now.
+    var does: [String]
+    /// What it cannot do yet.
+    var lacks: [String]
+}
+
+extension AIFeature {
+    var integration: AIFeatureIntegration {
+        switch self {
+        case .launcher: return AIFeatureIntegration(level: .connected, does: ["Ask AI (type ? and a question)", "Search by meaning", "Quick actions (type ai)"], lacks: [])
+        case .selection: return AIFeatureIntegration(level: .connected, does: ["Summarize, rewrite, translate and explain selected text"], lacks: [])
+        case .clipboard: return AIFeatureIntegration(level: .partial, does: ["Summarize, explain and fix text in history items", "Hide or find secrets (no AI needed)"], lacks: ["Classifying or tagging items", "Translating items"])
+        case .finder: return AIFeatureIntegration(level: .connected, does: ["Suggest names (undoable)", "Summarize a file", "Suggest tags", "Suggest folder-rule ideas", "Plan moves, renames and trashing for approval"], lacks: ["Explaining duplicate groups"])
+        case .browser: return AIFeatureIntegration(level: .connected, does: ["Summarize or ask about the page you are on, with a permission for each site"], lacks: ["Translating a page", "Acting on pages without you choosing it"])
+        case .automation: return AIFeatureIntegration(level: .partial, does: ["Draft a workflow from words (safe steps only)"], lacks: ["Explaining a workflow", "Diagnosing a failed run"])
+        case .capture: return AIFeatureIntegration(level: .partial, does: ["Explain, summarize, turn into Markdown, tidy the text, hide private text, name a capture (all from the text read from the picture)"], lacks: ["Looking at the picture itself", "Chapters or summaries of recordings"])
+        case .audio: return AIFeatureIntegration(level: .connected, does: ["Check the sound settings and say what is wrong", "Draft a sound mode from connected devices"], lacks: ["Listening to audio"])
+        case .diagnostics: return AIFeatureIntegration(level: .connected, does: ["Explain a redacted diagnostic report"], lacks: [])
+        case .notes: return AIFeatureIntegration(level: .connected, does: ["Suggest tags", "Pull out tasks", "Tidy up", "Find related or duplicate notes", "Draft a workflow"], lacks: [])
+        case .search: return AIFeatureIntegration(level: .connected, does: ["Search by meaning over the sources you switch on"], lacks: ["Indexing Finder files in general, browser tabs, recordings or screenshots"])
+        }
+    }
+}

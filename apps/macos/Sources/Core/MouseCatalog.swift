@@ -113,6 +113,15 @@ enum KeyNames {
         names[keyCode] ?? "Key \(keyCode)"
     }
 
+    private static let aliases: [String: UInt16] = ["escape": 53, "enter": 36, "backspace": 51, "pgup": 116, "pgdn": 121, "left": 123, "right": 124, "down": 125, "up": 126]
+
+    /// The key code for a key written as a person writes it: "k", "Space", "esc", "F5".
+    static func keyCode(forName name: String) -> UInt16? {
+        let n = name.lowercased()
+        if let alias = aliases[n] { return alias }
+        return names.first { $0.value.lowercased() == n }?.key
+    }
+
     static func describe(keyCode: UInt16, modifiers: UInt64) -> String {
         KeyModifiers.glyphs(for: modifiers) + name(for: keyCode)
     }
@@ -150,5 +159,48 @@ enum WindowCommands {
 
     static func title(for command: String) -> String? {
         all.first { $0.command == command }?.title
+    }
+}
+
+/// A key combination written in words, such as "cmd+shift+k" or "ctrl+option+F5".
+enum ShortcutText {
+    static func parse(_ text: String) -> (keyCode: UInt16, modifiers: UInt64)? {
+        let parts = text.lowercased().replacingOccurrences(of: " ", with: "+").split(separator: "+").map(String.init).filter { !$0.isEmpty }
+        guard parts.count >= 1, parts.count <= 5 else { return nil }
+        var modifiers: UInt64 = 0
+        var key: UInt16?
+        for part in parts {
+            switch part {
+            case "cmd", "command", "⌘": modifiers |= KeyModifiers.command
+            case "shift", "⇧": modifiers |= KeyModifiers.shift
+            case "opt", "option", "alt", "⌥": modifiers |= KeyModifiers.option
+            case "ctrl", "control", "⌃": modifiers |= KeyModifiers.control
+            case "fn": modifiers |= KeyModifiers.function
+            default:
+                guard key == nil, let code = KeyNames.keyCode(forName: part) else { return nil }
+                key = code
+            }
+        }
+        guard let key else { return nil }
+        // A plain letter or digit with no command, control or option would take over ordinary typing.
+        let name = KeyNames.name(for: key)
+        let isFunctionKey = name.hasPrefix("F") && name.count <= 3
+        guard modifiers & (KeyModifiers.command | KeyModifiers.control | KeyModifiers.option) != 0 || isFunctionKey else { return nil }
+        return (key, modifiers)
+    }
+}
+
+/// Clipboard items written out as Markdown, for exporting. Anything that looks like a secret is replaced first.
+enum ClipboardExport {
+    static func markdown(_ items: [(title: String, text: String, at: Date)], title: String = "Kriya clipboard export") -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        var out = "# \(title)\n\n"
+        for item in items {
+            let safe = SecretRedactor.redact(item.text).text
+            out += "## \(item.title.isEmpty ? formatter.string(from: item.at) : item.title)\n\n"
+            out += "~~~\n\(safe)\n~~~\n\n"
+        }
+        return out
     }
 }

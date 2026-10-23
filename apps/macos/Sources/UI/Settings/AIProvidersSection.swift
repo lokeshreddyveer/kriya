@@ -209,10 +209,21 @@ private struct AIProviderEditor: View {
 
                 Section {
                     ForEach(AIFeature.allCases) { feature in
-                        Toggle(feature.title, isOn: Binding(
+                        let info = feature.integration
+                        Toggle(isOn: Binding(
                             get: { config.enabledFeatures.contains(feature) },
                             set: { if $0 { config.enabledFeatures.insert(feature) } else { config.enabledFeatures.remove(feature) } }
-                        ))
+                        )) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 6) {
+                                    Text(feature.title)
+                                    StateBadge(text: info.level.title, color: info.level == .connected ? Theme.ok : (info.level == .partial ? Theme.warn : Theme.danger))
+                                    StateBadge(text: config.isOnThisMac ? "On this Mac" : "Sends text out", color: config.isOnThisMac ? Theme.ok : Theme.warn)
+                                }
+                                Text(info.does.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                                if !info.lacks.isEmpty { Text("Not yet: " + info.lacks.joined(separator: " · ")).font(.caption).foregroundStyle(.tertiary) }
+                            }
+                        }
                     }
                 } header: { Text("Use it for") } footer: {
                     Text(config.isOnThisMac ? "This provider runs on this Mac, so nothing leaves it." : "Text from the parts you switch on is sent to this provider, with secrets hidden first.")

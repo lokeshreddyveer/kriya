@@ -146,3 +146,24 @@ final class SemanticSearchTests: XCTestCase {
         XCTAssertTrue(index.keywordSearch("forget").isEmpty)
     }
 }
+
+final class ActivitySanitizerTests: XCTestCase {
+    private func entry(_ kind: AuditLog.Kind, _ summary: String) -> AuditLog.Entry { AuditLog.Entry(kind: kind, summary: summary, at: Date()) }
+
+    func testNamesPathsAddressesAndNumbersAreRemoved() {
+        let dirty = "Moved “Tax 2024.pdf” from /Users/lokesh/Documents to ~/Desktop via https://example.com/a?token=abc, mail lokesh@example.com, key 7f3a9c1e5b2d4f6a8c0e1d3b5a7c9e2f at 14:30 version 2.10.0"
+        let clean = ActivitySummarySanitizer.clean(dirty)
+        for leak in ["Tax", "pdf", "lokesh", "/Users", "Desktop", "example.com", "token", "7f3a9c1e", "14:30", "2.10"] { XCTAssertFalse(clean.contains(leak), "\(leak) leaked into: \(clean)") }
+        XCTAssertTrue(clean.contains("Moved"))
+    }
+
+    func testOnlyKindsThatHoldNoNamesAreIndexed() {
+        let docs = ActivitySummarySanitizer.documents(from: [
+            entry(.network, "Contacted api.openai.com"), entry(.files, "Moved “a.txt”"), entry(.script, "Script “backup” run"), entry(.install, "brew install --cask firefox"),
+            entry(.setting, "Local-only mode turned on"), entry(.backup, "Backed up to iCloud Drive"),
+        ])
+        XCTAssertEqual(Set(docs.map(\.title)), Set([AuditLog.Kind.setting.title, AuditLog.Kind.backup.title]))
+        XCTAssertTrue(docs.allSatisfy { $0.source == .activity })
+        XCTAssertTrue(ActivitySummarySanitizer.documents(from: [entry(.setting, "“x”")]).isEmpty, "nothing is left to index once the name is gone")
+    }
+}

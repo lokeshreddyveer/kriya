@@ -44,6 +44,12 @@ struct AlertPrompter: ApprovalPrompter {
 /// What a tool does when it runs. Kriya's own implementation is `LiveToolHost`; the engine never runs anything itself.
 protocol KriyaToolHost {
     func execute(_ tool: AITool, arguments: [String: JSONValue]) async throws -> String
+    /// Whether the part of Kriya behind the tool is connected. A tool that is not is refused before the person is asked anything.
+    func isAvailable(_ tool: AITool) -> Bool
+}
+
+extension KriyaToolHost {
+    func isAvailable(_ tool: AITool) -> Bool { true }
 }
 
 /// Every tool call goes through here: the name and arguments are checked, the risk decides whether to ask, the person is asked if
@@ -66,6 +72,7 @@ final class AIToolEngine {
         case .failure(let problem): return fail(problem.errorDescription ?? "The call was not valid.", call: call, ran: false)
         case .success(let found): tool = found
         }
+        if KriyaTools.tool(named: tool.name) != nil, !host.isAvailable(tool) { return fail("\(tool.name) is not connected in this version of Kriya, so it was not run.", call: call, ran: false) }
         switch AIToolPolicy.decide(tool, settings: store.toolSettings, context: context) {
         case .deny(let reason): return fail("Not allowed: \(reason)", call: call, ran: false)
         case .allow: break
@@ -106,15 +113,32 @@ final class LiveToolHost: KriyaToolHost {
     var toggleSoundMode: (String) -> String? = { _ in nil }
     var openLauncher: (String?) -> Void = { _ in }
     var runWorkflow: (String) -> Void = { _ in }
-    var runScript: ((String) -> String?)?
-    var installCask: ((String) -> Void)?
-    var changeShortcut: ((String, String) -> String?)?
-    var exportClipboard: ((Int) -> String?)?
+    var listWorkflows: () -> [String] = { [] }
+    var listScripts: () -> [String] = { [] }
+    var listCommands: (String) -> [String] = { _ in [] }
+    /// These four do real work in other parts of Kriya. Until they are connected the tool says so.
+    var runScript: ((String) async throws -> String)?
+    var installCask: ((String) async throws -> String)?
+    var changeShortcut: ((String, String) async throws -> String)?
+    var exportClipboard: ((Int) async throws -> String)?
+
+    func isAvailable(_ tool: AITool) -> Bool {
+        switch tool.name {
+        case "kriya.run_script": return runScript != nil
+        case "kriya.install_app": return installCask != nil
+        case "kriya.change_shortcut": return changeShortcut != nil
+        case "kriya.export_clipboard": return exportClipboard != nil
+        default: return true
+        }
+    }
 
     func execute(_ tool: AITool, arguments a: [String: JSONValue]) async throws -> String {
         let text = a["query"]?.stringValue ?? ""
         let limit = Int(a["limit"]?.numberValue ?? 10)
         switch tool.name {
+        case "kriya.list_workflows": return Self.lines(listWorkflows())
+        case "kriya.list_scripts": return Self.lines(listScripts())
+        case "kriya.list_commands": return Self.lines(listCommands(text))
         case "kriya.search_apps": return Self.lines(Self.apps(matching: text, limit: limit))
         case "kriya.search_files": return Self.lines(try Self.files(matching: text, limit: limit))
         case "kriya.search_notes": return Self.lines(searchNotes(text, limit))
@@ -135,13 +159,10 @@ final class LiveToolHost: KriyaToolHost {
         case "kriya.delete_file": return try Self.trash(a["path"]?.stringValue ?? "")
         case "kriya.install_app":
             guard let installCask else { throw ToolUnavailable(name: tool.name) }
-            let cask = a["cask"]?.stringValue ?? ""
-            DispatchQueue.main.async { installCask(cask) }
-            return "Started installing \(cask). Progress is in Kriya's Apps settings."
+            return try await installCask(a["cask"]?.stringValue ?? "")
         case "kriya.run_script":
             guard let runScript else { throw ToolUnavailable(name: tool.name) }
-            guard let output = runScript(a["script_id"]?.stringValue ?? "") else { throw NSError(domain: "Kriya", code: 3, userInfo: [NSLocalizedDescriptionKey: "There is no script with that id."]) }
-            return output
+            return try await runScript(a["script_id"]?.stringValue ?? "")
         case "kriya.execute_workflow":
             let id = a["workflow_id"]?.stringValue ?? ""
             guard describeWorkflow(id) != nil else { throw NSError(domain: "Kriya", code: 2, userInfo: [NSLocalizedDescriptionKey: "There is no workflow with that id."]) }
@@ -149,11 +170,10 @@ final class LiveToolHost: KriyaToolHost {
             return "Started. Kriya's own authorization and limits for workflows still apply."
         case "kriya.change_shortcut":
             guard let changeShortcut else { throw ToolUnavailable(name: tool.name) }
-            guard let message = changeShortcut(a["command"]?.stringValue ?? "", a["shortcut"]?.stringValue ?? "") else { throw NSError(domain: "Kriya", code: 4, userInfo: [NSLocalizedDescriptionKey: "That shortcut could not be set."]) }
-            return message
+            return try await changeShortcut(a["command"]?.stringValue ?? "", a["shortcut"]?.stringValue ?? "")
         case "kriya.export_clipboard":
             guard let exportClipboard else { throw ToolUnavailable(name: tool.name) }
-            return exportClipboard(limit) ?? "Nothing was exported."
+            return try await exportClipboard(limit)
         default: throw ToolUnavailable(name: tool.name)
         }
     }
@@ -245,7 +265,7 @@ final class AIAgentLoop {
 
     func run(feature: AIFeature, system: String, context: AIContext, question: String, tools: [AITool], providerID: String? = nil, requester: String = "Kriya's AI") async throws -> String {
         var messages = [AIMessage(.user, context.rendered.isEmpty ? question : context.rendered + "\n\n" + question)]
-        let toolContext = AIToolContext(feature: feature, localOnlyMode: LocalOnly.isOn, suspectedInjection: context.suspectedInjection)
+        var toolContext = AIToolContext(feature: feature, localOnlyMode: LocalOnly.isOn, suspectedInjection: context.suspectedInjection)
         for _ in 0..<Self.maxRounds {
             let response = try await gateway.generate(feature: feature, providerID: providerID,
                                                       AIRequest(system: system + "\n" + AIContextBuilder.untrustedRule, messages: messages, tools: tools), secretsHidden: context.redactionCount)
@@ -255,6 +275,8 @@ final class AIAgentLoop {
             for call in response.toolCalls {
                 let result = await engine.run(call, context: toolContext, requester: requester)
                 anyRan = anyRan || result.ran
+                // What a tool returns is data from outside. If it reads like orders, everything above reading asks from here on.
+                if !InjectionDetector.warnings(in: result.content).isEmpty { toolContext.suspectedInjection = true }
                 messages.append(AIMessage(.tool, result.content, toolCallID: call.id, toolName: call.name))
             }
             _ = anyRan

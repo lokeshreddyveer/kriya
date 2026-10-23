@@ -82,6 +82,14 @@ private struct NotesView: View {
                 HStack(spacing: 14) {
                     Button { model.newNote(); editing = true } label: { Label("New", systemImage: "square.and.pencil") }.keyboardShortcut("n")
                     Button { summarize(model.text) } label: { Label("Summarize", systemImage: "text.append") }.disabled(model.text.count < 40)
+                    Menu {
+                        Button("Suggest Tags") { NotesAI.suggestTags(model) }
+                        Button("Pull Out Tasks") { NotesAI.extractTasks(model) }
+                        Button("Tidy Up…") { NotesAI.cleanUp(model) }
+                        Divider()
+                        Button("Find Related or Duplicate Notes") { NotesAI.related(model) }
+                        Button("Turn Into a Workflow Draft") { NotesAI.toWorkflow(model) }
+                    } label: { Label("AI", systemImage: "sparkles") }.menuIndicator(.hidden).fixedSize().disabled(!AIGateway.shared.isAvailable(for: .notes) || model.text.count < 20)
                     Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.text, forType: .string) } label: { Label("Copy", systemImage: "doc.on.doc") }
                     Button { if let u = model.current { NSWorkspace.shared.activateFileViewerSelecting([u]) } } label: { Label("Show in Finder", systemImage: "folder") }.disabled(model.current == nil)
                     Spacer()

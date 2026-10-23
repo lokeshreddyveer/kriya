@@ -26,7 +26,7 @@ enum IndexSource: String, Codable, CaseIterable, Identifiable {
         case .clipboard: return "Titles and the first lines of snippets and pinned items. Never items that look like secrets."
         case .savedPages: return "Only pages you chose to save with the browser extension."
         case .bookmarks: return "Titles and addresses only, not the pages."
-        case .activity: return "Short lines saying what Kriya did, without anything you copied or typed."
+        case .activity: return "Short generic lines about settings and backups, with every name, path, address and number removed."
         }
     }
     var defaultOn: Bool { self == .notes || self == .workflows || self == .actions }
@@ -48,7 +48,7 @@ struct IndexDocument: Equatable {
 
 enum IndexPolicy {
     /// Places whose files are never indexed, whatever their source says.
-    private static let blockedPathParts = [".ssh", ".gnupg", ".aws", ".kube", ".docker", "Keychains", ".env", "id_rsa", "id_ed25519", ".netrc", ".npmrc", ".pypirc", "credentials"]
+    static let blockedPathParts = [".ssh", ".gnupg", ".aws", ".kube", ".docker", "Keychains", ".env", "id_rsa", "id_ed25519", ".netrc", ".npmrc", ".pypirc", "credentials"]
     static let maxDocumentCharacters = 60_000
     static let maxChunksPerDocument = 40
     static let maxChunksTotal = 50_000
@@ -149,5 +149,38 @@ enum HybridRanker {
     static func ftsQuery(_ text: String) -> String? {
         let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { !$0.isEmpty }.prefix(8)
         return words.isEmpty ? nil : words.map { "\"\($0)\"*" }.joined(separator: " ")
+    }
+}
+
+/// The activity log is the one source whose text was written for a person to read, not for an index, so it is cut down before it is
+/// indexed: only kinds that hold nothing about files or sites are used, and every name, path, address and number is removed.
+enum ActivitySummarySanitizer {
+    /// Kinds of audit entry that may be indexed. Network (sites), files (names), installs and scripts (names) are left out.
+    static let indexedKinds: Set<AuditLog.Kind> = [.setting, .backup]
+
+    static func clean(_ summary: String) -> String {
+        var text = summary
+        let patterns = [
+            #"“[^”]*”"#, #""[^"]*""#, #"‘[^’]*’"#, #"'[^']*'"#,                 // anything in quotes is a name
+            #"[A-Za-z][A-Za-z0-9+.\-]*://\S+"#,                                    // addresses
+            #"~?/[^\s,;:]+"#,                                                         // paths
+            #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#,                    // email addresses
+            #"\b[A-Za-z0-9_\-]{24,}\b"#,                                              // long tokens
+            #"\b\d[\d.,:\-]*\b"#,                                                   // numbers, times, versions
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            text = regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
+        }
+        text = SecretRedactor.redact(SupportScrubber.scrub(text), includePersonal: true).text
+        return text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    }
+
+    static func documents(from entries: [AuditLog.Entry], limit: Int = 300) -> [IndexDocument] {
+        entries.filter { indexedKinds.contains($0.kind) }.prefix(limit).compactMap { entry in
+            let text = clean(entry.summary)
+            guard text.count >= 4 else { return nil }
+            return IndexDocument(id: "audit:" + entry.id, source: .activity, title: entry.kind.title, text: text, target: "", updated: entry.at)
+        }
     }
 }

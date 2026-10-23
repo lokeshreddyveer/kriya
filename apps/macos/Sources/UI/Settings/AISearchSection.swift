@@ -18,16 +18,30 @@ struct AISearchSection: View {
                     ForEach(embeddingChoices) { Text($0.name + ($0.isOnThisMac ? " (on this Mac)" : "")).tag($0.id) }
                 }
                 ForEach(IndexSource.allCases) { source in
-                    Toggle(isOn: Binding(get: { indexer.isSourceOn(source) }, set: { indexer.setSource(source, on: $0) })) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(source.title)
-                            Text(source.detail + (indexer.index?.lastIndexed(source).map { " Updated \($0.formatted(.relative(presentation: .named)))." } ?? "")).font(.caption).foregroundStyle(.secondary)
+                    HStack(alignment: .top) {
+                        Toggle(isOn: Binding(get: { indexer.isSourceOn(source) }, set: { indexer.setSource(source, on: $0) })) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(source.title)
+                                Text(source.detail).font(.caption).foregroundStyle(.secondary)
+                                if indexer.isSourceOn(source) {
+                                    let last = indexer.index?.lastIndexed(source)
+                                    Text("\(indexer.documentCount(source)) items · " + (last.map { "read \($0.formatted(.relative(presentation: .named)))" } ?? "not read yet")).font(.caption).foregroundStyle(.tertiary)
+                                    if let problem = indexer.sourceNotes[source]?.problem { Text(problem).font(.caption).foregroundStyle(Theme.warn) }
+                                }
+                            }
+                        }
+                        if indexer.documentCount(source) > 0 {
+                            Button("Delete Its Data", role: .destructive) { indexer.deleteSource(source) }.controlSize(.small).accessibilityLabel("Delete \(source.title) data from the index")
                         }
                     }
                 }
                 HStack {
-                    Button("Update Now") { Task { await indexer.refresh() } }.disabled(indexer.busy)
-                    if indexer.busy { ProgressView().controlSize(.small) }
+                    Button("Update Now") { indexer.refreshNow() }.disabled(indexer.busy)
+                    if indexer.busy {
+                        ProgressView().controlSize(.small)
+                        Text(indexer.progress ?? "Working…").font(.caption).foregroundStyle(.secondary)
+                        Button("Stop") { indexer.cancel() }.controlSize(.small)
+                    }
                     Spacer()
                     Text("\(indexer.counts.documents) items · \(indexer.counts.chunks) pieces · \(indexer.counts.embedded) with meaning").font(.caption).foregroundStyle(.secondary)
                 }

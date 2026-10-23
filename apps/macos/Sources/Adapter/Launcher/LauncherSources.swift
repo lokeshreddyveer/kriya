@@ -202,7 +202,7 @@ final class LauncherSources {
         palette.addQueryProvider { [weak self] text in self?.queryEntries(text) ?? [] }
         palette.addQueryProvider { [weak self] text in self?.navigationEntries(text) ?? [] }
         palette.addQueryProvider { [weak self] text in self?.argumentEntries(text) ?? [] }
-        palette.addQueryProvider { [weak self] text in (self?.soundEntries(text) ?? []) + (self?.addressEntries(text) ?? []) + (self?.noteEntries(text) ?? []) + (self?.jobEntries(text) ?? []) + (self?.focusEntries(text) ?? []) + (self?.sharedClipboardEntries(text) ?? []) + (self?.bookmarkEntries(text) ?? []) + (self?.menuBarItemEntries(text) ?? []) + (self?.passwordEntries(text) ?? []) + (self?.terminalEntries(text) ?? []) + (self?.colorPickerEntries(text) ?? []) + (self?.aiEntries(text) ?? []) }
+        palette.addQueryProvider { [weak self] text in (self?.soundEntries(text) ?? []) + (self?.addressEntries(text) ?? []) + (self?.noteEntries(text) ?? []) + (self?.jobEntries(text) ?? []) + (self?.focusEntries(text) ?? []) + (self?.sharedClipboardEntries(text) ?? []) + (self?.bookmarkEntries(text) ?? []) + (self?.menuBarItemEntries(text) ?? []) + (self?.passwordEntries(text) ?? []) + (self?.terminalEntries(text) ?? []) + (self?.colorPickerEntries(text) ?? []) + (self?.aiEntries(text) ?? []) + (self?.aiActionEntries(text) ?? []) }
         palette.addQueryProvider { [weak self] text in (self?.quitEntries(text) ?? []) + (self?.menuEntries(text) ?? []) + (self?.contactEntries(text) ?? []) }
         palette.model.tokenProvider = { [weak self] word in self?.token(for: word) }
         palette.model.startProvider = { [weak self] in self?.startEntries() ?? [] }
@@ -622,6 +622,11 @@ final class LauncherSources {
             if entry.appBundleID == nil {
                 list.append(PaletteAction(title: "Open With…", symbol: "arrow.up.forward.app") { Self.openWith(url) })
                 if !entry.isDirectory { list.append(PaletteAction(title: "Quick Look", symbol: "eye") { Self.quickLook(url) }) }
+                if !entry.isDirectory && AIGateway.shared.isAvailable(for: .finder) {
+                    list.append(PaletteAction(title: "Summarize with AI", symbol: "doc.text.magnifyingglass") { FinderAI.summarize(url) })
+                    list.append(PaletteAction(title: "Suggest tags with AI", symbol: "tag") { FinderAI.suggestTags(for: url) })
+                    list.append(PaletteAction(title: "Suggest a name with AI", symbol: "textformat.abc") { FinderAI.suggestNames(for: [url]) })
+                }
                 list.append(PaletteAction(title: "Get Info", symbol: "info.circle") { ScriptOutputWindow.show(title: url.lastPathComponent, text: FileMetadata.describe(url)) })
                 list.append(PaletteAction(title: "Share…", symbol: "square.and.arrow.up") { FinderMetadata.share([url]) })
                 list.append(PaletteAction(title: "Add to the File Buffer", symbol: "tray.and.arrow.down", keepsOpen: true) { [weak self] in self?.fileBuffer.add(url) })

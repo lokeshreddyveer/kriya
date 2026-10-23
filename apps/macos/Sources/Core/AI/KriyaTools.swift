@@ -20,6 +20,9 @@ enum KriyaTools {
     static let idPattern = #"^[A-Za-z0-9_.:@\-]{1,100}$"#
 
     static let all: [AITool] = [
+        AITool(name: "kriya.list_workflows", description: "The user's workflows: each one's id and name, so one can be previewed or run.", parameters: object([:]), risk: .readOnly),
+        AITool(name: "kriya.list_scripts", description: "The scripts the user added to the launcher: each one's id and name. The scripts' text is not shown.", parameters: object([:]), risk: .readOnly),
+        AITool(name: "kriya.list_commands", description: "Kriya's commands that can have a shortcut: each one's name and title.", parameters: object(["query": text("Part of the title", max: 100, min: 0)]), risk: .readOnly),
         AITool(name: "kriya.search_apps", description: "Find installed apps by name.", parameters: object(["query": text("Part of the app's name", max: 100), "limit": whole("How many to return", min: 1, max: 25)], required: ["query"]), risk: .readOnly),
         AITool(name: "kriya.search_files", description: "Find files by name in the user's folders.", parameters: object(["query": text("Part of the file name", max: 100), "limit": whole("How many to return", min: 1, max: 25)], required: ["query"]), risk: .readOnly),
         AITool(name: "kriya.search_notes", description: "Find notes by words in their title or text.", parameters: object(["query": text("Words to look for", max: 100), "limit": whole("How many to return", min: 1, max: 15)], required: ["query"]), risk: .readOnly),
@@ -36,7 +39,7 @@ enum KriyaTools {
         AITool(name: "kriya.run_script", description: "Run a script the user already added to the launcher, by its id. Text of a script cannot be given.", parameters: object(["script_id": text("The script's id", max: 100, pattern: idPattern)], required: ["script_id"]), risk: .privileged),
         AITool(name: "kriya.execute_workflow", description: "Run a saved workflow by its id. It must already be authorized by the user.", parameters: object(["workflow_id": text("The workflow's id", max: 100, pattern: idPattern)], required: ["workflow_id"]), risk: .privileged),
         AITool(name: "kriya.change_shortcut", description: "Change the key combination of a Kriya command.", parameters: object(["command": text("The command's name", max: 100, pattern: idPattern), "shortcut": text("For example cmd+shift+k", max: 40, pattern: #"^[A-Za-z0-9+ ]{1,40}$"#)], required: ["command", "shortcut"]), risk: .privileged),
-        AITool(name: "kriya.export_clipboard", description: "Export chosen clipboard items to a file the user picks.", parameters: object(["limit": whole("How many recent items", min: 1, max: 50)], required: ["limit"]), risk: .privileged),
+        AITool(name: "kriya.export_clipboard", description: "Export the most recent clipboard items, without anything that looks like a secret, to a Markdown file the user chooses in a save panel.", parameters: object(["limit": whole("How many recent items", min: 1, max: 50)], required: ["limit"]), risk: .privileged),
     ]
 
     static func tool(named name: String) -> AITool? { all.first { $0.name == name } }

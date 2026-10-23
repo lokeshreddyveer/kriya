@@ -12,6 +12,8 @@ const MENU = [
   { id: "kriya-page-copy", title: "Copy Page as Markdown (Kriya)", contexts: ["page"] },
   { id: "kriya-page-shelf", title: "Put Page on Kriya's Shelf", contexts: ["page"] },
   { id: "kriya-page-pdf", title: "Save Page as PDF (Kriya)", contexts: ["page"] },
+  { id: "kriya-page-summarize", title: "Summarize Page with Kriya AI", contexts: ["page"] },
+  { id: "kriya-page-ask", title: "Ask About This Page (Kriya AI)", contexts: ["page"] },
 ];
 
 const PAGE_ACTIONS = {
@@ -19,6 +21,8 @@ const PAGE_ACTIONS = {
   "kriya-page-copy": "copy",
   "kriya-page-shelf": "shelf",
   "kriya-page-pdf": "pdf",
+  "kriya-page-summarize": "summarize",
+  "kriya-page-ask": "ask",
 };
 
 // Reads the readable text of the tab you chose it in, and hands it to Kriya. The text is not kept here.
@@ -28,7 +32,7 @@ async function sendPage(tab, as) {
     const results = await api.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract.js"] });
     const page = results && results[0] && results[0].result;
     if (!page || !page.markdown) { flag("!", "Kriya found no readable text on this page."); return; }
-    await deliver({ type: "page", as, title: page.title, url: page.url, site: page.site, byline: page.byline, markdown: page.markdown, truncated: !!page.truncated });
+    await deliver({ type: "page", as, title: page.title, url: page.url, site: page.site, byline: page.byline, markdown: page.markdown, truncated: !!page.truncated, private: !!(tab && tab.incognito) });
   } catch (error) {
     flag("!", "Kriya could not read this page. Browser pages and the store cannot be read.");
   }

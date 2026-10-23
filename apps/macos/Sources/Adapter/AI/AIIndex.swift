@@ -158,6 +158,10 @@ final class AIIndex {
         (try? rows("SELECT last_indexed FROM sources WHERE source = ?", [.text(source.rawValue)]) { sqlite3_column_type($0, 0) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double($0, 0)) }.first) ?? nil
     }
 
+    func documentCount(_ source: IndexSource) -> Int {
+        (try? rows("SELECT COUNT(*) FROM documents WHERE source = ?", [.text(source.rawValue)]) { Int(sqlite3_column_int64($0, 0)) }.first) ?? 0
+    }
+
     func counts() -> (documents: Int, chunks: Int, embedded: Int) {
         func n(_ sql: String) -> Int { (try? rows(sql, []) { Int(sqlite3_column_int64($0, 0)) }.first) ?? 0 }
         return (n("SELECT COUNT(*) FROM documents"), n("SELECT COUNT(*) FROM chunks"), n("SELECT COUNT(*) FROM embeddings"))

@@ -20,6 +20,14 @@ final class AIIndexer: ObservableObject {
     @Published var enabled: Bool { didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); FeatureActivity.shared.changed("semanticSearch", enabled ? "Turned on" : "Turned off"); if enabled { Task { await refresh() } } } }
     @Published private(set) var status: String?
     @Published private(set) var busy = false
+    /// What is being read right now, for the settings screen.
+    @Published private(set) var progress: String?
+    /// For each source: how many documents it holds, when it was last read, and what went wrong.
+    @Published private(set) var sourceNotes: [IndexSource: SourceNote] = [:]
+
+    struct SourceNote: Equatable {
+        var problem: String?
+    }
     @Published private(set) var counts: (documents: Int, chunks: Int, embedded: Int) = (0, 0, 0)
 
     /// What each source offers, set by the app. Each is called on the main thread.
@@ -33,6 +41,26 @@ final class AIIndexer: ObservableObject {
         self.index = index
         enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         counts = index?.counts() ?? (0, 0, 0)
+    }
+
+    private var currentTask: Task<Void, Never>?
+
+    /// Starts an update that can be stopped.
+    func refreshNow() {
+        guard currentTask == nil else { return }
+        currentTask = Task { await refresh(); await MainActor.run { currentTask = nil } }
+    }
+
+    func cancel() { currentTask?.cancel() }
+
+    func documentCount(_ source: IndexSource) -> Int { index?.documentCount(source) ?? 0 }
+
+    /// Removes what one source added, and leaves the others.
+    func deleteSource(_ source: IndexSource) {
+        try? index?.removeSource(source)
+        counts = index?.counts() ?? counts
+        sourceNotes[source] = nil
+        objectWillChange.send()
     }
 
     func start() {
@@ -64,20 +92,33 @@ final class AIIndexer: ObservableObject {
         guard enabled, let index, !busy else { return }
         await MainActor.run { busy = true; status = "Updating the index…" }
         let enabledSources = index.enabledSources
+        var stopped = false
         for source in IndexSource.allCases where enabledSources.contains(source) {
+            if Task.isCancelled { stopped = true; break }
             guard let provider = providers[source] else { continue }
+            await MainActor.run { progress = "Reading \(source.title)…" }
             let documents = await MainActor.run { provider() }
             var ids = Set<String>()
-            for raw in documents {
+            var failed = 0
+            for (n, raw) in documents.enumerated() {
+                if n % 25 == 0 && Task.isCancelled { stopped = true; break }
                 guard let doc = IndexPolicy.prepare(raw, enabled: enabledSources) else { continue }
                 ids.insert(doc.id)
-                try? index.upsert(doc)
+                do { try index.upsert(doc) } catch { failed += 1 }
+                if n % 25 == 0 { await MainActor.run { progress = "Reading \(source.title): \(n) of \(documents.count)" } }
             }
+            if stopped { break }
             try? index.prune(source, keeping: ids)
             index.markIndexed(source)
+            await MainActor.run { sourceNotes[source] = SourceNote(problem: failed > 0 ? "\(failed) item\(failed == 1 ? "" : "s") could not be stored" : nil) }
         }
-        await embedPending()
-        await MainActor.run { counts = index.counts(); busy = false; if status == "Updating the index…" { status = "Up to date." } }
+        if !stopped { await embedPending() }
+        await MainActor.run {
+            counts = index.counts()
+            busy = false
+            progress = nil
+            status = stopped ? "Stopped. What was read so far is kept." : (status == "Updating the index…" ? "Up to date." : status)
+        }
     }
 
     /// The model name the vectors are stored under, so vectors from another model are never compared.

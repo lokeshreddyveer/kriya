@@ -251,3 +251,72 @@ final class AIToolEngineTests: XCTestCase {
         XCTAssertTrue(readOnly.ran, "reading public information needs no list")
     }
 }
+
+final class ShortcutTextTests: XCTestCase {
+    func testShortcutsWrittenInWordsAreUnderstood() throws {
+        let a = try XCTUnwrap(ShortcutText.parse("cmd+shift+k"))
+        XCTAssertEqual(a.keyCode, 40)
+        XCTAssertEqual(a.modifiers, KeyModifiers.command | KeyModifiers.shift)
+        let b = try XCTUnwrap(ShortcutText.parse("Ctrl + Option + Space"))
+        XCTAssertEqual(b.keyCode, 49)
+        XCTAssertEqual(b.modifiers, KeyModifiers.control | KeyModifiers.option)
+        XCTAssertEqual(ShortcutText.parse("⌘⇧k")?.keyCode, nil, "glyph runs without separators are not guessed")
+        XCTAssertNotNil(ShortcutText.parse("f5"), "function keys may stand alone")
+        XCTAssertNotNil(ShortcutText.parse("cmd+esc"))
+    }
+
+    func testCombinationsThatWouldTakeOverTypingOrAreNonsenseAreRefused() {
+        XCTAssertNil(ShortcutText.parse("k"), "a bare letter")
+        XCTAssertNil(ShortcutText.parse("shift+k"), "shift alone does not protect typing")
+        XCTAssertNil(ShortcutText.parse("cmd"), "no key")
+        XCTAssertNil(ShortcutText.parse("cmd+k+j"), "two keys")
+        XCTAssertNil(ShortcutText.parse("cmd+bogus"))
+        XCTAssertNil(ShortcutText.parse(""))
+        XCTAssertNil(ShortcutText.parse("cmd+shift+opt+ctrl+fn+k+x"))
+    }
+}
+
+final class ClipboardExportTests: XCTestCase {
+    func testSecretsAreHiddenAndFencesCannotBeBrokenOut() {
+        let md = ClipboardExport.markdown([(title: "", text: "token sk-abcdefghijklmnopqrstuvwxyz\n~~~\n# not a heading", at: Date(timeIntervalSince1970: 0)), (title: "Greeting", text: "hello", at: Date())])
+        XCTAssertFalse(md.contains("sk-abcdefgh"))
+        XCTAssertTrue(md.contains("## Greeting"))
+        XCTAssertTrue(md.hasPrefix("# Kriya clipboard export"))
+    }
+}
+
+final class ToolAvailabilityTests: XCTestCase {
+    final class Host: KriyaToolHost {
+        var available = false
+        var ran = false
+        func execute(_ tool: AITool, arguments: [String: JSONValue]) async throws -> String { ran = true; return "ok" }
+        func isAvailable(_ tool: AITool) -> Bool { available }
+    }
+    final class CountingPrompter: ApprovalPrompter {
+        var asked = 0
+        func confirm(tool: AITool, arguments: String, reason: String, requester: String, allowRemember: Bool) async -> (allowed: Bool, remember: Bool) { asked += 1; return (true, false) }
+    }
+
+    func testAToolThatIsNotConnectedIsRefusedWithoutAskingAnything() async {
+        let host = Host(), prompter = CountingPrompter()
+        let engine = AIToolEngine()
+        engine.host = host
+        engine.prompter = prompter
+        engine.store = AIProviderStore(defaults: UserDefaults(suiteName: "kriya-avail-\(UUID().uuidString)")!)
+        engine.store.toolSettings.toolsByFeature["launcher"] = ["kriya.run_script"]
+        let call = AIToolCall(id: "1", name: "kriya.run_script", arguments: ["script_id": .string("abc")])
+        let context = AIToolContext(feature: .launcher, localOnlyMode: false, suspectedInjection: false)
+        let refused = await engine.run(call, context: context)
+        XCTAssertFalse(refused.ran)
+        XCTAssertTrue(refused.content.contains("not connected"))
+        XCTAssertEqual(prompter.asked, 0, "no question about something that cannot run")
+        host.available = true
+        let ran = await engine.run(call, context: context)
+        XCTAssertTrue(ran.ran)
+        XCTAssertEqual(prompter.asked, 1)
+    }
+
+    func testTheListToolsExistSoAModelCanFindIds() {
+        for name in ["kriya.list_workflows", "kriya.list_scripts", "kriya.list_commands"] { XCTAssertEqual(KriyaTools.tool(named: name)?.risk, .readOnly, name) }
+    }
+}

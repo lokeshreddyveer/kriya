@@ -196,6 +196,24 @@ struct MCPServerConfig: Codable, Equatable, Identifiable {
 enum MCPClientRules {
     static let maxResultCharacters = 20_000
     static let maxTools = 100
+    static let maxSchemaBytes = 20_000
+    static let maxSchemaDepth = 8
+
+    /// A tool description made safe to put in front of a model: one line, no control characters, and cut short. Wording that tries to
+    /// give the model orders is flagged separately so the person can see it before allowing the tool.
+    static func cleanDescription(_ text: String) -> String {
+        String(String(text.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) }).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").prefix(300))
+    }
+
+    static func descriptionWarnings(_ text: String) -> [String] { InjectionDetector.warnings(in: text) }
+
+    static func depth(_ value: JSONValue) -> Int {
+        switch value {
+        case .object(let o): return 1 + (o.values.map(depth).max() ?? 0)
+        case .array(let a): return 1 + (a.map(depth).max() ?? 0)
+        default: return 0
+        }
+    }
 
     /// An MCP tool result as plain text. Pictures and other kinds are named, not passed along.
     static func text(from result: JSONValue) -> (text: String, isError: Bool) {
@@ -212,8 +230,8 @@ enum MCPClientRules {
         (result["tools"]?.arrayValue ?? []).prefix(maxTools).compactMap { entry in
             guard let name = entry["name"]?.stringValue, name.range(of: #"^[A-Za-z0-9_.\-]{1,64}$"#, options: .regularExpression) != nil else { return nil }
             let schema = entry["inputSchema"] ?? .object(["type": .string("object")])
-            guard schema["type"]?.stringValue == "object" else { return nil }
-            return AITool(name: name, description: String((entry["description"]?.stringValue ?? "").prefix(300)), parameters: schema, risk: .privileged)
+            guard schema["type"]?.stringValue == "object", schema.text.utf8.count <= maxSchemaBytes, depth(schema) <= maxSchemaDepth else { return nil }
+            return AITool(name: name, description: cleanDescription(entry["description"]?.stringValue ?? ""), parameters: schema, risk: .privileged)
         }
     }
 

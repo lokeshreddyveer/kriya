@@ -22,7 +22,7 @@ final class FinderService: ObservableObject {
 
     let destinations: FolderDestinations
 
-    init(store: FinderStore, history: FileOperationHistory = FileOperationHistory(), destinations: FolderDestinations = .shared) {
+    init(store: FinderStore, history: FileOperationHistory = .shared, destinations: FolderDestinations = .shared) {
         self.store = store
         self.destinations = destinations
         runner = FileActionRunner(store: store, history: history, destinations: destinations)

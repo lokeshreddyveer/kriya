@@ -16,6 +16,7 @@ struct AIToolsSection: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(tool.name).font(.callout.monospaced())
                             Text(tool.risk.title).font(.caption).foregroundStyle(tool.risk >= .destructive ? Theme.warn : Color.secondary)
+                            if !AIToolEngine.shared.host.isAvailable(tool) { Text("Not connected in this version: it is refused without asking.").font(.caption).foregroundStyle(Theme.danger) }
                         }
                         Spacer()
                         if tool.risk >= .destructive {
@@ -162,7 +163,13 @@ private struct MCPServerEditor: View {
                             Toggle(isOn: Binding(get: { config.isToolAllowed(tool.name) }, set: { on in
                                 if on { config.allowedTools.append(tool.name) } else { config.allowedTools.removeAll { $0 == tool.name } }
                             })) {
-                                VStack(alignment: .leading, spacing: 1) { Text(tool.name).font(.callout.monospaced()); Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(tool.name).font(.callout.monospaced())
+                                    Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                    if !MCPClientRules.descriptionWarnings(tool.description).isEmpty {
+                                        Label("Its description has wording that looks like instructions to an AI. Do not allow it unless you trust the server.", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(Theme.warn)
+                                    }
+                                }
                             }
                             Picker("", selection: Binding(get: { config.toolRisk[tool.name] ?? (config.transport == .http ? .externalNetwork : .privileged) }, set: { config.toolRisk[tool.name] = $0 })) {
                                 ForEach(AIRisk.allCases, id: \.self) { Text($0.title).tag($0) }

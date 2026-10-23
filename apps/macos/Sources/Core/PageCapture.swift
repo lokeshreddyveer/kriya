@@ -8,6 +8,8 @@ struct PageClip: Codable, Equatable {
     var byline: String
     var markdown: String
     var truncated: Bool
+    /// The page was in a private or incognito window. Such a page is never given to an AI.
+    var isPrivate: Bool? = nil
 }
 
 enum PageAction: String, CaseIterable {
@@ -17,6 +19,10 @@ enum PageAction: String, CaseIterable {
     case copy
     /// Save the Markdown file and put it on the shelf.
     case shelf
+    /// Give the page's text to the AI provider chosen for browser pages, and show a summary. Asks permission for the site first.
+    case summarize
+    /// The same, with a question typed in.
+    case ask
     /// Save as a PDF.
     case pdf
 }
@@ -37,7 +43,7 @@ enum PageCapture {
         let title = BridgeProtocol.clipped(message["title"], BridgeProtocol.maxTitleLength) ?? url.host ?? "Page"
         let clip = PageClip(
             title: title, url: url.absoluteString, site: BridgeProtocol.clipped(message["site"], 100) ?? "", byline: BridgeProtocol.clipped(message["byline"], 100) ?? "",
-            markdown: markdown, truncated: message["truncated"] as? Bool ?? false
+            markdown: markdown, truncated: message["truncated"] as? Bool ?? false, isPrivate: message["private"] as? Bool
         )
         return .success((clip, action))
     }

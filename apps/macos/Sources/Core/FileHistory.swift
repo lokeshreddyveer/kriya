@@ -182,6 +182,8 @@ enum FileUndo {
 /// The recent file operations, newest first. Kept in the app's preferences, so an undo is still possible after Kriya
 /// restarts; each entry is dropped after two weeks.
 final class FileOperationHistory: ObservableObject {
+    /// The one history every part of Kriya writes to, so a change made from anywhere can be undone from the Finder screen.
+    static let shared = FileOperationHistory()
     static let limit = 25
     static let maxAge: TimeInterval = 14 * 24 * 3600
 

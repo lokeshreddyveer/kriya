@@ -42,6 +42,8 @@ final class PageCaptureService {
                 toast.show("Saved \(url.lastPathComponent) in Kriya Pages")
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             }
+        case .summarize, .ask:
+            PageAI.run(action, on: clip)
         case .shelf:
             if let url = write(Data(markdown.utf8), stem: PageCapture.fileStem(for: clip.title), ext: "md") {
                 shelf.add(file: url)

@@ -607,6 +607,7 @@ extension AppEnvironment {
         }
         host.openLauncher = { [weak keyboard] query in keyboard?.palette.show(prefill: query) }
         configureAIIndex()
+        configureAIToolActions()
         host.runWorkflow = { [weak automation] id in automation?.fire(id, source: "AI tool") }
     }
 }
@@ -652,10 +653,99 @@ extension AppEnvironment {
         indexer.providers[.bookmarks] = { [weak self] in
             (self?.launcherSources?.bookmarks.all ?? []).prefix(2000).map { IndexDocument(id: "bookmark:" + $0.url, source: .bookmarks, title: $0.title, text: $0.url, target: $0.url, updated: Date(timeIntervalSince1970: 0)) }
         }
-        indexer.providers[.activity] = {
-            let entries = AuditLog.shared.entries.prefix(300)
-            return entries.map { IndexDocument(id: "audit:" + $0.id, source: .activity, title: $0.kind.title, text: $0.summary, target: "", updated: $0.at) }
-        }
+        indexer.providers[.activity] = { ActivitySummarySanitizer.documents(from: AuditLog.shared.entries) }
         indexer.start()
+    }
+}
+
+
+extension AppEnvironment {
+    /// The four tools that act on the Mac, connected to the parts of Kriya that already do these things. Each still asks the person
+    /// first (the engine does that) and each is limited to what a person could do by hand in that part of Kriya.
+    fileprivate func configureAIToolActions() {
+        guard let host = AIToolEngine.shared.host as? LiveToolHost else { return }
+        NotesAI.workflowStore = automation.store
+        AudioAI.runner = soundRules
+        AudioAI.appAudio = appAudio
+        func failure(_ text: String) -> Error { NSError(domain: "Kriya", code: 20, userInfo: [NSLocalizedDescriptionKey: text]) }
+
+        host.listWorkflows = { [weak self] in
+            DispatchQueue.main.sync { (self?.automation.store.workflows ?? []).prefix(60).map { "\($0.id) — \($0.name)\($0.enabled ? "" : " (switched off)")" } }
+        }
+        host.listScripts = { [weak self] in
+            DispatchQueue.main.sync { (self?.launcherTools.extras.scripts ?? []).prefix(60).map { "\($0.id) — \($0.name)" } }
+        }
+        host.listCommands = { query in
+            DispatchQueue.main.sync {
+                KeyboardCommands.all.filter { query.isEmpty || $0.title.lowercased().contains(query.lowercased()) || $0.command.contains(query.lowercased()) }.prefix(40).map { "\($0.command) — \($0.title)" }
+            }
+        }
+
+        host.runScript = { [weak self] id in
+            let script: ScriptCommand? = DispatchQueue.main.sync { self?.launcherTools.extras.scripts.first { $0.id == id } }
+            guard let script else { throw failure("There is no launcher script with that id.") }
+            // The same first-run check as running it from the launcher: the script's text, shown to the person, approved by its content.
+            let approved: Bool = DispatchQueue.main.sync {
+                LauncherApprovals.shared.ensureApproved(kind: "script", label: script.name, content: script.source, detail: "An AI asked to run this launcher script. It runs with your access to this Mac. Read it first.")
+            }
+            guard approved else { throw failure("The script was not approved.") }
+            AuditLog.shared.record(.script, "Launcher script “\(script.name)” run for an AI")
+            let environment = ["PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "KRIYA_ARGUMENT": ""]
+            let output = try ToolRunner.run("/bin/zsh", ["-c", script.source, "kriya-script", ""], environment: environment, timeout: 60)
+            return output.isEmpty ? "\(script.name) finished and printed nothing." : String(output.suffix(4000))
+        }
+
+        host.installCask = { [weak self] cask in
+            try await MainActor.run {
+                guard let brew = self?.homebrew else { throw failure("Homebrew is not available.") }
+                guard HomebrewParsing.isValidToken(cask) else { throw failure("That is not a valid cask name.") }
+                guard brew.brewPath != nil else { throw failure("Homebrew is not installed on this Mac.") }
+                guard !LocalOnly.isOn else { throw failure(LocalOnly.blockedMessage) }
+                guard !brew.isRunning else { throw failure("Another install is running. Wait for it to finish.") }
+                brew.install([cask])
+                return "Started installing \(cask). Progress, a Stop button and the log are in Kriya's Apps settings."
+            }
+        }
+
+        host.changeShortcut = { [weak self] command, text in
+            try await MainActor.run {
+                guard let store = self?.keyboard.store else { throw failure("Shortcuts are not available.") }
+                guard let known = KeyboardCommands.all.first(where: { $0.command == command }) else { throw failure("There is no command with that name. Use kriya.list_commands to see them.") }
+                guard let parsed = ShortcutText.parse(text) else { throw failure("That is not a shortcut Kriya accepts. Write it like cmd+shift+k, and include command, control or option.") }
+                var candidate = store.shortcuts.first { if case .command(let c) = $0.target { return c == command }; return false }
+                    ?? KeyShortcut(id: UUID().uuidString, name: known.title, keyCode: parsed.keyCode, modifiers: parsed.modifiers, scope: .global, target: .command(command: command), enabled: true)
+                let before = candidate.keyCode == parsed.keyCode && candidate.modifiers == parsed.modifiers
+                candidate.keyCode = parsed.keyCode
+                candidate.modifiers = parsed.modifiers
+                if before { return "\(known.title) already uses \(KeyNames.describe(keyCode: parsed.keyCode, modifiers: parsed.modifiers))." }
+                let conflicts = store.checkShortcut(candidate)
+                guard conflicts.isEmpty else { throw failure("\(KeyNames.describe(keyCode: parsed.keyCode, modifiers: parsed.modifiers)) clashes with \(conflicts.count) other shortcut\(conflicts.count == 1 ? "" : "s") or one macOS keeps, so it was not set.") }
+                store.saveShortcut(candidate)
+                AuditLog.shared.record(.setting, "Shortcut for “\(known.title)” set by an AI")
+                FeatureActivity.shared.changed("keyboard", "Shortcut for \(known.title) changed")
+                return "\(known.title) now uses \(KeyNames.describe(keyCode: parsed.keyCode, modifiers: parsed.modifiers)). You can change it back in Keyboard settings."
+            }
+        }
+
+        host.exportClipboard = { [weak self] limit in
+            try await MainActor.run {
+                guard let store = self?.clipboardStore else { throw failure("The clipboard history is not available.") }
+                let filter = ClipFilter(kinds: [], pinnedOnly: false, favoritesOnly: false, collectionId: nil, tag: nil)
+                let items: [(title: String, text: String, at: Date)] = store.search("", filter: filter, limit: UInt32(max(1, min(limit, 50)))).compactMap { clip in
+                    guard !clip.sensitive, clip.kind == .text || clip.kind == .url, let text = store.blob(clip.id)?.plain else { return nil }
+                    return (clip.title ?? "", text, Date(timeIntervalSince1970: TimeInterval(clip.createdAt)))
+                }
+                guard !items.isEmpty else { throw failure("There is nothing to export: no recent text items, or they all looked like secrets.") }
+                let panel = NSSavePanel()
+                panel.allowedContentTypes = [.plainText]
+                panel.nameFieldStringValue = "Kriya clipboard export.md"
+                panel.message = "An AI asked to export \(items.count) recent clipboard item\(items.count == 1 ? "" : "s"). Items that look like secrets are left out."
+                NSApp.activate(ignoringOtherApps: true)
+                guard panel.runModal() == .OK, let url = panel.url else { throw failure("The person chose not to save the export.") }
+                try ClipboardExport.markdown(items).write(to: url, atomically: true, encoding: .utf8)
+                AuditLog.shared.record(.files, "Clipboard export saved for an AI (\(items.count) items)")
+                return "Saved \(items.count) item\(items.count == 1 ? "" : "s") to \(url.lastPathComponent)."
+            }
+        }
     }
 }

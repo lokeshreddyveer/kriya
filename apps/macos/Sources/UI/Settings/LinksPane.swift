@@ -163,6 +163,8 @@ private struct BrowsersTab: View {
                 Text("Safari asks you which sites the extension may use, and reads a page only when you choose a Kriya item for it in the right-click menu. The extension cannot reach the network or start programs. It leaves each request as a small file in a folder only you can read, and Kriya checks it and deletes it.")
             }
 
+            AIPageSitesSection()
+
             Section {
                 LabeledContent("Requests handled", value: "\(bridge.handled)")
                 if bridge.refused > 0 { LabeledContent("Refused", value: "\(bridge.refused)") }
@@ -506,5 +508,28 @@ private struct LogTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+
+/// The sites whose pages the person let an AI read, and the ones it must never read.
+private struct AIPageSitesSection: View {
+    @ObservedObject private var permissions = PageAIPermissions.shared
+
+    var body: some View {
+        Section {
+            if permissions.allowed.isEmpty && permissions.blocked.isEmpty {
+                Text("No site has been allowed or blocked yet. Kriya asks the first time you use “Summarize Page with Kriya AI” or “Ask About This Page” on a site.").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(permissions.allowed.sorted(), id: \.self) { host in
+                HStack { Label(host, systemImage: "checkmark.circle").foregroundStyle(Theme.ok); Spacer(); Text("Allowed").font(.caption).foregroundStyle(.secondary); Button("Forget") { permissions.forget(host) }.controlSize(.small) }
+            }
+            ForEach(permissions.blocked.sorted(), id: \.self) { host in
+                HStack { Label(host, systemImage: "nosign").foregroundStyle(Theme.danger); Spacer(); Text("Never").font(.caption).foregroundStyle(.secondary); Button("Forget") { permissions.forget(host) }.controlSize(.small) }
+            }
+            if !permissions.allowed.isEmpty || !permissions.blocked.isEmpty { Button("Forget All Sites", role: .destructive) { permissions.clear() }.controlSize(.small) }
+        } header: { Text("AI and web pages") } footer: {
+            Text("A page is read by the browser extension only when you choose a Kriya item for it. Pages in private windows are never sent. Pages on a private network, and ones that look like a bank, mail or sign-in page, are not sent to a provider outside this Mac without asking each time.")
+        }
     }
 }
