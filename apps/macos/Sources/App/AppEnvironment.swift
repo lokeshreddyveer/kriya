@@ -334,6 +334,8 @@ final class AppEnvironment {
         systemMonitor.start()
         appAudio.start()
         soundRules.start()
+        MIDITriggerRunner.shared.start()
+        LocationAudioRunner.shared.start()
         focusSession.start()
         worldClock.meetings = launcherTools.meetings
         worldClock.start()

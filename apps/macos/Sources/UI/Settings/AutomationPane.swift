@@ -274,6 +274,8 @@ private struct SafetyTab: View {
                 }
             }
 
+            MIDITriggersSection()
+
             Section {
                 let authorized = store.workflows.filter { $0.authorizedFingerprint != nil }
                 if authorized.isEmpty { Text("None.").font(.callout).foregroundStyle(.secondary) }
@@ -963,6 +965,54 @@ private struct ActionFields: View {
             TextEditor(text: Binding(get: { source }, set: { action = .runScript(language: language, source: $0) })).font(.system(.callout, design: .monospaced)).frame(height: 70)
         case .noop, .sequence, .click:
             Text(action.summary).font(.callout).foregroundStyle(.secondary)
+        }
+    }
+}
+
+
+/// Buttons, pads and knobs on a MIDI device that start a workflow, a saved action or a Kriya command.
+private struct MIDITriggersSection: View {
+    @ObservedObject private var runner = MIDITriggerRunner.shared
+    @EnvironmentObject private var store: WorkflowStore
+
+    var body: some View {
+        Section {
+            Toggle("Listen to MIDI devices", isOn: $runner.enabled)
+            if runner.enabled {
+                HStack {
+                    Text(runner.sources == 0 ? "No MIDI device is connected." : "\(runner.sources) MIDI source\(runner.sources == 1 ? "" : "s") connected.").font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    if let heard = runner.lastHeard { Text("Last: \(heard.kind.title) \(heard.number) · channel \(heard.channel)").font(.caption).foregroundStyle(.secondary) }
+                }
+                ForEach($runner.triggers) { $trigger in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Toggle("", isOn: $trigger.enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            Text(trigger.summary).font(.headline)
+                            Spacer()
+                            Button(role: .destructive) { runner.triggers.removeAll { $0.id == trigger.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete trigger")
+                        }
+                        HStack {
+                            Picker("Runs", selection: $trigger.target) { ForEach(MIDITrigger.Target.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 190)
+                            if trigger.target == .workflow {
+                                Picker("", selection: $trigger.targetID) {
+                                    Text("Choose…").tag("")
+                                    ForEach(store.workflows) { Text($0.name).tag($0.id) }
+                                }.labelsHidden()
+                            } else {
+                                TextField(trigger.target == .command ? "Command name, such as audio.mute" : "Action id", text: $trigger.targetID)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                HStack {
+                    Button(runner.learning ? "Press a key, pad or knob…" : "Learn a Control") { runner.learn() }.disabled(runner.learning)
+                    Spacer()
+                }
+            }
+        } header: { Text("MIDI triggers") } footer: {
+            Text("Press “Learn a Control”, then play a note or turn a knob on your device; it becomes a trigger you point at a workflow or command. A workflow still needs your authorization before it will run. Only notes, knobs and program changes are read, and nothing you play is kept.")
         }
     }
 }

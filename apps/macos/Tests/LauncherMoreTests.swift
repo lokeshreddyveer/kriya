@@ -253,3 +253,72 @@ final class PermissionChangeTests: XCTestCase {
         XCTAssertTrue(PermissionChange.notice(.accessibility, from: .denied, to: .granted)?.contains("is on") == true)
     }
 }
+
+final class MIDITriggerTests: XCTestCase {
+    func testMessagesAreReadFromBytes() {
+        let bytes: [UInt8] = [0x90, 60, 100,  0x90, 62, 0,  0xB1, 7, 64,  0xC2, 5,  0xF8,  0x80, 60, 0]
+        XCTAssertEqual(MIDIMessage.parse(bytes), [
+            MIDIMessage(kind: .noteOn, channel: 1, number: 60, value: 100),
+            MIDIMessage(kind: .controlChange, channel: 2, number: 7, value: 64),
+            MIDIMessage(kind: .programChange, channel: 3, number: 5, value: 0),
+        ], "a note on with no force, clock and note off are skipped")
+        XCTAssertTrue(MIDIMessage.parse([0x90, 60]).isEmpty, "a cut-off message is ignored")
+        XCTAssertTrue(MIDIMessage.parse([]).isEmpty)
+    }
+
+    func testATriggerMatchesItsControlOnly() {
+        var trigger = MIDITrigger()
+        trigger.number = 60; trigger.channel = 1; trigger.targetID = "wf1"
+        let hit = MIDIMessage(kind: .noteOn, channel: 1, number: 60, value: 90)
+        XCTAssertTrue(trigger.matches(hit))
+        XCTAssertFalse(trigger.matches(MIDIMessage(kind: .noteOn, channel: 2, number: 60, value: 90)))
+        XCTAssertFalse(trigger.matches(MIDIMessage(kind: .noteOn, channel: 1, number: 61, value: 90)))
+        XCTAssertFalse(trigger.matches(MIDIMessage(kind: .controlChange, channel: 1, number: 60, value: 90)))
+        trigger.channel = nil
+        XCTAssertTrue(trigger.matches(MIDIMessage(kind: .noteOn, channel: 9, number: 60, value: 1)), "any channel")
+        trigger.enabled = false
+        XCTAssertFalse(trigger.matches(hit))
+    }
+
+    func testOnlyTriggersWithAValidTargetFire() {
+        var good = MIDITrigger(); good.targetID = "wf-1"
+        var bad = MIDITrigger(); bad.targetID = "a b; rm"
+        let message = MIDIMessage(kind: .noteOn, channel: 1, number: 60, value: 50)
+        XCTAssertEqual(MIDITriggers.firing(for: message, in: [good, bad]).map(\.id), [good.id])
+        XCTAssertEqual(good.remoteCommand, .workflow("wf-1"))
+        good.target = .command
+        XCTAssertEqual(good.remoteCommand, .command("wf-1"))
+    }
+
+    func testLearningMakesATriggerFromTheMessage() {
+        let trigger = MIDITriggers.learned(from: MIDIMessage(kind: .controlChange, channel: 4, number: 21, value: 99))
+        XCTAssertEqual(trigger.kind, .controlChange)
+        XCTAssertEqual(trigger.channel, 4)
+        XCTAssertEqual(trigger.number, 21)
+        XCTAssertEqual(trigger.minValue, 0, "a knob fires at every position")
+    }
+}
+
+final class PlaceRuleTests: XCTestCase {
+    private let home = PlaceRule(name: "Home", latitude: 51.5007, longitude: -0.1246, radius: 200, outputContains: "Speakers")
+    private let work = PlaceRule(name: "Work", latitude: 51.5033, longitude: -0.1195, radius: 200, outputContains: "Display")
+
+    func testDistanceIsInMetres() {
+        XCTAssertEqual(PlaceRules.distance(0, 0, 0, 0), 0, accuracy: 0.001)
+        XCTAssertEqual(PlaceRules.distance(0, 0, 0, 1), 111_195, accuracy: 200)
+    }
+
+    func testTheNearestPlaceInsideItsRadiusWins() {
+        XCTAssertEqual(PlaceRules.place(at: 51.5008, -0.1245, in: [work, home])?.name, "Home")
+        XCTAssertEqual(PlaceRules.place(at: 51.5033, -0.1196, in: [work, home])?.name, "Work")
+        XCTAssertNil(PlaceRules.place(at: 40, -74, in: [work, home]))
+    }
+
+    func testBadPositionsAndSwitchedOffPlacesMatchNothing() {
+        XCTAssertNil(PlaceRules.place(at: 999, 0, in: [home]))
+        var off = home; off.enabled = false
+        XCTAssertNil(PlaceRules.place(at: 51.5007, -0.1246, in: [off]))
+        var noOutput = home; noOutput.outputContains = ""
+        XCTAssertNil(PlaceRules.place(at: 51.5007, -0.1246, in: [noOutput]))
+    }
+}

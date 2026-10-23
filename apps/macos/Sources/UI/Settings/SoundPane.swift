@@ -46,6 +46,11 @@ struct SoundPane: View {
                 Text("Remembering volumes gives each output the level you last left it at when it reconnects. The test tone is a quiet beep from the left, right or both speakers. A profile file holds your rules, modes and remembered volumes so they can be moved to another Mac.")
             }
             Section {
+                PlacesSection()
+            } header: { Text("Sound by place") } footer: {
+                Text("Save a place with the output to use there, and Kriya switches to it when this Mac arrives. It asks macOS for Location the first time. The position is compared on this Mac and is never stored or sent.")
+            }
+            Section {
                 BluetoothSection()
             } header: { Text("Bluetooth audio") } footer: {
                 Text("Connect or disconnect headphones and speakers that are already paired in System Settings. macOS asks Kriya for Bluetooth access the first time. Kriya cannot pair new devices.")
@@ -589,6 +594,37 @@ private struct DeviceExtrasSection: View {
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
             Spacer()
             Button("Forget Remembered Volumes", role: .destructive) { runner.forgetVolumes() }.controlSize(.small)
+        }
+    }
+}
+
+
+private struct PlacesSection: View {
+    @ObservedObject private var runner = LocationAudioRunner.shared
+    @State private var name = ""
+    @State private var output = ""
+
+    var body: some View {
+        Toggle("Switch the output by place", isOn: $runner.enabled)
+        if let problem = runner.problem { Text(problem).font(.caption).foregroundStyle(Theme.warn) }
+        if let here = runner.currentPlace { Text("Now at: \(here)").font(.callout).foregroundStyle(.secondary) }
+        ForEach($runner.places) { $place in
+            HStack {
+                Toggle("", isOn: $place.enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(place.name)
+                    Text("Use “\(place.outputContains)” within \(Int(place.radius)) m").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Stepper("", value: $place.radius, in: PlaceRules.radiusRange, step: 50).labelsHidden().accessibilityLabel("Distance in metres")
+                Button(role: .destructive) { runner.places.removeAll { $0.id == place.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete \(place.name)")
+            }
+        }
+        HStack {
+            TextField("Place name", text: $name)
+            TextField("Output name contains", text: $output)
+            Button("Save Where I Am") { runner.addCurrentPlace(named: name, output: output); name = ""; output = "" }
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || output.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }
 }
