@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import Kriya
 
 final class LauncherFilterTests: XCTestCase {
@@ -590,5 +591,70 @@ final class DDCTests: XCTestCase {
             MonitorSetting(monitor: "Gone", brightnessPercent: 10, inputCode: nil),
         ])
         XCTAssertEqual(MonitorPresets.plan(preset, connected: ["Studio"]), ["Studio: brightness 40%, input DisplayPort 1", "Gone: not connected, skipped"])
+    }
+}
+
+final class ExtensionBundleTests: XCTestCase {
+    private func draft() -> ExtensionManifest {
+        ExtensionManifest(id: "acme.tools", name: "Acme Tools", version: "1.0.0", author: "Acme", summary: nil, publisherKey: "", permissions: [.clipboard],
+                          commands: [ExtensionCommand(id: "hello", title: "Say hello", subtitle: nil, script: "scripts/hello.sh", arguments: nil, symbol: nil)], files: [:], signature: nil)
+    }
+    private let files: [String: Data] = ["scripts/hello.sh": Data("echo hi".utf8)]
+
+    func testASignedBundleVerifiesAndATamperedOneDoesNot() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let signed = try ExtensionBundle.sign(draft(), files: files, with: key)
+        XCTAssertNoThrow(try ExtensionBundle.verify(signed, listing: ["scripts/hello.sh"]) { self.files[$0] })
+
+        XCTAssertThrowsError(try ExtensionBundle.verify(signed, listing: ["scripts/hello.sh"]) { _ in Data("echo evil".utf8) }) { XCTAssertEqual($0 as? ExtensionProblem, .fileChanged("scripts/hello.sh")) }
+        XCTAssertThrowsError(try ExtensionBundle.verify(signed, listing: ["scripts/hello.sh", "extra.sh"]) { self.files[$0] }) { XCTAssertEqual($0 as? ExtensionProblem, .unlistedFile("extra.sh")) }
+        XCTAssertThrowsError(try ExtensionBundle.verify(signed, listing: []) { _ in nil }) { XCTAssertEqual($0 as? ExtensionProblem, .fileMissing("scripts/hello.sh")) }
+
+        var renamed = signed; renamed.name = "Evil Tools"
+        XCTAssertThrowsError(try ExtensionBundle.verify(renamed, listing: ["scripts/hello.sh"]) { self.files[$0] }) { XCTAssertEqual($0 as? ExtensionProblem, .badSignature) }
+        var permitted = signed; permitted.permissions = [.clipboard, .network]
+        XCTAssertThrowsError(try ExtensionBundle.verify(permitted, listing: ["scripts/hello.sh"]) { self.files[$0] }, "adding a permission breaks the signature")
+
+        var swapped = signed; swapped.publisherKey = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation.base64EncodedString()
+        XCTAssertThrowsError(try ExtensionBundle.verify(swapped, listing: ["scripts/hello.sh"]) { self.files[$0] }) { XCTAssertEqual($0 as? ExtensionProblem, .badSignature) }
+
+        var unsigned = signed; unsigned.signature = nil
+        XCTAssertThrowsError(try ExtensionBundle.verify(unsigned, listing: ["scripts/hello.sh"]) { self.files[$0] }) { XCTAssertEqual($0 as? ExtensionProblem, .notSigned) }
+    }
+
+    func testPathsCannotEscapeTheBundle() {
+        for bad in ["../x.sh", "/etc/passwd", "a/../../b", ".hidden", "a//b", "manifest.json", "", "a/.git/x", "x;rm.sh"] {
+            XCTAssertFalse(ExtensionBundle.isSafeRelativePath(bad), bad)
+        }
+        XCTAssertTrue(ExtensionBundle.isSafeRelativePath("scripts/hello world.sh"))
+        var m = draft(); m.commands[0].script = "../outside.sh"
+        XCTAssertThrowsError(try ExtensionBundle.sign(m, files: ["../outside.sh": Data()], with: Curve25519.Signing.PrivateKey()))
+    }
+
+    func testUpdatesNeedTheSamePublisherAndANewerVersion() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let v1 = try ExtensionBundle.sign(draft(), files: files, with: key)
+        var next = draft(); next.version = "1.1.0"
+        let v2 = try ExtensionBundle.sign(next, files: files, with: key)
+        XCTAssertNoThrow(try ExtensionBundle.checkUpdate(new: v2, installed: v1))
+        XCTAssertThrowsError(try ExtensionBundle.checkUpdate(new: v1, installed: v2)) { XCTAssertEqual($0 as? ExtensionProblem, .olderVersion(installed: "1.1.0")) }
+        let other = try ExtensionBundle.sign(next, files: files, with: Curve25519.Signing.PrivateKey())
+        XCTAssertThrowsError(try ExtensionBundle.checkUpdate(new: other, installed: v1)) { XCTAssertEqual($0 as? ExtensionProblem, .sameIDDifferentPublisher) }
+        XCTAssertNoThrow(try ExtensionBundle.checkUpdate(new: v1, installed: nil))
+        XCTAssertEqual(ExtensionBundle.compareVersions("1.10", "1.9"), 1)
+        XCTAssertEqual(ExtensionBundle.compareVersions("2", "2.0.0"), 0)
+    }
+
+    func testShapeAndFingerprints() throws {
+        var m = draft(); m.id = "Bad ID"; m.commands.append(m.commands[0])
+        let problems = ExtensionBundle.shapeProblems(m)
+        XCTAssertTrue(problems.contains { $0.contains("id must be") })
+        XCTAssertTrue(problems.contains { $0.contains("share an id") })
+        let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation.base64EncodedString()
+        let print = ExtensionBundle.fingerprint(ofKey: key)
+        XCTAssertEqual(print.split(separator: " ").count, 4)
+        XCTAssertEqual(print, ExtensionBundle.fingerprint(ofKey: key))
+        XCTAssertEqual(ExtensionBundle.interpreter(for: "a/b.py")?.path, "/usr/bin/python3")
+        XCTAssertNil(ExtensionBundle.interpreter(for: "tool"))
     }
 }

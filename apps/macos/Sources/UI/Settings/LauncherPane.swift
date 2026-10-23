@@ -268,6 +268,8 @@ struct LauncherPane: View {
             }
             .onAppear { loadSpotlightStatus() }
 
+            ExtensionsSection()
+
             Section {
                 Toggle("Ask before a script or API command runs for the first time", isOn: $approvals.asksFirst)
                 ForEach(approvals.approved) { item in
@@ -648,5 +650,96 @@ private struct APICommandEditor: View {
                 await MainActor.run { testResult = error.localizedDescription; testing = false }
             }
         }
+    }
+}
+
+
+/// Signed extension bundles: install from a folder, switch on, remove, and sign one's own.
+private struct ExtensionsSection: View {
+    @ObservedObject private var catalog = ExtensionCatalog.shared
+    @State private var message: String?
+
+    var body: some View {
+        Section {
+            if catalog.installed.isEmpty { Text("No extensions are installed.").font(.callout).foregroundStyle(.secondary) }
+            ForEach(catalog.installed) { ext in
+                HStack(alignment: .top) {
+                    Toggle("", isOn: Binding(get: { ext.enabled }, set: { catalog.setEnabled(ext.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        .accessibilityLabel("Turn \(ext.manifest.name) on")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(ext.manifest.name)  \(ext.manifest.version)").font(.headline)
+                        Text("\(ext.manifest.author) · \(ext.manifest.commands.count) command\(ext.manifest.commands.count == 1 ? "" : "s")" + (ext.manifest.permissions.isEmpty ? "" : " · " + ext.manifest.permissions.map(\.title).joined(separator: ", ")))
+                            .font(.caption).foregroundStyle(.secondary)
+                        if let summary = ext.manifest.summary { Text(summary).font(.caption).foregroundStyle(.secondary) }
+                    }
+                    Spacer()
+                    Button(role: .destructive) { catalog.uninstall(ext.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Remove \(ext.manifest.name)")
+                }
+            }
+            HStack {
+                Button("Install from a Folder…") { install() }
+                if let message { Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+            }
+            ForEach(catalog.trusted.sorted { $0.key < $1.key }, id: \.key) { fingerprint, name in
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) { Text(name); Text(fingerprint).font(.caption.monospaced()).foregroundStyle(.secondary) }
+                    Spacer()
+                    Button("Stop Trusting") { catalog.untrust(fingerprint) }.controlSize(.small)
+                }
+            }
+            DisclosureGroup("Publish your own") {
+                if catalog.hasSigningKey {
+                    LabeledContent("Your key", value: catalog.signingFingerprint ?? "?")
+                    Button("Sign a Folder…") { signFolder() }
+                } else {
+                    Button("Make a Signing Key") { if !catalog.createSigningKey() { message = "The key could not be saved in the Keychain." } }
+                }
+                Text("Put a manifest.json (id, name, version, author, commands) and the scripts in a folder, then sign it. Signing lists every file with its hash and signs the lot with your key, so anyone installing it can tell it is yours and unchanged.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } header: { Text("Extensions") } footer: {
+            Text("An extension is a signed folder of scripts that adds commands to the launcher. Kriya checks the signature and every file before installing, asks you to trust the publisher by their key's fingerprint, installs it switched off, checks it again before each run, and asks before the first run of each command. Scripts run with your access to this Mac, so install only ones you have read or trust.")
+        }
+    }
+
+    private func install() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "Check"
+        panel.message = "Choose the extension's folder."
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        do {
+            let candidate = try catalog.inspect(folder)
+            let alert = NSAlert()
+            let m = candidate.manifest
+            alert.messageText = "Install “\(m.name)” \(m.version)?"
+            alert.informativeText = """
+            Publisher: \(m.author)
+            Key fingerprint: \(candidate.fingerprint)\(candidate.publisherTrusted ? " (trusted)" : " (not trusted yet)")
+            \(candidate.installedVersion.map { "Replaces version \($0).\n" } ?? "")
+            Commands: \(m.commands.map(\.title).joined(separator: ", "))
+            May: \(m.permissions.isEmpty ? "nothing beyond running its commands" : m.permissions.map(\.title).joined(separator: ", "))
+
+            It is installed switched off. Only trust the key if you have checked the fingerprint with its publisher.
+            """
+            alert.addButton(withTitle: candidate.publisherTrusted ? "Install" : "Trust Publisher and Install")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            if !candidate.publisherTrusted { catalog.trust(fingerprint: candidate.fingerprint, name: m.author) }
+            try catalog.install(candidate)
+            message = "Installed. Switch it on to use its commands."
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func signFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "Sign"
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        do { try catalog.sign(folder: folder); message = "Signed \(folder.lastPathComponent)." } catch { message = error.localizedDescription }
     }
 }

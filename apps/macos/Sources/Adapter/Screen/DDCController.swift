@@ -200,12 +200,12 @@ final class DDCController: ObservableObject {
         var iterator: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("DCPAVServiceProxy"), &iterator) == KERN_SUCCESS else { return [] }
         defer { IOObjectRelease(iterator) }
-        var out: [(io_service_t, String)] = []
+        var out: [(service: io_service_t, name: String)] = []
         var entry = IOIteratorNext(iterator)
         while entry != 0 {
             let location = IORegistryEntryCreateCFProperty(entry, "Location" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String
             if location == "External" {
-                out.append((entry, name(of: entry) ?? "Monitor \(out.count + 1)"))
+                out.append((service: entry, name: name(of: entry) ?? "Monitor \(out.count + 1)"))
             } else {
                 IOObjectRelease(entry)
             }

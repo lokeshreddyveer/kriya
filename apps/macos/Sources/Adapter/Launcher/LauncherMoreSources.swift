@@ -98,6 +98,17 @@ extension LauncherSources {
         }
     }
 
+    /// Commands of the extensions that are switched on.
+    func extensionEntries() -> [PaletteEntry] {
+        guard prefs.data.isEnabled(.command) else { return [] }
+        return ExtensionCatalog.shared.installed.filter(\.enabled).flatMap { ext in
+            ext.manifest.commands.map { command in
+                PaletteEntry(id: "extension:\(ext.id):\(command.id)", title: command.title, subtitle: command.subtitle ?? ext.manifest.name, symbol: command.symbol ?? "puzzlepiece.extension", category: .command,
+                             keywords: ["extension", ext.manifest.name.lowercased(), ext.id]) { ExtensionCatalog.shared.run(command, of: ext) }
+            }
+        }
+    }
+
     /// Apps used lately, offered when the box is empty.
     func recentAppEntries(limit: Int = 6) -> [(entry: PaletteEntry, section: String)] {
         guard prefs.data.isEnabled(.app) else { return [] }
