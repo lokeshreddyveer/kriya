@@ -214,6 +214,7 @@ final class DeviceRegistry: ObservableObject {
         }
         if liveCounts[described.id] == 1 {
             history.connected(described.id, at: Date())
+            DeviceTimelineStore.shared.record(described.name, connected: true)
             Log.info("Devices", "Connected: \(described.name) (\(described.connection.title), \(described.transport))")
             refreshStatus()
         }
@@ -230,6 +231,7 @@ final class DeviceRegistry: ObservableObject {
             try? core.touchDevice(id: id, lastSeen: now)
             records[id]?.lastSeen = now
             history.disconnected(id)
+            DeviceTimelineStore.shared.record(records[id]?.name ?? id, connected: false)
             Log.info("Devices", "Disconnected: \(records[id]?.name ?? id)")
         }
         publish()
@@ -310,4 +312,25 @@ private func hidDeviceAdded(_ context: UnsafeMutableRawPointer?, _ result: IORet
 private func hidDeviceRemoved(_ context: UnsafeMutableRawPointer?, _ result: IOReturn, _ sender: UnsafeMutableRawPointer?, _ device: IOHIDDevice) {
     guard let context else { return }
     Unmanaged<DeviceRegistry>.fromOpaque(context).takeUnretainedValue().handleRemoved(device)
+}
+
+
+/// The device timeline, kept in preferences.
+final class DeviceTimelineStore: ObservableObject {
+    static let shared = DeviceTimelineStore()
+    private let key = "deviceTimeline.v1"
+    @Published private(set) var timeline: DeviceTimeline
+
+    private init() {
+        timeline = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(DeviceTimeline.self, from: $0) } ?? DeviceTimeline()
+    }
+
+    func record(_ device: String, connected: Bool) {
+        DispatchQueue.main.async { [self] in
+            timeline.record(device, connected: connected, at: Date())
+            if let data = try? JSONEncoder().encode(timeline) { UserDefaults.standard.set(data, forKey: key) }
+        }
+    }
+
+    func clear() { timeline = DeviceTimeline(); UserDefaults.standard.removeObject(forKey: key) }
 }

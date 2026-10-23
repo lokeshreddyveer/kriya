@@ -436,11 +436,29 @@ private struct PointerEditor: View {
 private struct ButtonsEditor: View {
     let presetID: String
     @EnvironmentObject private var mouse: MouseStore
+    @EnvironmentObject private var library: ActionLibrary
+    @State private var simButton: UInt32 = 3
+    @State private var simModifiers: UInt64 = 0
+    @State private var simHeld = false
 
     private var rules: Binding<[ButtonRule]> { mouse.binding(presetID, \.buttons) }
 
     var body: some View {
         Form {
+            Section {
+                Picker("Press", selection: $simButton) { ForEach(MouseButtons.remappable, id: \.self) { Text(MouseButtons.name($0)).tag($0) } }
+                Picker("With", selection: $simModifiers) { ForEach(KeyModifiers.choices, id: \.bits) { Text($0.title).tag($0.bits) } }
+                Toggle("Hold it", isOn: $simHeld)
+                if let settings = mouse.presets.first(where: { $0.id == presetID })?.settings {
+                    let result = RuleSimulator.simulate(settings, button: simButton, modifiers: simModifiers, held: simHeld, actionName: { id in library.actions.first { $0.id == id }?.name ?? id })
+                    switch result.outcome {
+                    case .runs(let id): Label("Runs “\(library.actions.first { $0.id == id }?.name ?? id)”", systemImage: "checkmark.circle").foregroundStyle(Theme.ok)
+                    case .ambiguous: Label("More than one rule fits", systemImage: "exclamationmark.triangle").foregroundStyle(Theme.warn)
+                    case .nothing: Label("Nothing happens", systemImage: "minus.circle").foregroundStyle(.secondary)
+                    }
+                    ForEach(result.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+                }
+            } header: { Text("If I press this…") } footer: { Text("Tries the rules below without pressing anything.") }
             Section {
                 if rules.wrappedValue.isEmpty {
                     Text("No button rules. Add one to make an extra button, the middle button, or a button with a key held do something.")

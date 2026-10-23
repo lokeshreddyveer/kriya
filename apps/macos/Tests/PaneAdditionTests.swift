@@ -369,3 +369,61 @@ final class ResourceAlertTests: XCTestCase {
         XCTAssertEqual(ResourceAlertConfig(enabled: true, cpuPercent: 5, cpuSeconds: 1, memoryPercent: 500, diskFreeGB: 0, batteryHealthBelow: 0).clamped.cpuPercent, 50)
     }
 }
+
+final class InputToolsTests: XCTestCase {
+    private func settings(_ rules: [ButtonRule], gestureButton: UInt32? = nil) -> MouseSettings {
+        var s = defaultMouseSettings()
+        s.buttons = rules
+        if let gestureButton { s.gestures.enabled = true; s.gestures.activationButton = gestureButton }
+        return s
+    }
+
+    func testTheSimulatorSaysWhatARuleWouldDoAndWhatSharesItsButton() {
+        let click = ButtonRule(button: 3, modifiers: 0, actionId: "back", trigger: .click)
+        let hold = ButtonRule(button: 3, modifiers: 0, actionId: "mc", trigger: .hold)
+        let s = settings([click, hold])
+        XCTAssertEqual(RuleSimulator.simulate(s, button: 3, modifiers: 0, held: false, actionName: { $0 }).outcome, .runs(actionID: "back"))
+        XCTAssertEqual(RuleSimulator.simulate(s, button: 3, modifiers: 0, held: true, actionName: { $0 }).outcome, .runs(actionID: "mc"))
+        XCTAssertTrue(RuleSimulator.simulate(s, button: 3, modifiers: 0, held: false, actionName: { $0 }).notes.contains { $0.contains("hold rule") })
+        let none = RuleSimulator.simulate(s, button: 4, modifiers: 0, held: false, actionName: { $0 })
+        XCTAssertEqual(none.outcome, .nothing)
+    }
+
+    func testModifiersGesturesAndDuplicatesAreExplained() {
+        let withKey = ButtonRule(button: 3, modifiers: KeyModifiers.command, actionId: "a", trigger: .click)
+        let result = RuleSimulator.simulate(settings([withKey]), button: 3, modifiers: 0, held: false, actionName: { $0 })
+        XCTAssertEqual(result.outcome, .nothing)
+        XCTAssertTrue(result.notes.contains { $0.contains("different modifier keys") })
+        let gesture = RuleSimulator.simulate(settings([], gestureButton: 4), button: 4, modifiers: 0, held: false, actionName: { $0 })
+        XCTAssertTrue(gesture.notes.contains { $0.contains("swipe gesture") })
+        let twice = settings([ButtonRule(button: 3, modifiers: 0, actionId: "a", trigger: .click), ButtonRule(button: 3, modifiers: 0, actionId: "b", trigger: .click)])
+        XCTAssertEqual(RuleSimulator.simulate(twice, button: 3, modifiers: 0, held: false, actionName: { $0 }).outcome, .ambiguous(actionIDs: ["a", "b"]))
+    }
+
+    func testPointerProfilesTurnEffectsOnAndAccessibilityIsLargest() {
+        var a = PointerEffectsStore.blank, b = a
+        PointerProfile.presentation.apply(to: &a)
+        PointerProfile.accessibility.apply(to: &b)
+        XCTAssertTrue(a.enabled && a.haloEnabled && a.clickEnabled && a.showWhenSharing)
+        XCTAssertGreaterThan(b.haloSize, a.haloSize)
+        var r = a
+        PointerProfile.recording.apply(to: &r)
+        XCTAssertFalse(r.haloEnabled)
+        XCTAssertEqual(PointerProfile.allCases.count, 4)
+    }
+
+    func testDeviceHealthFallsWithEachDropInADayAndNeedsHistory() {
+        let now = Date(timeIntervalSince1970: 1_760_000_000)
+        var t = DeviceTimeline()
+        XCTAssertNil(t.health(of: "Mouse", now: now))
+        t.record("Mouse", connected: true, at: now.addingTimeInterval(-90_000))
+        XCTAssertEqual(t.health(of: "Mouse", now: now), 100)
+        for i in 0..<4 { t.record("Mouse", connected: false, at: now.addingTimeInterval(Double(-i * 600))) }
+        XCTAssertEqual(t.health(of: "Mouse", now: now), 40)
+        XCTAssertEqual(DeviceTimeline.describe(health: 40), "Keeps disconnecting")
+        XCTAssertEqual(DeviceTimeline.describe(health: 100), "Steady")
+        for _ in 0..<400 { t.record("Pad", connected: true, at: now) }
+        XCTAssertEqual(t.events.count, DeviceTimeline.limit)
+        XCTAssertTrue(t.events(for: "Mouse").count < 5)
+    }
+}

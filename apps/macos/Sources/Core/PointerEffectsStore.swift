@@ -22,7 +22,7 @@ extension Color {
 
 /// Settings for the pointer effects.
 final class PointerEffectsStore: ObservableObject {
-    @Published private(set) var config = PointerEffectsConfig(
+    static let blank = PointerEffectsConfig(
         enabled: false, haloEnabled: false, haloStyle: .filled, haloSize: 64, haloColor: "#D4A84B", haloOpacity: 0.35, haloPulse: false,
         clickEnabled: false, clickSize: 56, clickDurationMs: 450, leftClickColor: "#6F94B8", rightClickColor: "#C77B6E",
         locateSize: 240, magnifierZoom: 2.5, magnifierSize: 220, magnifierShape: .circle, hideWhenIdle: false, hideAfterSeconds: 5,
@@ -30,6 +30,7 @@ final class PointerEffectsStore: ObservableObject {
         spotlightSize: 300, spotlightDim: 0.6, spotlightShape: .circle,
         spotlightKey: nil, spotlightModifiers: 0, presentationKey: nil, presentationModifiers: 0, presentationSpotlight: false
     )
+    @Published private(set) var config = PointerEffectsStore.blank
     @Published var lastError: String?
     /// Whether presentation mode and the spotlight are on right now. Not saved: they start off each time Kriya starts.
     @Published var presentationOn = false

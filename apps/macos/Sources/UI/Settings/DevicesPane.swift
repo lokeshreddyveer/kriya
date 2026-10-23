@@ -53,6 +53,10 @@ struct DevicesPane: View {
                 }
             }
 
+            if !DeviceTimelineStore.shared.timeline.events.isEmpty {
+                DeviceTimelineSection()
+            }
+
             Section {
                 ForEach(context) { line in
                     HStack(alignment: .top, spacing: 10) {
@@ -200,5 +204,30 @@ private struct DeviceRow: View {
         let new = trimmed.isEmpty ? nil : trimmed
         guard new != device.record.nickname else { return }
         registry.setNickname(new, for: device.id)
+    }
+}
+
+
+private struct DeviceTimelineSection: View {
+    @ObservedObject private var store = DeviceTimelineStore.shared
+
+    var body: some View {
+        let names = Array(Set(store.timeline.events.map(\.device))).sorted()
+        Section {
+            ForEach(names, id: \.self) { name in
+                if let health = store.timeline.health(of: name, now: Date()) {
+                    HStack { Text(name); Spacer(); Text("\(health) · \(DeviceTimeline.describe(health: health))").foregroundStyle(.secondary).font(.callout) }
+                }
+            }
+            ForEach(store.timeline.events.prefix(8)) { event in
+                HStack {
+                    Image(systemName: event.connected ? "plus.circle" : "minus.circle").foregroundStyle(event.connected ? Theme.ok : Theme.warn)
+                    Text("\(event.device) \(event.connected ? "connected" : "disconnected")")
+                    Spacer()
+                    Text(event.at.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                }.font(.callout)
+            }
+            Button("Clear Timeline") { store.clear() }.controlSize(.small)
+        } header: { Text("Connection timeline") } footer: { Text("When each device connected or disconnected. A device that keeps dropping scores lower.") }
     }
 }

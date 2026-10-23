@@ -34,6 +34,13 @@ struct PointerPane: View {
             .paneHeader()
 
             Form {
+                Section {
+                    HStack {
+                        ForEach(PointerProfile.allCases) { profile in
+                            Button(profile.title) { store.update { profile.apply(to: &$0) } }.help(profile.summary).controlSize(.small)
+                        }
+                    }
+                } header: { Text("Quick profiles") } footer: { Text("Each sets the halo, click rings and sharing together. Change any of them afterwards below.") }
                 switch tab {
                 case .everyday: everyday
                 case .presentation: presentation
