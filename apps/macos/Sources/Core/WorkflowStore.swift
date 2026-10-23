@@ -188,6 +188,23 @@ final class WorkflowStore: ObservableObject {
         }
     }
 
+    /// The earlier saved versions of a workflow, newest first.
+    func versions(of id: String) -> [WorkflowVersion] { (try? core.workflowVersions(id: id)) ?? [] }
+
+    /// Brings an earlier version back as a new save. It must be allowed to run again before it does.
+    @discardableResult
+    func restore(_ id: String, revision: UInt32) -> Bool {
+        do {
+            _ = try core.restoreWorkflowVersion(id: id, revision: revision, now: SystemInfo.nowSeconds)
+            lastError = nil
+            reload()
+            return true
+        } catch {
+            lastError = error.userMessage
+            return false
+        }
+    }
+
     func delete(_ id: String) { perform { try core.deleteWorkflow(id: id) } }
     func setEnabled(_ id: String, _ on: Bool) { perform { try core.setWorkflowEnabled(id: id, enabled: on) } }
     func authorize(_ id: String) { perform { try core.authorizeWorkflow(id: id) } }

@@ -28,6 +28,8 @@ pub const MAX_TIMEOUT_SECONDS: u32 = 600;
 pub const MAX_CHAIN_DEPTH: u32 = 5;
 pub const MAX_PACKAGE_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_RUNS_KEPT: i64 = 300;
+/// How many earlier saved versions of each workflow are kept.
+pub const MAX_VERSIONS_KEPT: i64 = 20;
 /// A step may be tried again this many times after it fails.
 pub const MAX_RETRIES: u32 = 5;
 pub const DEFAULT_RETRY_DELAY_MS: u32 = 1_000;
@@ -3157,5 +3159,62 @@ mod tests {
         assert_eq!(serde_json::from_str::<Workflow>(&json).unwrap(), w);
         assert_eq!(w.command(), "workflow.a");
         assert_eq!(w.steps[0].title(), "Go");
+    }
+}
+
+/// One earlier saved version of a workflow, for looking back and going back to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct WorkflowVersion {
+    pub workflow_id: String,
+    pub revision: u32,
+    pub saved_at: i64,
+    pub name: String,
+    pub step_count: u32,
+    /// What changed from the version before it, in words ("2 steps added", "renamed").
+    pub change: String,
+}
+
+/// A short description of how `new` differs from `old`.
+pub fn describe_change(old: Option<&Workflow>, new: &Workflow) -> String {
+    let Some(old) = old else {
+        return "created".to_string();
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if old.name != new.name {
+        parts.push("renamed".to_string());
+    }
+    let (a, b) = (old.steps.len(), new.steps.len());
+    if b > a {
+        parts.push(format!(
+            "{} step{} added",
+            b - a,
+            if b - a == 1 { "" } else { "s" }
+        ));
+    } else if a > b {
+        parts.push(format!(
+            "{} step{} removed",
+            a - b,
+            if a - b == 1 { "" } else { "s" }
+        ));
+    } else if old.steps != new.steps {
+        parts.push("steps changed".to_string());
+    }
+    if old.trigger != new.trigger {
+        parts.push("trigger changed".to_string());
+    }
+    if old.enabled != new.enabled {
+        parts.push(
+            if new.enabled {
+                "switched on"
+            } else {
+                "switched off"
+            }
+            .to_string(),
+        );
+    }
+    if parts.is_empty() {
+        "saved".to_string()
+    } else {
+        parts.join(", ")
     }
 }

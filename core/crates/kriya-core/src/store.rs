@@ -99,6 +99,15 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX workflow_runs_started ON workflow_runs(started_at DESC);
 "#,
+    r#"
+    CREATE TABLE workflow_versions (
+        workflow_id   TEXT NOT NULL,
+        revision      INTEGER NOT NULL,
+        saved_at      INTEGER NOT NULL,
+        workflow_json TEXT NOT NULL,
+        PRIMARY KEY (workflow_id, revision)
+    );
+"#,
 ];
 
 pub struct Store {

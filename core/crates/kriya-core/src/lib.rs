@@ -108,7 +108,7 @@ pub use workflow::{
     DependencyKind, Edge, EvalContext, MacroGroup, MacroItem, OnError, PackageReport, Risk,
     RunStatus, StepKind, StepResult, StepRisk, StepStatus, StepTemplate, SystemOp, TrackpadGesture,
     TriggerTemplate, Workflow, WorkflowDependency, WorkflowRun, WorkflowStep, WorkflowTemplate,
-    WorkflowTrigger,
+    WorkflowTrigger, WorkflowVersion,
 };
 pub use workspace::{FavoriteWindow, Workspace, WorkspaceConfig};
 
@@ -1849,6 +1849,19 @@ impl KriyaCore {
     ) -> Result<Vec<WorkflowRun>, CoreError> {
         self.store
             .workflow_runs(workflow_id.as_deref(), limit as usize)
+    }
+
+    pub fn workflow_versions(&self, id: String) -> Result<Vec<WorkflowVersion>, CoreError> {
+        self.store.workflow_versions(&id)
+    }
+
+    pub fn restore_workflow_version(
+        &self,
+        id: String,
+        revision: u32,
+        now: i64,
+    ) -> Result<Workflow, CoreError> {
+        self.store.restore_workflow_version(&id, revision, now)
     }
 
     pub fn clear_workflow_runs(&self) -> Result<(), CoreError> {

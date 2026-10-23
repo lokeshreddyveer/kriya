@@ -10,7 +10,7 @@ use crate::error::CoreError;
 use crate::store::Store;
 use crate::workflow::{
     duplicate, export_package, find_cycle, fingerprint, import_package, StepKind, Workflow,
-    WorkflowRun, MAX_RUNS_KEPT, MAX_WORKFLOWS,
+    WorkflowRun, WorkflowVersion, MAX_RUNS_KEPT, MAX_VERSIONS_KEPT, MAX_WORKFLOWS,
 };
 
 impl Store {
@@ -59,7 +59,67 @@ impl Store {
             )));
         }
         write_json(&conn, "workflows", &all)?;
+        remember_version(&conn, &w, now)?;
         Ok(w)
+    }
+
+    /// The saved versions of a workflow, newest first.
+    pub fn workflow_versions(&self, id: &str) -> Result<Vec<WorkflowVersion>, CoreError> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT revision, saved_at, workflow_json FROM workflow_versions WHERE workflow_id = ?1 ORDER BY revision DESC",
+        )?;
+        let rows: Vec<(u32, i64, String)> = statement
+            .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        let parsed: Vec<(u32, i64, Workflow)> = rows
+            .into_iter()
+            .filter_map(|(revision, saved_at, json)| {
+                serde_json::from_str::<Workflow>(&json)
+                    .ok()
+                    .map(|w| (revision, saved_at, w))
+            })
+            .collect();
+        Ok(parsed
+            .iter()
+            .enumerate()
+            .map(|(i, (revision, saved_at, w))| WorkflowVersion {
+                workflow_id: id.to_string(),
+                revision: *revision,
+                saved_at: *saved_at,
+                name: w.name.clone(),
+                step_count: w.steps.len() as u32,
+                change: crate::workflow::describe_change(parsed.get(i + 1).map(|p| &p.2), w),
+            })
+            .collect())
+    }
+
+    /// Brings back an earlier version as a new save. It is never authorized to run until the person allows it again,
+    /// and a workflow that was off stays off.
+    pub fn restore_workflow_version(
+        &self,
+        id: &str,
+        revision: u32,
+        now: i64,
+    ) -> Result<Workflow, CoreError> {
+        let json: String = self
+            .conn()
+            .query_row(
+                "SELECT workflow_json FROM workflow_versions WHERE workflow_id = ?1 AND revision = ?2",
+                params![id, revision],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or(CoreError::NotFound)?;
+        let mut old: Workflow = serde_json::from_str(&json)?;
+        let current = read_workflows(&self.conn())?
+            .into_iter()
+            .find(|w| w.id == id)
+            .ok_or(CoreError::NotFound)?;
+        old.enabled = current.enabled;
+        old.authorized_fingerprint = None;
+        self.save_workflow(&old, now)
     }
 
     /// Removes a workflow, along with the shortcuts, actions and menu items that started it. Refused while another
@@ -84,6 +144,10 @@ impl Store {
         crate::finder_store::remove_workflow_refs(&tx, id)?;
         tx.execute(
             "DELETE FROM workflow_runs WHERE workflow_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM workflow_versions WHERE workflow_id = ?1",
             params![id],
         )?;
         tx.commit()?;
@@ -122,6 +186,7 @@ impl Store {
         let conn = self.conn();
         write_json::<Vec<Workflow>>(&conn, "workflows", &Vec::new())?;
         conn.execute("DELETE FROM workflow_runs", [])?;
+        conn.execute("DELETE FROM workflow_versions", [])?;
         Ok(())
     }
 
@@ -277,6 +342,20 @@ fn read_workflows(conn: &Connection) -> Result<Vec<Workflow>, CoreError> {
     Ok(json
         .and_then(|j| serde_json::from_str(&j).ok())
         .unwrap_or_default())
+}
+
+fn remember_version(conn: &Connection, w: &Workflow, now: i64) -> Result<(), CoreError> {
+    conn.execute(
+        "INSERT INTO workflow_versions (workflow_id, revision, saved_at, workflow_json) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(workflow_id, revision) DO UPDATE SET saved_at = excluded.saved_at, workflow_json = excluded.workflow_json",
+        params![w.id, w.revision, now, serde_json::to_string(w)?],
+    )?;
+    conn.execute(
+        "DELETE FROM workflow_versions WHERE workflow_id = ?1 AND revision NOT IN
+         (SELECT revision FROM workflow_versions WHERE workflow_id = ?1 ORDER BY revision DESC LIMIT ?2)",
+        params![w.id, MAX_VERSIONS_KEPT],
+    )?;
+    Ok(())
 }
 
 fn write_json<T: Serialize>(conn: &Connection, key: &str, value: &T) -> Result<(), CoreError> {
@@ -647,5 +726,70 @@ mod tests {
         assert!(!s.workflows().unwrap()[0].enabled);
         s.clear_workflows().unwrap();
         assert!(s.workflows().unwrap().is_empty());
+    }
+
+    #[test]
+    fn every_save_is_kept_as_a_version_with_what_changed() {
+        let s = open();
+        let mut w = quiet("a");
+        s.save_workflow(&w, 10).unwrap();
+        w.steps.push(step(
+            "2",
+            StepKind::Notify {
+                message: "two".into(),
+            },
+        ));
+        s.save_workflow(&w, 20).unwrap();
+        w.name = "Renamed".into();
+        s.save_workflow(&w, 30).unwrap();
+        let versions = s.workflow_versions("a").unwrap();
+        assert_eq!(
+            versions.iter().map(|v| v.revision).collect::<Vec<_>>(),
+            vec![3, 2, 1]
+        );
+        assert_eq!(versions[0].change, "renamed");
+        assert_eq!(versions[1].change, "1 step added");
+        assert_eq!(versions[2].change, "created");
+        assert_eq!(versions[2].step_count, 1);
+    }
+
+    #[test]
+    fn going_back_makes_a_new_save_keeps_the_on_off_state_and_drops_authorization() {
+        let s = open();
+        let mut w = quiet("a");
+        s.save_workflow(&w, 10).unwrap();
+        w.steps.push(step(
+            "2",
+            StepKind::Notify {
+                message: "two".into(),
+            },
+        ));
+        s.save_workflow(&w, 20).unwrap();
+        s.authorize_workflow("a").unwrap();
+        s.set_workflow_enabled("a", false).unwrap();
+        let restored = s.restore_workflow_version("a", 1, 30).unwrap();
+        assert_eq!(restored.steps.len(), 1);
+        assert_eq!(restored.revision, 3);
+        assert!(!restored.enabled, "it was off, so it stays off");
+        assert!(restored.authorized_fingerprint.is_none());
+        assert_eq!(s.workflow_versions("a").unwrap().len(), 3);
+        assert!(s.restore_workflow_version("a", 99, 40).is_err());
+        assert!(s.restore_workflow_version("missing", 1, 40).is_err());
+    }
+
+    #[test]
+    fn only_the_latest_twenty_versions_stay_and_deleting_removes_them() {
+        let s = open();
+        let mut w = quiet("a");
+        for i in 0..25 {
+            w.name = format!("Name {i}");
+            s.save_workflow(&w, i).unwrap();
+        }
+        let versions = s.workflow_versions("a").unwrap();
+        assert_eq!(versions.len(), 20);
+        assert_eq!(versions[0].revision, 25);
+        assert_eq!(versions[19].revision, 6);
+        s.delete_workflow("a").unwrap();
+        assert!(s.workflow_versions("a").unwrap().is_empty());
     }
 }

@@ -57,6 +57,7 @@ private struct WorkflowsTab: View {
     @EnvironmentObject private var store: WorkflowStore
     @State private var editing: Workflow?
     @State private var selected: Set<String> = []
+    @State private var historyOf: String?
     @State private var message: String?
     @State private var drafting = false
 
@@ -108,6 +109,7 @@ private struct WorkflowsTab: View {
                 Menu {
                     Button("Duplicate") { selected.forEach(store.duplicate) }.disabled(selected.isEmpty)
                     Button("Draft with AI…") { drafting = true }
+                    Button("Version History…") { historyOf = selected.first }.disabled(selected.count != 1)
                     Button("Import Workflows…") { importWorkflows() }
                     Button("Export Selected…") { export() }.disabled(selected.isEmpty)
                     Divider()
@@ -121,6 +123,9 @@ private struct WorkflowsTab: View {
         .animation(.smooth(duration: 0.25), value: store.workflows)
         .animation(.smooth(duration: 0.2), value: message)
         .sheet(item: $editing) { WorkflowEditor(workflow: $0) }
+        .sheet(isPresented: Binding(get: { historyOf != nil }, set: { if !$0 { historyOf = nil } })) {
+            if let id = historyOf { WorkflowHistorySheet(workflowID: id) { historyOf = nil } }
+        }
         .sheet(isPresented: $drafting) { AIWorkflowDraftSheet { draft in drafting = false; if let draft { editing = draft } } }
     }
 
@@ -1070,6 +1075,58 @@ private struct AIWorkflowDraftSheet: View {
                     working = false
                     problem = (error as? AIError)?.errorDescription ?? (error as? CoreError).map { "The draft could not be used: \($0.userMessage)" } ?? error.localizedDescription
                 }
+            }
+        }
+    }
+}
+
+/// The saved versions of one workflow, and going back to one of them.
+private struct WorkflowHistorySheet: View {
+    let workflowID: String
+    let close: () -> Void
+    @EnvironmentObject private var store: WorkflowStore
+    @State private var versions: [WorkflowVersion] = []
+    @State private var confirming: WorkflowVersion?
+    @State private var note: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Version History").font(.headline)
+            Text("Every save is kept (the last 20). Going back saves the old version as a new one, so nothing is lost, and it has to be allowed to run again.")
+                .font(.callout).foregroundStyle(.secondary)
+            if versions.isEmpty {
+                Text("No earlier versions yet.").foregroundStyle(.secondary)
+            } else {
+                List(versions, id: \.revision) { version in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Version \(version.revision) · \(version.stepCount) step\(version.stepCount == 1 ? "" : "s")")
+                            Text("\(Date(timeIntervalSince1970: TimeInterval(version.savedAt)).formatted(date: .abbreviated, time: .shortened)) · \(version.change)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if version.revision == versions.first?.revision {
+                            Text("Current").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Button("Go Back to This") { confirming = version }.controlSize(.small)
+                        }
+                    }
+                }
+                .frame(minHeight: 220)
+            }
+            if let note { Text(note).font(.caption).foregroundStyle(.secondary) }
+            HStack { Spacer(); Button("Done", action: close).keyboardShortcut(.defaultAction) }
+        }
+        .padding(20)
+        .frame(width: 480)
+        .onAppear { versions = store.versions(of: workflowID) }
+        .confirmationDialog("Go back to version \(confirming?.revision ?? 0)?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {
+            Button("Go Back") {
+                if let version = confirming {
+                    note = store.restore(workflowID, revision: version.revision) ? "Went back to version \(version.revision). Allow it to run again from its editor." : (store.lastError ?? "Could not go back.")
+                    versions = store.versions(of: workflowID)
+                }
+                confirming = nil
             }
         }
     }
