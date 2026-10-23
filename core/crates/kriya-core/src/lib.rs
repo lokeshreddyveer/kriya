@@ -110,7 +110,7 @@ pub use workflow::{
     TriggerTemplate, Workflow, WorkflowDependency, WorkflowRun, WorkflowStep, WorkflowTemplate,
     WorkflowTrigger, WorkflowVersion,
 };
-pub use workspace::{FavoriteWindow, Workspace, WorkspaceConfig};
+pub use workspace::{FavoriteWindow, Workspace, WorkspaceConfig, WorkspaceImportReport};
 
 use clipboard_db::ClipStore;
 use session::SessionGuard;
@@ -1415,6 +1415,18 @@ impl KriyaCore {
 
     pub fn workspace_config(&self) -> Result<WorkspaceConfig, CoreError> {
         self.store.workspace_config()
+    }
+
+    pub fn export_workspaces(&self, ids: Vec<String>) -> Result<String, CoreError> {
+        self.store.export_workspaces(&ids)
+    }
+
+    pub fn import_workspaces(
+        &self,
+        json: String,
+        now: i64,
+    ) -> Result<WorkspaceImportReport, CoreError> {
+        self.store.import_workspaces(&json, now)
     }
 
     pub fn save_workspace_config(&self, config: WorkspaceConfig) -> Result<(), CoreError> {

@@ -37,6 +37,8 @@ struct WorkspaceLaunchLog: Codable, Equatable {
         var hidden: [String]
         var urlsOpened: Int
         var undone = false
+        /// Whether a Sound mode was turned on by this launch. Optional so older logs load.
+        var soundModeApplied: Bool?
     }
 
     var entries: [Entry] = []
@@ -51,7 +53,7 @@ struct WorkspaceLaunchLog: Codable, Equatable {
         if let i = entries.firstIndex(where: { $0.id == id }) { entries[i].undone = true }
     }
 
-    var lastUndoable: Entry? { entries.first { !$0.undone && (!$0.opened.isEmpty || !$0.hidden.isEmpty) } }
+    var lastUndoable: Entry? { entries.first { !$0.undone && (!$0.opened.isEmpty || !$0.hidden.isEmpty || $0.soundModeApplied == true) } }
 }
 
 enum WorkspaceRollback {

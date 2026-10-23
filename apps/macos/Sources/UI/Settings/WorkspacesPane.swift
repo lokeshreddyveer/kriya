@@ -6,6 +6,7 @@ struct WorkspacesPane: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var windows: WindowStore
     @State private var editing: Workspace?
+    @State private var transferNote: String?
     @ObservedObject private var launchLog = WorkspaceLaunchLogStore.shared
 
     var body: some View {
@@ -42,8 +43,13 @@ struct WorkspacesPane: View {
                             .compactMap(\.bundleIdentifier).prefix(30))
                         editing = workspace
                     } label: { Label("Save Open Apps", systemImage: "square.and.arrow.down") }.controlSize(.small)
+                    Menu {
+                        Button("Import Workspaces…") { importWorkspaces() }
+                        Button("Export Workspaces…") { exportWorkspaces() }.disabled(store.config.workspaces.isEmpty)
+                    } label: { MoreMenuLabel() }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
                     Button { editing = store.newWorkspace() } label: { Label("Add Workspace", systemImage: "plus") }.controlSize(.small)
                 }
+                if let transferNote { Text(transferNote).font(.callout).foregroundStyle(.secondary) }
             } footer: {
                 Text("Each workspace is a command. Give it a shortcut under Keyboard, a button or gesture under Mouse, or a hot corner under Automation: choose a built-in command named “Workspace: …”.")
             }
@@ -115,6 +121,25 @@ struct WorkspacesPane: View {
         }
     }
 
+    private func importWorkspaces() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let report = try store.importWorkspaces(from: url)
+            let skipped = report.skipped.isEmpty ? "" : " Left out: " + report.skipped.joined(separator: "; ") + "."
+            transferNote = "Added \(report.added.count) workspace\(report.added.count == 1 ? "" : "s") and \(report.layoutsAdded) layout\(report.layoutsAdded == 1 ? "" : "s")." + skipped
+        } catch { transferNote = error.userMessage }
+    }
+
+    private func exportWorkspaces() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Kriya workspaces.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try store.exportWorkspaces(to: url); transferNote = "Saved \(url.lastPathComponent)." } catch { transferNote = error.userMessage }
+    }
+
     private func logLine(_ entry: WorkspaceLaunchLog.Entry) -> String {
         var parts: [String] = []
         if !entry.opened.isEmpty { parts.append("opened " + entry.opened.map(AppChoice.name(for:)).joined(separator: ", ")) }
@@ -166,6 +191,7 @@ private struct WorkspaceEditor: View {
     let onCancel: () -> Void
 
     @EnvironmentObject private var windows: WindowStore
+    @EnvironmentObject private var sound: SoundRuleRunner
     @State private var addresses: String
 
     init(workspace: Workspace, onSave: @escaping (Workspace) -> Void, onCancel: @escaping () -> Void) {
@@ -186,6 +212,11 @@ private struct WorkspaceEditor: View {
             Form {
                 Section {
                     TextField("Name", text: $workspace.name)
+                    Picker("Sound mode", selection: Binding(get: { workspace.soundModeId ?? "" }, set: { workspace.soundModeId = $0.isEmpty ? nil : $0 })) {
+                        Text("Leave the sound alone").tag("")
+                        ForEach(sound.modes) { Text($0.name).tag($0.id) }
+                        if let id = workspace.soundModeId, !sound.modes.contains(where: { $0.id == id }) { Text("A mode that is not on this Mac").tag(id) }
+                    }
                 }
                 Section("Apps to open") {
                     AppList(title: "", ids: $workspace.appIds)

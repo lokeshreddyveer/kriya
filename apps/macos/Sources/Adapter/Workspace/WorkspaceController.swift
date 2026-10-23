@@ -32,6 +32,9 @@ final class WorkspaceController {
     private let executor: ActionExecutor
     private let isEnabled: () -> Bool
     private let toast = Toast()
+    /// Turns on a Sound mode by id and says whether it existed; set by the app. `putSoundBack` undoes it.
+    var applySoundMode: (String) -> Bool = { _ in false }
+    var putSoundBack: () -> Void = {}
 
     private var recentApps: [pid_t] = []                 // most recent first, never Kriya
     private var activationObserver: NSObjectProtocol?
@@ -250,10 +253,13 @@ final class WorkspaceController {
                 self.windowController.restore(layout)
             }
             if let first = workspace.appIds.compactMap({ appID in self.runningRegular.first { $0.bundleIdentifier == appID } }).first { first.activate() }
-            WorkspaceLaunchLogStore.shared.add(WorkspaceLaunchLog.Entry(
+            let soundApplied = workspace.soundModeId.map { self.applySoundMode($0) } ?? false
+            var entry = WorkspaceLaunchLog.Entry(
                 at: Date(), workspaceID: workspace.id, workspaceName: workspace.name, opened: opened, alreadyRunning: plan.alreadyRunning,
                 notInstalled: plan.notInstalled, hidden: hidden, urlsOpened: urlsOpened
-            ))
+            )
+            entry.soundModeApplied = soundApplied
+            WorkspaceLaunchLogStore.shared.add(entry)
         }
     }
 
@@ -266,6 +272,7 @@ final class WorkspaceController {
             guard let id = app.bundleIdentifier else { continue }
             if plan.quit.contains(id) { app.terminate() } else if plan.unhide.contains(id) { app.unhide() }
         }
+        if entry.soundModeApplied == true { putSoundBack() }
         WorkspaceLaunchLogStore.shared.markUndone(entry.id)
         toast.show("Undid “\(entry.workspaceName)”")
     }

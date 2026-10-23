@@ -874,3 +874,22 @@ final class ShelfGroupAndReminderTests: XCTestCase {
         XCTAssertEqual(ShelfLibrary.reminderText([]), "")
     }
 }
+
+final class WorkspaceSoundTests: XCTestCase {
+    func testALaunchThatTurnedOnASoundModeCanBeUndoneEvenIfNothingElseChanged() {
+        var log = WorkspaceLaunchLog()
+        var entry = WorkspaceLaunchLog.Entry(at: Date(), workspaceID: "w", workspaceName: "Call", opened: [], alreadyRunning: ["a"], notInstalled: [], hidden: [], urlsOpened: 0)
+        log.add(entry)
+        XCTAssertNil(log.lastUndoable)
+        entry.soundModeApplied = true
+        log = WorkspaceLaunchLog()
+        log.add(entry)
+        XCTAssertEqual(log.lastUndoable?.workspaceName, "Call")
+    }
+
+    func testOlderLogsWithoutTheSoundFieldStillLoad() throws {
+        let json = #"{"entries":[{"id":"1","at":0,"workspaceID":"w","workspaceName":"W","opened":[],"alreadyRunning":[],"notInstalled":[],"hidden":[],"urlsOpened":0,"undone":false}]}"#
+        let log = try JSONDecoder().decode(WorkspaceLaunchLog.self, from: Data(json.utf8))
+        XCTAssertNil(log.entries[0].soundModeApplied)
+    }
+}

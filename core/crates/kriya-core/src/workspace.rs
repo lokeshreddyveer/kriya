@@ -33,6 +33,11 @@ pub struct Workspace {
     pub hide_others: bool,
     /// Web addresses to open.
     pub urls: Vec<String>,
+    /// A Sound mode (by its id) to turn on when the workspace opens. The sound is put back by the person's own
+    /// "put the sound back". Added later, so a workspace saved before then has none.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub sound_mode_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
@@ -149,7 +154,115 @@ pub fn quit_candidates(running: &[String], keep: &[String], self_id: &str) -> Ve
     apps_to_hide(running, keep, self_id)
 }
 
+const PACKAGE_FORMAT: &str = "kriya-workspaces";
+
+#[derive(Serialize, Deserialize)]
+struct PackageEntry {
+    workspace: Workspace,
+    /// The saved window layout the workspace uses, with the displays it was made for.
+    layout: Option<crate::windows::SavedLayout>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Package {
+    format: String,
+    version: u32,
+    workspaces: Vec<PackageEntry>,
+}
+
+/// What an import did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct WorkspaceImportReport {
+    pub added: Vec<Workspace>,
+    pub layouts_added: u32,
+    /// "name: why" for each one left out.
+    pub skipped: Vec<String>,
+}
+
 impl Store {
+    /// The chosen workspaces (all when `ids` is empty) with their layouts, as a file to share.
+    pub fn export_workspaces(&self, ids: &[String]) -> Result<String, CoreError> {
+        let config = self.workspace_config()?;
+        let layouts = self.saved_layouts(false)?;
+        let entries: Vec<PackageEntry> = config
+            .workspaces
+            .into_iter()
+            .filter(|w| ids.is_empty() || ids.contains(&w.id))
+            .map(|w| PackageEntry {
+                layout: w
+                    .layout_id
+                    .as_ref()
+                    .and_then(|id| layouts.iter().find(|l| &l.id == id).cloned()),
+                workspace: w,
+            })
+            .collect();
+        Ok(serde_json::to_string_pretty(&Package {
+            format: PACKAGE_FORMAT.to_string(),
+            version: 1,
+            workspaces: entries,
+        })?)
+    }
+
+    /// Adds the workspaces in a file under new ids, with their layouts. Anything invalid is left out with the reason.
+    pub fn import_workspaces(
+        &self,
+        json: &str,
+        now: i64,
+    ) -> Result<WorkspaceImportReport, CoreError> {
+        if json.len() > 2_000_000 {
+            return Err(CoreError::invalid("that file is too large"));
+        }
+        let package: Package = serde_json::from_str(json)
+            .map_err(|_| CoreError::invalid("that is not a Kriya workspace file"))?;
+        if package.format != PACKAGE_FORMAT || package.version != 1 {
+            return Err(CoreError::invalid("that is not a Kriya workspace file"));
+        }
+        let mut config = self.workspace_config()?;
+        let mut report = WorkspaceImportReport {
+            added: Vec::new(),
+            layouts_added: 0,
+            skipped: Vec::new(),
+        };
+        for (index, entry) in package.workspaces.into_iter().enumerate() {
+            let label = if entry.workspace.name.trim().is_empty() {
+                format!("workspace {}", index + 1)
+            } else {
+                entry.workspace.name.clone()
+            };
+            if config.workspaces.len() >= MAX_WORKSPACES {
+                report
+                    .skipped
+                    .push(format!("{label}: there are too many workspaces"));
+                continue;
+            }
+            let mut ws = entry.workspace;
+            ws.id = format!("imported-{now}-{index}");
+            ws.layout_id = None;
+            if let Some(mut layout) = entry.layout {
+                layout.id = format!("imported-layout-{now}-{index}");
+                layout.is_auto = false;
+                layout.created_at = now;
+                if self.save_layout(&layout).is_ok() {
+                    ws.layout_id = Some(layout.id.clone());
+                    report.layouts_added += 1;
+                }
+            }
+            let before = config.workspaces.len();
+            config.workspaces.push(ws.clone());
+            let cleaned = config.clone().sanitized();
+            if cleaned.workspaces.len() == before {
+                config.workspaces.pop();
+                report.skipped.push(format!(
+                    "{label}: it has no apps or addresses, or a name that is empty or too long"
+                ));
+                continue;
+            }
+            report.added.push(ws);
+        }
+        self.save_workspace_config(&config)?;
+        Ok(report)
+    }
+
     pub fn workspace_config(&self) -> Result<WorkspaceConfig, CoreError> {
         let conn = self.conn();
         let json: Option<String> = conn
@@ -188,6 +301,7 @@ mod tests {
             layout_id: None,
             hide_others: false,
             urls: vec![],
+            sound_mode_id: None,
         }
     }
 
@@ -317,5 +431,68 @@ mod tests {
         let back = store.workspace_config().unwrap();
         assert_eq!(back.workspaces.len(), 1);
         assert_eq!(back.focus_app_ids, strings(&["com.x"]));
+    }
+
+    #[test]
+    fn workspaces_round_trip_through_a_file_with_their_layouts_and_new_ids() {
+        let store = Store::open_in_memory().unwrap();
+        let layout = crate::windows::SavedLayout {
+            id: "lay".into(),
+            name: "Work".into(),
+            display_key: "d".into(),
+            is_auto: false,
+            created_at: 1,
+            entries: vec![],
+            unplaced: Default::default(),
+            launch_missing: false,
+            is_group: false,
+        };
+        store.save_layout(&layout).unwrap();
+        let mut w = ws("a", &["com.x"]);
+        w.layout_id = Some("lay".into());
+        w.sound_mode_id = Some("meeting".into());
+        store
+            .save_workspace_config(&WorkspaceConfig {
+                workspaces: vec![w],
+                ..WorkspaceConfig::default()
+            })
+            .unwrap();
+        let json = store.export_workspaces(&[]).unwrap();
+        let report = store.import_workspaces(&json, 9).unwrap();
+        assert_eq!(report.added.len(), 1);
+        assert_eq!(report.layouts_added, 1);
+        assert_eq!(report.added[0].id, "imported-9-0");
+        assert_eq!(
+            report.added[0].layout_id.as_deref(),
+            Some("imported-layout-9-0")
+        );
+        assert_eq!(report.added[0].sound_mode_id.as_deref(), Some("meeting"));
+        assert_eq!(store.workspace_config().unwrap().workspaces.len(), 2);
+        assert_eq!(store.saved_layouts(false).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn bad_files_are_refused_and_invalid_workspaces_are_skipped_with_a_reason() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.import_workspaces("{}", 1).is_err());
+        assert!(store
+            .import_workspaces(r#"{"format":"x","version":1,"workspaces":[]}"#, 1)
+            .is_err());
+        let empty = Workspace {
+            name: "Empty".into(),
+            ..ws("e", &[])
+        };
+        let package = format!(
+            r#"{{"format":"kriya-workspaces","version":1,"workspaces":[{{"workspace":{},"layout":null}}]}}"#,
+            serde_json::to_string(&empty).unwrap()
+        );
+        let report = store.import_workspaces(&package, 2).unwrap();
+        assert!(report.added.is_empty());
+        assert!(report.skipped[0].starts_with("Empty:"));
+        let older = r#"{"id":"x","name":"Old","app_ids":["a"],"layout_id":null,"hide_others":false,"urls":[]}"#;
+        assert!(serde_json::from_str::<Workspace>(older)
+            .unwrap()
+            .sound_mode_id
+            .is_none());
     }
 }

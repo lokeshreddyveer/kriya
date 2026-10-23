@@ -345,6 +345,12 @@ final class AppEnvironment {
         systemMonitor.start()
         appAudio.start()
         soundRules.start()
+        workspaces.applySoundMode = { [weak soundRules] id in
+            guard let runner = soundRules, let mode = runner.modes.first(where: { $0.id == id }) else { return false }
+            runner.apply(mode)
+            return true
+        }
+        workspaces.putSoundBack = { [weak soundRules] in soundRules?.putSoundBack() }
         configureAITools()
         MIDITriggerRunner.shared.start()
         safariInbox.start()
