@@ -81,6 +81,7 @@ final class AppInventory: ObservableObject {
     @Published private(set) var isFindingLeftovers = false
 
     private static let upgradeKey = "upgradeHomebrewAppsAutomatically"
+    private static let historyKey = "appUpgradeHistory.v1"
     private var watchers: [DispatchSourceFileSystemObject] = []
     private var rescanWork: DispatchWorkItem?
     private var updateTimer: Timer?
@@ -95,6 +96,8 @@ final class AppInventory: ObservableObject {
     init() {
         ignoredUpdates = Set(UserDefaults.standard.stringArray(forKey: "ignoredAppUpdates") ?? [])
         upgradeHomebrewAutomatically = UserDefaults.standard.object(forKey: Self.upgradeKey) as? Bool ?? true
+        // The upgrade history survives a restart.
+        activity = UserDefaults.standard.stringArray(forKey: Self.historyKey) ?? []
     }
 
     /// Starts keeping everything up to date: the list of apps follows the Applications folders, leftovers are found again
@@ -434,7 +437,8 @@ final class AppInventory: ObservableObject {
 
     private func note(_ line: String) {
         activity.append("\(Date().formatted(date: .omitted, time: .shortened))  \(line)")
-        if activity.count > 40 { activity.removeFirst(activity.count - 40) }
+        if activity.count > 100 { activity.removeFirst(activity.count - 100) }
+        UserDefaults.standard.set(activity, forKey: Self.historyKey)
     }
 
     /// Upgrades one Homebrew app. Upgrades (and installs) run one after another on a single queue, never side by side.

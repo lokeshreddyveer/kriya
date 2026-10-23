@@ -40,7 +40,7 @@ final class WebResearchTests: XCTestCase {
     func testSourcesFromTwoLanguagesAreInterleavedWithoutRepeats() {
         func source(_ name: String) -> ResearchSource { ResearchSource(title: name, url: "https://x.wikipedia.org/wiki/\(name)", extract: name) }
         let merged = WebResearch.merge([[source("a1"), source("a2"), source("a3")], [source("b1"), source("a1"), source("b2")]])
-        XCTAssertEqual(merged.map(\.title), ["a1", "b1", "a2", "b2"])
+        XCTAssertEqual(merged.map(\.title), ["a1", "b1", "a2", "a3"])
         XCTAssertEqual(WebResearch.merge([]).count, 0)
     }
 

@@ -1439,3 +1439,26 @@ final class DialogFolderSearchAndJumpTests: XCTestCase {
         XCTAssertEqual(store.folders.count, DialogAppFolders.limit)
     }
 }
+
+final class CompetingUtilityTests: XCTestCase {
+    func testRunningUtilitiesAreRecognisedByIdentifierOrName() {
+        let running = [
+            RunningProgram(bundleID: "org.pqrs.Karabiner-Elements.Settings", name: "Karabiner-Elements"),
+            RunningProgram(bundleID: "com.knollsoft.Rectangle", name: "Rectangle"),
+            RunningProgram(bundleID: nil, name: "Logi Options+ Agent"),
+            RunningProgram(bundleID: "com.apple.finder", name: "Finder"),
+        ]
+        XCTAssertEqual(CompetingUtilities.detect(in: running).map(\.name), ["Karabiner-Elements", "Logi Options+", "Rectangle"])
+        XCTAssertTrue(CompetingUtilities.detect(in: [RunningProgram(bundleID: "com.apple.finder", name: "Finder")]).isEmpty)
+        XCTAssertTrue(CompetingUtilities.detect(in: []).isEmpty)
+    }
+
+    func testEveryKnownUtilityHasAWayToBeRecognisedAndSaysWhatItOverlaps() {
+        for utility in CompetingUtilities.known {
+            XCTAssertFalse(utility.bundlePrefixes.isEmpty && utility.nameWords.isEmpty, utility.name)
+            XCTAssertFalse(utility.overlaps.isEmpty, utility.name)
+            XCTAssertFalse(utility.nameWords.contains(""), "an empty word would match everything: \(utility.name)")
+        }
+        XCTAssertEqual(Set(CompetingUtilities.known.map(\.name)).count, CompetingUtilities.known.count)
+    }
+}

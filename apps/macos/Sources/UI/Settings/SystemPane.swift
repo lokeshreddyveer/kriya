@@ -44,6 +44,7 @@ struct SystemDetails: View {
             row("Memory", info.memory)
             row("Processor", info.cores)
             row("On for", ByteFormat.duration(snapshot.uptime))
+            row("Low Power Mode", ProcessInfo.processInfo.isLowPowerModeEnabled ? "On" : "Off", warn: false)
             row("Temperature", MonitorSnapshot.thermalText(snapshot.thermal), warn: snapshot.thermal != .nominal && snapshot.thermal != .fair)
         }
         Section("Processor") {

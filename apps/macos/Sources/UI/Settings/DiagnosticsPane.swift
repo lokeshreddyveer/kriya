@@ -43,8 +43,14 @@ private struct HealthTab: View {
     @EnvironmentObject private var navigator: SettingsNavigator
     @State private var secure = SecureInput.current()
     @State private var released = false
+    @State private var competing: [CompetingUtility] = []
 
     private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    private func refreshCompeting() {
+        let running = NSWorkspace.shared.runningApplications.map { RunningProgram(bundleID: $0.bundleIdentifier, name: $0.localizedName) }
+        competing = CompetingUtilities.detect(in: running)
+    }
 
     var body: some View {
         Form {
@@ -84,6 +90,22 @@ private struct HealthTab: View {
                     }
                 }
             } header: { Text("Features") }
+
+            Section {
+                if competing.isEmpty { Label("No overlapping utility is running.", systemImage: "checkmark.circle").foregroundStyle(Theme.ok) }
+                ForEach(competing) { utility in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(utility.name)
+                            Text(utility.overlaps).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            } header: { Text("Other utilities running") } footer: {
+                Text("Two programs that remap keys, watch the mouse or move windows can undo each other. If something in Kriya does not behave, turn off the same feature in the program listed here, or in Kriya.")
+            }
+            .onAppear { refreshCompeting() }
 
             Section {
                 HStack(spacing: 10) {
