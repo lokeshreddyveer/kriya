@@ -313,3 +313,59 @@ final class PowerAssertionTests: XCTestCase {
         XCTAssertEqual(PowerAssertions.summary([many[0]]), "p1 is keeping this Mac awake.")
     }
 }
+
+final class ResourceAlertTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_760_000_000)
+    private var config: ResourceAlertConfig { ResourceAlertConfig(enabled: true, cpuPercent: 90, cpuSeconds: 60, memoryPercent: 90, diskFreeGB: 10, batteryHealthBelow: 80) }
+
+    private func snapshot(cpu: Double = 0.1, memoryShare: Double = 0.4, freeGB: Int64 = 100) -> MonitorSnapshot {
+        var s = MonitorSnapshot()
+        s.cpu = cpu
+        s.memory = MemoryInfo(total: 100, used: 100 * memoryShare)
+        s.disks = [DiskInfo(name: "Macintosh HD", path: "/", total: 500 * 1_073_741_824, free: freeGB * 1_073_741_824, isInternal: true)]
+        return s
+    }
+
+    func testBusyProcessorOnlySpeaksAfterItStaysBusyThenNotAgainForHalfAnHour() {
+        var state = ResourceAlertState()
+        XCTAssertTrue(ResourceAlerts.evaluate(snapshot(cpu: 0.95), config: config, state: &state, now: start).isEmpty, "just started being busy")
+        XCTAssertTrue(ResourceAlerts.evaluate(snapshot(cpu: 0.95), config: config, state: &state, now: start.addingTimeInterval(30)).isEmpty)
+        let said = ResourceAlerts.evaluate(snapshot(cpu: 0.95), config: config, state: &state, now: start.addingTimeInterval(61))
+        XCTAssertEqual(said.count, 1)
+        XCTAssertTrue(said[0].contains("above 90%"))
+        XCTAssertTrue(ResourceAlerts.evaluate(snapshot(cpu: 0.95), config: config, state: &state, now: start.addingTimeInterval(120)).isEmpty, "not again at once")
+        XCTAssertEqual(ResourceAlerts.evaluate(snapshot(cpu: 0.95), config: config, state: &state, now: start.addingTimeInterval(61 + 31 * 60)).count, 1, "after the cooldown")
+    }
+
+    func testABriefSpikeResetsTheWatch() {
+        var state = ResourceAlertState()
+        _ = ResourceAlerts.evaluate(snapshot(cpu: 0.95), config: config, state: &state, now: start)
+        _ = ResourceAlerts.evaluate(snapshot(cpu: 0.2), config: config, state: &state, now: start.addingTimeInterval(30))
+        XCTAssertNil(state.cpuHighSince)
+        XCTAssertTrue(ResourceAlerts.evaluate(snapshot(cpu: 0.95), config: config, state: &state, now: start.addingTimeInterval(70)).isEmpty, "the clock started again")
+    }
+
+    func testMemoryAndDiskSpeakAtOnceAndSpeakAgainOnceTheyRecover() {
+        var state = ResourceAlertState()
+        let low = ResourceAlerts.evaluate(snapshot(memoryShare: 0.95, freeGB: 5), config: config, state: &state, now: start)
+        XCTAssertEqual(low.count, 2)
+        XCTAssertTrue(low.contains { $0.contains("Memory is 95% full") })
+        XCTAssertTrue(low.contains { $0.contains("free on the startup disk") })
+        XCTAssertTrue(ResourceAlerts.evaluate(snapshot(memoryShare: 0.95, freeGB: 5), config: config, state: &state, now: start.addingTimeInterval(10)).isEmpty)
+        _ = ResourceAlerts.evaluate(snapshot(), config: config, state: &state, now: start.addingTimeInterval(20))
+        XCTAssertEqual(ResourceAlerts.evaluate(snapshot(memoryShare: 0.95), config: config, state: &state, now: start.addingTimeInterval(30)).count, 1, "recovered, so it can speak again")
+    }
+
+    func testHotMacAndTiredBatterySpeakAndTheSwitchTurnsItAllOff() {
+        var state = ResourceAlertState()
+        var s = snapshot()
+        s.thermal = .serious
+        s.battery = BatteryInfo(percent: 50, charging: false, onAC: false, minutesLeft: nil, cycles: 900, healthPercent: 72)
+        XCTAssertEqual(ResourceAlerts.evaluate(s, config: config, state: &state, now: start).count, 2)
+        var off = config
+        off.enabled = false
+        XCTAssertTrue(ResourceAlerts.evaluate(s, config: off, state: &state, now: start.addingTimeInterval(5)).isEmpty)
+        XCTAssertEqual(state, ResourceAlertState(), "turning it off forgets what was said")
+        XCTAssertEqual(ResourceAlertConfig(enabled: true, cpuPercent: 5, cpuSeconds: 1, memoryPercent: 500, diskFreeGB: 0, batteryHealthBelow: 0).clamped.cpuPercent, 50)
+    }
+}

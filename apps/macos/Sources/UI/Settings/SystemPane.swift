@@ -22,6 +22,17 @@ struct SystemPane: View {
                 Toggle("Warn when a mouse, keyboard or trackpad is nearly flat", isOn: $monitor.lowBatteryAlerts)
             } footer: { Text("Checked every few minutes at 15% and below, once per device until it has been charged.") }
             SystemDetails(snapshot: monitor.snapshot, info: monitor.info)
+            Section {
+                Toggle("Tell me when the Mac is struggling", isOn: $monitor.alertConfig.enabled)
+                if monitor.alertConfig.enabled {
+                    Stepper("Processor above \(monitor.alertConfig.cpuPercent)% for \(monitor.alertConfig.cpuSeconds) seconds", value: $monitor.alertConfig.cpuPercent, in: 50...100, step: 5)
+                    Stepper("Memory above \(monitor.alertConfig.memoryPercent)%", value: $monitor.alertConfig.memoryPercent, in: 50...100, step: 5)
+                    Stepper("Less than \(monitor.alertConfig.diskFreeGB) GB free on the startup disk", value: $monitor.alertConfig.diskFreeGB, in: 1...500, step: 5)
+                    Stepper("Battery holds less than \(monitor.alertConfig.batteryHealthBelow)% of new", value: $monitor.alertConfig.batteryHealthBelow, in: 50...95, step: 5)
+                }
+            } header: { Text("Alerts") } footer: {
+                Text("Each is said once, then not again for half an hour. Kriya only measures while the menu-bar readout is on or this window is open, so alerts only come then.")
+            }
             StorageSection()
             CleanupSection()
         }

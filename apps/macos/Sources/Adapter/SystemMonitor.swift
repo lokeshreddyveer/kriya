@@ -17,6 +17,9 @@ final class SystemMonitor: ObservableObject {
     @Published private(set) var viewers = 0
 
     @Published var lowBatteryAlerts: Bool { didSet { defaults.set(lowBatteryAlerts, forKey: Self.alertsKey); watchBatteries() } }
+    static let alertConfigKey = "systemMonitor.resourceAlerts.v1"
+    @Published var alertConfig: ResourceAlertConfig { didSet { if let data = try? JSONEncoder().encode(alertConfig) { defaults.set(data, forKey: Self.alertConfigKey) } } }
+    private var alertState = ResourceAlertState()
     let info = MacInfo.read()
     private var batteryTimer: Timer?
     private var warned = Set<String>()
@@ -33,6 +36,7 @@ final class SystemMonitor: ObservableObject {
         self.defaults = defaults
         showInMenuBar = defaults.bool(forKey: Self.barKey)
         lowBatteryAlerts = defaults.object(forKey: Self.alertsKey) as? Bool ?? true
+        alertConfig = defaults.data(forKey: Self.alertConfigKey).flatMap { try? JSONDecoder().decode(ResourceAlertConfig.self, from: $0) } ?? ResourceAlertConfig()
         let saved = MonitorMetric.parse(defaults.string(forKey: Self.metricsKey) ?? "")
         metrics = saved.isEmpty ? [.cpu, .memory] : saved
     }
@@ -109,6 +113,7 @@ final class SystemMonitor: ObservableObject {
                     s.topByMemory = Array(programs.sorted { $0.memory > $1.memory }.prefix(6))
                 }
                 self.snapshot = s
+                for message in ResourceAlerts.evaluate(s, config: self.alertConfig, state: &self.alertState, now: Date()) { self.toast.show(message, isError: true) }
             }
         }
     }
