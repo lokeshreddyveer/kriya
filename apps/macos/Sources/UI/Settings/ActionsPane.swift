@@ -12,6 +12,8 @@ extension Action {
         case .runScript(_, let source): return "Run script: \(source.split(separator: "\n").first.map(String.init) ?? source)"
         case .runShortcut(let name): return "Run shortcut “\(name)”"
         case .builtin(let command): return WindowCommands.title(for: command).map { "Window: \($0)" } ?? "Built-in: \(command)"
+        case .click(_, _, let button, let count, let inWindow):
+            return "\(button == 1 ? "Right-click" : count == 2 ? "Double-click" : count == 3 ? "Triple-click" : "Click")\(inWindow ? " in the front window" : " on the screen")"
         case .sequence(let steps, _): return "\(steps.count) steps in order"
         }
     }
@@ -25,6 +27,7 @@ extension Action {
         case .runShell: return "terminal"
         case .runScript: return "applescript"
         case .runShortcut: return "square.2.layers.3d"
+        case .click: return "cursorarrow.click"
         case .builtin: return "wand.and.stars"
         case .sequence: return "list.number"
         }
@@ -306,7 +309,7 @@ private struct KeyRecorderSheet: View {
 
     private func save(_ recorder: KeystrokeRecorder) {
         recorder.stop()
-        guard let action = KeystrokeRecording.action(from: recorder.keys) else { problem = "No keys were recorded."; return }
+        guard let action = KeystrokeRecording.action(keys: recorder.keys, clicks: recorder.clicks) else { problem = "Nothing was recorded."; return }
         let clean = name.trimmingCharacters(in: .whitespaces)
         guard !clean.isEmpty else { problem = "Give the action a name."; recorder.start(); return }
         do {
@@ -323,6 +326,7 @@ private final class RecorderHolder: ObservableObject {
     func make(_ events: EventMonitor) -> KeystrokeRecorder {
         if let recorder { return recorder }
         let made = KeystrokeRecorder(events: events)
+        made.includeClicks = true
         recorder = made
         return made
     }
@@ -341,14 +345,14 @@ private struct RecorderBody: View {
                 HStack(spacing: 8) {
                     Circle().fill(recorder.isRecording ? Color.red : Color.secondary).frame(width: 10, height: 10)
                         .opacity(recorder.isRecording ? 1 : 0.5)
-                    Text(recorder.isRecording ? "Recording: press the keys now" : "Stopped").font(.headline)
+                    Text(recorder.isRecording ? "Recording: press keys and click now" : "Stopped").font(.headline)
                 }
-                Text(KeystrokeRecording.summary(recorder.keys)).font(.system(.body, design: .rounded)).foregroundStyle(recorder.keys.isEmpty ? .secondary : .primary)
+                Text(KeystrokeRecording.summary(recorder.keys, clicks: recorder.clicks)).font(.system(.body, design: .rounded)).foregroundStyle(recorder.keys.isEmpty && recorder.clicks.isEmpty ? .secondary : .primary)
                     .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading).padding(10)
                     .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 TextField("Name for the action", text: $name)
                 if let problem { Text(problem).font(.callout).foregroundStyle(Theme.danger) }
-                Text("Only the keys are kept, in order, with their pauses. What they type is not looked at or saved, and nothing is recorded once this window closes. Up to \(KeystrokeRecording.maxSteps) keys.")
+                Text("Keys and clicks are kept in order, with their pauses. A click is saved as where it landed in the front window, so it still hits the same button after the window has moved. What you type is not looked at or saved, and nothing is recorded once this window closes. Up to \(KeystrokeRecording.maxSteps) steps.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(16)
@@ -356,10 +360,10 @@ private struct RecorderBody: View {
             Divider()
             HStack {
                 Button(recorder.isRecording ? "Stop" : "Record Again") { recorder.isRecording ? recorder.stop() : { recorder.clear(); recorder.start() }() }
-                Button("Clear") { recorder.clear() }.disabled(recorder.keys.isEmpty)
+                Button("Clear") { recorder.clear() }.disabled(recorder.keys.isEmpty && recorder.clicks.isEmpty)
                 Spacer()
                 Button("Cancel", action: onClose).keyboardShortcut(.cancelAction)
-                Button("Save Action", action: onSave).buttonStyle(.borderedProminent).disabled(recorder.keys.isEmpty)
+                Button("Save Action", action: onSave).buttonStyle(.borderedProminent).disabled(recorder.keys.isEmpty && recorder.clicks.isEmpty)
             }
             .padding(12)
         }

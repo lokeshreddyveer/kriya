@@ -30,6 +30,16 @@ enum CaptureAction: String, CaseIterable, Identifiable, Codable {
     case text
     /// Hide private-looking text first, then deliver.
     case redacted
+    /// Read a QR code in it and copy what it holds.
+    case qr
+    /// Record the screen as a movie, or as a GIF.
+    case record, recordGIF
+    /// Scroll the window in front and join the pages into one tall picture.
+    case scroll
+    /// A frozen screen to measure on, with a magnifier and colour readout.
+    case ruler
+    /// Keep the picture on top of everything.
+    case pin
     var id: String { rawValue }
 }
 
@@ -60,6 +70,12 @@ struct CaptureSettings: Codable, Equatable {
         ("capture.screen", "Capture the whole screen", .screen, .normal),
         ("capture.text", "Copy text from a region (OCR)", .region, .text),
         ("capture.redacted", "Capture a region and hide private text", .region, .redacted),
+        ("capture.qr", "Read a QR code from a region", .region, .qr),
+        ("capture.record", "Record the screen", .region, .record),
+        ("capture.gif", "Record the screen as a GIF", .region, .recordGIF),
+        ("capture.scroll", "Capture the whole page of the front window (scrolling)", .window, .scroll),
+        ("capture.ruler", "Measure pixels on the screen (ruler)", .screen, .ruler),
+        ("capture.pin", "Pin the clipboard picture or the latest capture on screen", .screen, .pin),
     ]
 
     static var defaultFolder: URL {

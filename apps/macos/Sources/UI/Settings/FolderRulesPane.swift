@@ -32,6 +32,9 @@ struct FolderRulesPane: View {
                 HStack {
                     Text("Rules")
                     Spacer()
+                    Toggle("Pause all", isOn: $store.paused).toggleStyle(.switch).controlSize(.small)
+                    Button("Export…") { exportRules() }.controlSize(.small).disabled(store.rules.isEmpty)
+                    Button("Import…") { importRules() }.controlSize(.small)
                     Button { editing = FolderRule(name: "", folder: NSHomeDirectory() + "/Downloads", conditions: [.kind("Documents")], action: .moveTo(NSHomeDirectory() + "/Documents")) } label: { Label("Add Rule", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: {
@@ -52,6 +55,22 @@ struct FolderRulesPane: View {
         .sheet(item: $previewing) { rule in
             FolderRulePreview(rule: rule, onClose: { previewing = nil })
         }
+    }
+
+    private func exportRules() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Kriya Folder Rules.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url, let data = store.exported() else { return }
+        do { try data.write(to: url, options: .atomic); message = "Saved \(store.rules.count) rule\(store.rules.count == 1 ? "" : "s") to \(url.lastPathComponent)." } catch { message = "The rules could not be saved." }
+    }
+
+    private func importRules() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
+        guard let result = store.importRules(data) else { message = "That file is not a set of folder rules."; return }
+        message = "Added \(result.added) rule\(result.added == 1 ? "" : "s"), all switched off until you preview them." + (result.skipped > 0 ? " \(result.skipped) were skipped because their folder is missing or not allowed here." : "")
     }
 
     private func row(_ rule: FolderRule) -> some View {
@@ -94,7 +113,7 @@ private struct FolderRuleEditor: View {
     @State private var problem: String?
 
     private enum ActionKind: String, CaseIterable, Identifiable {
-        case move = "Move to a folder", copy = "Copy to a folder", rename = "Rename", trash = "Move to the Trash", sort = "Sort into folders by kind"
+        case move = "Move to a folder", copy = "Copy to a folder", rename = "Rename", tag = "Add a Finder tag", archive = "Archive into month folders", trash = "Move to the Trash", sort = "Sort into folders by kind"
         var id: String { rawValue }
     }
 
@@ -106,6 +125,8 @@ private struct FolderRuleEditor: View {
             case .rename: return .rename
             case .trash: return .trash
             case .sortByKind: return .sort
+            case .tag: return .tag
+            case .archiveByMonth: return .archive
             }
         }, set: { kind in
             switch kind {
@@ -114,6 +135,8 @@ private struct FolderRuleEditor: View {
             case .rename: rule.action = .rename("{date} {name}")
             case .trash: rule.action = .trash
             case .sort: rule.action = .sortByKind
+            case .tag: rule.action = .tag("To review")
+            case .archive: rule.action = .archiveByMonth
             }
         })
     }
@@ -169,6 +192,11 @@ private struct FolderRuleEditor: View {
                         TextField("New name", text: Binding(get: { pattern }, set: { rule.action = .rename($0) }))
                         Text("{name} the old name, {date} the file’s date, {time} its time, {n} a running number, {ext} its type. The type is kept if you leave {ext} out.")
                             .font(.caption).foregroundStyle(.secondary)
+                    case .tag(let name):
+                        TextField("Tag", text: Binding(get: { name }, set: { rule.action = .tag($0) }))
+                        Text("The tag shows in Finder and can be searched. Files that already have it are skipped, so the rule can run again and again.").font(.caption).foregroundStyle(.secondary)
+                    case .archiveByMonth:
+                        Text("Files go into Archive › 2026-10 (by the month each was last changed) inside the watched folder. Nothing is compressed or deleted.").font(.caption).foregroundStyle(.secondary)
                     case .trash:
                         Text("Files go to the Trash, not away for good, and Undo brings them back.").font(.caption).foregroundStyle(.secondary)
                     case .sortByKind:
@@ -293,6 +321,7 @@ private struct FolderRulePreview: View {
     private func destination(_ change: PlannedChange) -> String {
         switch change.kind {
         case .trash: return "→ the Trash"
+        case .tag: return "tag “\(change.to ?? "")”"
         case .copy: return "copy → " + ((change.to ?? "") as NSString).abbreviatingWithTildeInPath
         case .move: return "→ " + ((change.to ?? "") as NSString).abbreviatingWithTildeInPath
         }

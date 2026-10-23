@@ -477,6 +477,7 @@ private struct ClipSettingsTab: View {
     @State private var placement = QuickPanelPlacement.current
 
     private var config: ClipConfig { clip.config }
+    @AppStorage(ClipboardMerger.enabledKey) private var mergeCopies = false
 
     var body: some View {
         Form {
@@ -486,7 +487,13 @@ private struct ClipSettingsTab: View {
                 Toggle("Formatting (rich text)", isOn: Binding(get: { config.captureRichText }, set: { v in clip.updateConfig { $0.captureRichText = v } })).disabled(!config.captureText)
                 Toggle("Images", isOn: Binding(get: { config.captureImages }, set: { v in clip.updateConfig { $0.captureImages = v } }))
                 Toggle("Files", isOn: Binding(get: { config.captureFiles }, set: { v in clip.updateConfig { $0.captureFiles = v } }))
-            } header: { Text("What to record") }
+                Toggle("⌘C twice adds the new copy under the one before", isOn: $mergeCopies)
+            } header: { Text("What to record") } footer: {
+                Text("Copy something, then select more text and press ⌘C twice quickly: the clipboard then holds both, one under the other. Text only; it looks at when ⌘C was pressed, never at what was typed.")
+            }
+
+            ClipboardRulesSection()
+            SharedClipboardSection()
 
             Section {
                 Stepper("Keep up to \(config.maxItems) items", value: Binding(get: { Int(config.maxItems) }, set: { v in clip.updateConfig { $0.maxItems = UInt32(v) } }), in: 20...10_000, step: 20)
@@ -567,6 +574,109 @@ private struct ClipSettingsTab: View {
                 set: { new in clip.updateConfig { $0[keyPath: key] = new?.keyCode; $0[keyPath: mods] = new?.modifiers ?? 0 } }
             ))
             .frame(width: 180, height: 26)
+        }
+    }
+}
+
+/// Rules that tidy what is copied, before it is recorded or pasted.
+struct ClipboardRulesSection: View {
+    @EnvironmentObject private var store: ClipboardRuleStore
+    @State private var editing: ClipboardRule?
+
+    var body: some View {
+        Section {
+            ForEach($store.rules) { $rule in
+                HStack {
+                    Toggle("", isOn: $rule.enabled).labelsHidden()
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(rule.name)
+                        Text(summary(rule)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    Spacer()
+                    Button("Edit") { editing = rule }.controlSize(.small)
+                    Button(role: .destructive) { store.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                }
+            }
+            Menu("Add a Rule") {
+                Button("Clean links from every app") { store.rules.append(ClipboardRule(name: "Clean links", actions: [.stripTracking])) }
+                Button("Plain text from every app") { store.rules.append(ClipboardRule(name: "Always plain text", actions: [.plainText, .trimEnds])) }
+                Button("Custom…") { editing = ClipboardRule(name: "New rule", actions: [.trimEnds]) }
+            }
+        } header: { Text("Rules for what is copied") } footer: {
+            Text("A rule tidies text the moment it is copied, so what you paste and what the history keeps is the tidy version. Choose the apps it applies to, or leave that empty for every app. Copies of files and pictures are never touched.")
+        }
+        .sheet(item: $editing) { rule in
+            ClipboardRuleEditor(rule: rule) { saved in
+                if let i = store.rules.firstIndex(where: { $0.id == saved.id }) { store.rules[i] = saved } else { store.rules.append(saved) }
+                editing = nil
+            } onCancel: { editing = nil }
+        }
+    }
+
+    private func summary(_ rule: ClipboardRule) -> String {
+        let apps = rule.apps.isEmpty ? "Every app" : rule.apps.map(AppChoice.name(for:)).joined(separator: ", ")
+        return apps + ": " + rule.actions.map(\.title).joined(separator: ", ")
+    }
+}
+
+private struct ClipboardRuleEditor: View {
+    @State var rule: ClipboardRule
+    let onSave: (ClipboardRule) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Clipboard rule").font(.headline)
+            TextField("Name", text: $rule.name)
+            GroupBox("Only for copies from") {
+                VStack(alignment: .leading, spacing: 6) {
+                    if rule.apps.isEmpty { Text("Every app").foregroundStyle(.secondary) }
+                    ForEach(rule.apps, id: \.self) { id in
+                        HStack { Text(AppChoice.name(for: id)); Spacer(); Button { rule.apps.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless) }
+                    }
+                    Button("Add an App…") { if let id = AppChoice.choose(), !rule.apps.contains(id) { rule.apps.append(id) } }.controlSize(.small)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
+            }
+            GroupBox("Then") {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(ClipboardRuleAction.allCases) { action in
+                        Toggle(action.title, isOn: Binding(get: { rule.actions.contains(action) }, set: { on in
+                            if on { rule.actions.append(action) } else { rule.actions.removeAll { $0 == action } }
+                        }))
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                Button("Save") { onSave(rule) }.keyboardShortcut(.defaultAction).disabled(rule.actions.isEmpty || rule.name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(18).frame(width: 420)
+    }
+}
+
+/// Sending the clipboard to your other Macs, on request, through iCloud Drive.
+struct SharedClipboardSection: View {
+    @EnvironmentObject private var shared: SharedClipboardService
+    @State private var phrase = ""
+    @State private var problem: String?
+
+    var body: some View {
+        Section {
+            Toggle("Share the clipboard with my other Macs", isOn: $shared.enabled)
+            if shared.enabled {
+                if !shared.isAvailable { Label("iCloud Drive is off on this Mac.", systemImage: "exclamationmark.triangle").foregroundStyle(Theme.warn) }
+                HStack {
+                    SecureField(shared.hasPassphrase ? "Passphrase saved. Enter a new one to change it." : "Passphrase (the same on every Mac)", text: $phrase)
+                    Button("Save") { problem = shared.setPassphrase(phrase); if problem == nil { phrase = "" } }.disabled(phrase.isEmpty)
+                    if shared.hasPassphrase { Button("Remove", role: .destructive) { shared.clearPassphrase() } }
+                }
+                if let problem { Text(problem).font(.caption).foregroundStyle(Theme.warn) }
+                Toggle("Put what arrives on this Mac's clipboard straight away", isOn: $shared.autoReceive)
+            }
+        } header: { Text("Shared clipboard") } footer: {
+            Text("Nothing is sent unless you ask: use the “Send the clipboard to my other Macs” command (give it a shortcut in Keyboard) or type “send clipboard” in the launcher. The text is sealed with your passphrase before it leaves this Mac, passes through your iCloud Drive, and is removed after ten minutes. A Mac with the same passphrase tells you when something arrives; choose “Paste from other Mac” in the launcher to take it. Text only, up to 100 KB.")
         }
     }
 }

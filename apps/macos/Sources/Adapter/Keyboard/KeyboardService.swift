@@ -165,6 +165,10 @@ final class KeyboardService: ObservableObject {
         self.store = store
         injector = TextInjector(clipboard: clipboard, store: store)
         inserter = SnippetInserter(store: store, injector: injector)
+        SnippetInserter.lookup = { [weak store] name in
+            let wanted = name.lowercased()
+            return store?.snippets.first { $0.enabled && ($0.abbreviation?.lowercased() == wanted || $0.title.lowercased() == wanted) }?.body
+        }
         palette = CommandPalette()
     }
 

@@ -22,6 +22,17 @@ final class MeetingSource {
         store.requestFullAccessToEvents { granted, _ in DispatchQueue.main.async { done(granted) } }
     }
 
+    /// Events from now to the end of today that have not finished, earliest first.
+    func today(now: Date = Date()) -> [NextMeeting] {
+        guard isAllowed else { return [] }
+        let end = Calendar.current.startOfDay(for: now).addingTimeInterval(86_400)
+        let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-15 * 60), end: end, calendars: nil)
+        return store.events(matching: predicate)
+            .filter { !$0.isAllDay && $0.status != .canceled && $0.endDate > now }
+            .sorted { $0.startDate < $1.startDate }
+            .map { NextMeeting(title: $0.title ?? "Event", start: $0.startDate, link: MeetingLink.extract(from: [$0.location, $0.notes, $0.url?.absoluteString]), calendar: $0.calendar.title) }
+    }
+
     /// The event that is on now or starts within the next 12 hours, preferring one that has a video link. Cached for a minute.
     func next(now: Date = Date()) -> NextMeeting? {
         guard isAllowed else { return nil }
@@ -102,6 +113,16 @@ final class LauncherToolSources: ObservableObject {
     let meetings = MeetingSource()
     let rates = CurrencyRates()
     private let toast = Toast()
+    /// The text selected when the launcher was opened, for quicklinks that use `{selection}`. Set by the launcher.
+    var selectionProvider: () -> String = { "" }
+    private let scriptIndex = ScriptFolderIndex()
+    /// Keys for results, so Settings can set the selected-text shortcut. Set by the app.
+    var hotkeys: LauncherHotkeys?
+    /// Contacts access, so Settings can ask for it. Set by the app.
+    var contactsAllowed: Bool { contactsAccess?() ?? false }
+    var contactsAccess: (() -> Bool)?
+    var requestContactsAccess: ((@escaping (Bool) -> Void) -> Void)?
+    func requestContacts(_ done: @escaping (Bool) -> Void) { requestContactsAccess?(done) ?? done(false) }
     private let prefs: LauncherPrefs
     var onChange: () -> Void = {}
 
@@ -130,6 +151,16 @@ final class LauncherToolSources: ObservableObject {
                     symbol: "link", category: .web, keywords: [link.keyword]
                 ) { NSWorkspace.shared.open(url) })
             }
+        }
+        for file in scriptFiles() {
+            list.append(PaletteEntry(
+                id: "scriptfile:\(file.path)", title: file.title, subtitle: file.subtitle.isEmpty ? "Script · \(file.fileName)" : file.subtitle, symbol: "terminal", category: .command,
+                keywords: [file.keyword ?? ""],
+                actions: [PaletteAction(title: "Show in Finder", symbol: "folder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: file.path)]) }]
+            ) { [weak self] in
+                guard let self else { return }
+                ScriptFileRunner.run(file, argument: "", toast: self.toast)
+            })
         }
         for script in extras.scripts {
             list.append(PaletteEntry(
@@ -171,6 +202,46 @@ final class LauncherToolSources: ObservableObject {
         return entries
     }
 
+    // MARK: Words that take an argument
+
+    /// A keyword for a quicklink or a script, turned into a chip in the search bar.
+    func token(for word: String) -> ArgumentToken? {
+        if let link = extras.quicklinks.first(where: { $0.takesQuery && !$0.keyword.isEmpty && $0.keyword.lowercased() == word }) {
+            return ArgumentToken(keyword: word, title: link.name, symbol: "link", placeholder: "Search \(link.name) for…")
+        }
+        if let script = extras.scripts.first(where: { !$0.keyword.isEmpty && $0.keyword.lowercased() == word }) {
+            return ArgumentToken(keyword: word, title: script.name, symbol: "terminal", placeholder: "Text for “\(script.name)”…")
+        }
+        if let file = scriptFiles().first(where: { $0.keyword == word && !$0.arguments.isEmpty }) {
+            return ArgumentToken(keyword: word, title: file.title, symbol: "terminal", placeholder: file.arguments.first?.placeholder.isEmpty == false ? file.arguments[0].placeholder + "…" : "Text for “\(file.title)”…")
+        }
+        return nil
+    }
+
+    /// The scripts in the script folders (read again only when a file changed).
+    func scriptFiles() -> [ScriptFile] { scriptIndex.scripts(in: extras.scriptFolders) }
+
+    func runScript(_ script: ScriptCommand, argument: String) { ScriptRunner.run(script, argument: argument, toast: toast) }
+
+    /// Today's events that have not ended, up to three, for the opening list.
+    func todayEntries(now: Date = Date()) -> [PaletteEntry] {
+        guard prefs.data.showMeeting == true else { return [] }
+        return meetings.today(now: now).prefix(3).enumerated().map { index, meeting in
+            let when = MeetingLink.relative(meeting.start, now: now)
+            var actions: [PaletteAction] = []
+            if let link = meeting.link { actions.append(PaletteAction(title: "Copy the Link", symbol: "doc.on.doc") { [weak self] in self?.copy(link.absoluteString) }) }
+            actions.append(PaletteAction(title: "Copy the Details", symbol: "doc.on.clipboard") { [weak self] in
+                self?.copy("\(meeting.title)\n\(meeting.start.formatted(date: .abbreviated, time: .shortened))" + (meeting.link.map { "\n\($0.absoluteString)" } ?? ""))
+            })
+            return PaletteEntry(
+                id: "event:\(index):\(meeting.title.prefix(30))", title: meeting.link == nil ? meeting.title : "Join “\(meeting.title)”", subtitle: "\(when) · \(meeting.calendar)",
+                symbol: meeting.link == nil ? "calendar" : "video", category: .tools, rememberable: false, actions: actions
+            ) {
+                if let link = meeting.link { NSWorkspace.shared.open(link) } else { NSWorkspace.shared.open(URL(string: "ical://")!) }
+            }
+        }
+    }
+
     // MARK: Depends on what was typed
 
     func queryEntries(_ text: String) -> [PaletteEntry] {
@@ -183,6 +254,16 @@ final class LauncherToolSources: ObservableObject {
                 category: .web, rememberable: false, queryScore: 990
             ) { NSWorkspace.shared.open(url) })
         }
+        if data.isEnabled(.web), let link = LauncherExtraMatch.variableLink(in: text, among: extras.quicklinks) {
+            let clip = NSPasteboard.general.string(forType: .string) ?? ""
+            let sel = selectionProvider()
+            if let url = link.url(for: "", clipboard: clip, selection: sel) {
+                found.append(PaletteEntry(
+                    id: "quicklink:\(link.id):vars", title: link.name, subtitle: link.template.contains("{selection}") && !sel.isEmpty ? "With the selected text" : "With the clipboard", symbol: "link",
+                    category: .web, rememberable: false, queryScore: 990
+                ) { NSWorkspace.shared.open(url) })
+            }
+        }
         if let (script, argument) = LauncherExtraMatch.script(in: text, among: extras.scripts) {
             found.append(PaletteEntry(
                 id: "script:\(script.id):\(argument)", title: argument.isEmpty ? "Run “\(script.name)”" : "Run “\(script.name)” with “\(argument.prefix(40))”", subtitle: "Script", symbol: "terminal",
@@ -190,6 +271,14 @@ final class LauncherToolSources: ObservableObject {
             ) { [weak self] in
                 guard let self else { return }
                 ScriptRunner.run(script, argument: argument, toast: self.toast)
+            })
+        }
+        if let (word, rest) = LauncherExtraMatch.split(text), !rest.isEmpty, let file = scriptFiles().first(where: { $0.keyword == word }) {
+            found.append(PaletteEntry(
+                id: "scriptfile:\(file.path):\(rest)", title: "Run “\(file.title)” with “\(rest.prefix(40))”", subtitle: "Script", symbol: "terminal", category: .command, rememberable: false, queryScore: 985
+            ) { [weak self] in
+                guard let self else { return }
+                ScriptFileRunner.run(file, argument: rest, toast: self.toast)
             })
         }
         guard data.isEnabled(.tools) else { return found }
@@ -203,7 +292,7 @@ final class LauncherToolSources: ObservableObject {
         for result in results {
             found.append(PaletteEntry(
                 id: result.id, title: result.title, subtitle: result.subtitle, symbol: result.symbol, category: .tools, rememberable: false, queryScore: result.sensitive ? 880 : 940,
-                actions: [PaletteAction(title: "Copy", symbol: "doc.on.doc") { [weak self] in self?.copy(result.copy) }]
+                actions: [PaletteAction(title: "Copy", symbol: "doc.on.doc") { [weak self] in self?.copy(result.copy) }], swatchHex: result.swatchHex
             ) { [weak self] in self?.copy(result.copy, message: result.sensitive ? "Copied the password" : "Copied") })
         }
         if data.currencyRates == true, let ask = CurrencyConverter.parse(text) {

@@ -34,6 +34,7 @@ final class FolderRulesService: ObservableObject {
     }
 
     func runEnabledRules() {
+        guard !store.paused else { return }
         for rule in store.rules where rule.enabled { run(rule, announce: true) }
     }
 
@@ -42,11 +43,11 @@ final class FolderRulesService: ObservableObject {
     /// The files in a rule's folder, with what a rule can ask about them.
     static func files(in folder: String) -> [FolderFile] {
         let url = URL(fileURLWithPath: folder, isDirectory: true)
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isHiddenKey, .fileSizeKey, .contentModificationDateKey]
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isHiddenKey, .fileSizeKey, .contentModificationDateKey, .tagNamesKey]
         let entries = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: [])) ?? []
         return entries.compactMap { entry in
             guard let values = try? entry.resourceValues(forKeys: Set(keys)), let modified = values.contentModificationDate else { return nil }
-            return FolderFile(name: entry.lastPathComponent, isDirectory: values.isDirectory ?? false, isHidden: values.isHidden ?? false, size: Int64(values.fileSize ?? 0), modified: modified)
+            return FolderFile(name: entry.lastPathComponent, isDirectory: values.isDirectory ?? false, isHidden: values.isHidden ?? false, size: Int64(values.fileSize ?? 0), modified: modified, tags: values.tagNames ?? [])
         }
     }
 
@@ -77,22 +78,25 @@ final class FolderRulesService: ObservableObject {
                 case .copyTo: verb = "Copied"
                 case .rename: verb = "Renamed"
                 case .trash: verb = "Moved to the Trash"
+                case .tag: verb = "Tagged"
+                case .archiveByMonth: verb = "Archived"
                 default: verb = "Moved"
                 }
-                let done = result.steps.count
+                let done = result.steps.count + result.tagged
                 let text = "\(verb) \(done) file\(done == 1 ? "" : "s")" + (result.failures.isEmpty ? "" : ", \(result.failures.count) failed")
                 self.lastResult[rule.id] = text + " · " + Date().formatted(date: .omitted, time: .shortened)
-                self.history.record(title: "Folder rule “\(rule.name)”: \(text.lowercased())", steps: result.steps, failures: result.failures)
+                if !result.steps.isEmpty || !result.failures.isEmpty { self.history.record(title: "Folder rule “\(rule.name)”: \(text.lowercased())", steps: result.steps, failures: result.failures) }
                 if announce, done > 0 || !result.failures.isEmpty { self.toast.show("“\(rule.name)”: \(text)", isError: done == 0 && !result.failures.isEmpty) }
             }
         }
     }
 
     /// Does what was planned, one change at a time. A change that fails is reported and the rest still run.
-    static func apply(_ changes: [PlannedChange]) -> (steps: [FileStep], failures: [String]) {
+    static func apply(_ changes: [PlannedChange]) -> (steps: [FileStep], failures: [String], tagged: Int) {
         let fm = FileManager.default
         var steps: [FileStep] = []
         var failures: [String] = []
+        var tagged = 0
         for change in changes {
             let name = (change.from as NSString).lastPathComponent
             do {
@@ -114,6 +118,14 @@ final class FolderRulesService: ObservableObject {
                         try fm.copyItem(atPath: change.from, toPath: target)
                         steps.append(.created(path: target))
                     }
+                case .tag:
+                    guard let tag = change.to else { continue }
+                    let url = URL(fileURLWithPath: change.from) as NSURL
+                    var names: AnyObject?
+                    try? url.getResourceValue(&names, forKey: .tagNamesKey)
+                    let existing = (names as? [String]) ?? []
+                    try url.setResourceValue(existing + [tag], forKey: .tagNamesKey)
+                    tagged += 1
                 case .trash:
                     var trashed: NSURL?
                     try fm.trashItem(at: URL(fileURLWithPath: change.from), resultingItemURL: &trashed)
@@ -123,6 +135,6 @@ final class FolderRulesService: ObservableObject {
                 failures.append("“\(name)”: \(error.localizedDescription)")
             }
         }
-        return (steps, failures)
+        return (steps, failures, tagged)
     }
 }

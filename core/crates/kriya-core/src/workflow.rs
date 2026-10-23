@@ -511,6 +511,12 @@ fn describe_action(action: &Action) -> String {
             key_code,
             modifiers,
         } => format!("Press key {key_code} with modifiers {modifiers}"),
+        Action::Click { button, count, .. } => match (button, count) {
+            (1, _) => "Right-click".into(),
+            (_, 2) => "Double-click".into(),
+            (_, 3) => "Triple-click".into(),
+            _ => "Click".into(),
+        },
         Action::OpenApplication { target } => format!("Open {target}"),
         Action::OpenUrl { url } => format!("Open {url}"),
         Action::RunShell { script } => format!("Run a shell command: {}", first_line(script)),

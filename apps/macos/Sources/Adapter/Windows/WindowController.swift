@@ -643,7 +643,14 @@ final class WindowController: ObservableObject {
         let changedSet = key != previousDisplayKey
         previousDisplayKey = key
         let config = store.currentConfig
-        if changedSet, config.restoreOnReconnect, let saved = try? core.autoLayoutFor(displayKey: key) {
+        let bindings = DisplaySetupBindings()
+        bindings.prune(existing: Set(store.layouts.map(\.id)))
+        if changedSet, let chosen = bindings.layoutID(forSetup: key).flatMap({ id in store.layouts.first { $0.id == id } }) {
+            diagnostics.note("Display setup recognised: restoring “\(chosen.name)”")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.restore(chosen) { _ in self?.containOffscreenWindows() }
+            }
+        } else if changedSet, config.restoreOnReconnect, let saved = try? core.autoLayoutFor(displayKey: key) {
             diagnostics.note(after.count > before.count ? "Display connected: restoring its arrangement" : "Display disconnected: restoring the arrangement for the remaining displays")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 self?.restore(saved) { _ in self?.containOffscreenWindows() }

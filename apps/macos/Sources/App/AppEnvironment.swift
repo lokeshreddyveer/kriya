@@ -29,7 +29,22 @@ final class AppEnvironment {
     let launcherTools: LauncherToolSources
     let folderRules: FolderRulesService
     let remote: RemoteCommands
+    let audio: AudioControl
+    let clipboardMerger: ClipboardMerger
+    private(set) var launcherHotkeys: LauncherHotkeys?
     let menuBarHider: MenuBarHider
+    let systemMonitor = SystemMonitor()
+    let notes = NotesController()
+    let clipboardRules = ClipboardRuleStore()
+    let appAudio = AppAudioEngine()
+    let soundMixer = SoundMixerModel()
+    let soundRules = SoundRuleRunner()
+    let focusSession = FocusSessionController()
+    let worldClock = WorldClockModel()
+    let sharedClipboard = SharedClipboardService()
+    let dictation = DictationService()
+    let dialogFolders: DialogFolderHelper
+    private(set) var volumeKeys: VolumeKeys?
     let dragStore: DragToolsStore
     let pasteStack: PasteStack
     let speaker: Speaker
@@ -103,11 +118,13 @@ final class AppEnvironment {
         let pointerStore = PointerEffectsStore(core: core)
         let launcherTools = LauncherToolSources(extras: LauncherExtras(), prefs: keyboard.palette.prefs)
         let remote = RemoteCommands(support: paths.support)
+        let clipboardMerger = ClipboardMerger(events: events, monitor: clipboard.monitor)
         let menuBarHider = MenuBarHider()
         let folderRules = FolderRulesService(store: FolderRulesStore(), history: finder.runner.history)
         let pointerEffects = PointerEffects(store: pointerStore, displays: windowController.displays, executor: executor)
         let dragStore = DragToolsStore(core: core)
         let pasteStack = PasteStack(events: events)
+        let audio = AudioControl()
         let speaker = Speaker()
         let screenStore = ScreenToolsStore(core: core)
         // Runs a saved action by its id, or a built-in command by its name.
@@ -192,6 +209,7 @@ final class AppEnvironment {
         self.windowController = windowController
         self.traffic = traffic
         self.finder = finder
+        self.dialogFolders = DialogFolderHelper(destinations: finder.destinations)
         self.pointerMenuStore = pointerMenuStore
         self.pointerMenu = pointerMenu
         self.linkStore = linkStore
@@ -205,6 +223,8 @@ final class AppEnvironment {
         self.launcherTools = launcherTools
         self.folderRules = folderRules
         self.remote = remote
+        self.audio = audio
+        self.clipboardMerger = clipboardMerger
         self.menuBarHider = menuBarHider
         self.pointerEffects = pointerEffects
         self.dragStore = dragStore
@@ -272,6 +292,16 @@ final class AppEnvironment {
         workspaces.start()
         displayTools.start()
         executor.registerCommand("clipboard.stack") { [weak pasteStack] in DispatchQueue.main.async { pasteStack?.toggle() } }
+        executor.registerCommand("color.pick") { DispatchQueue.main.async { ScreenColorPicker.pick() } }
+        executor.registerCommand("focus.session") { [weak self] in DispatchQueue.main.async { self?.focusSession.toggle() } }
+        executor.registerCommand("clipboard.send_other") { [weak self] in DispatchQueue.main.async { self?.sharedClipboard.send() } }
+        executor.registerCommand("clipboard.receive_other") { [weak self] in DispatchQueue.main.async { self?.sharedClipboard.receive() } }
+        executor.registerCommand("dictation.toggle") { [weak self] in DispatchQueue.main.async { self?.dictation.toggle() } }
+        executor.registerCommand("dialog.folders") { [weak self] in DispatchQueue.main.async { self?.dialogFolders.toggle() } }
+        executor.registerCommand("notes.open") { [weak self] in DispatchQueue.main.async { self?.notes.toggle() } }
+        for entry in AudioControl.commands {
+            executor.registerCommand(entry.command) { [weak audio] in DispatchQueue.main.async { audio?.run(entry.command) } }
+        }
         executor.registerCommand("text.speak") { [weak speaker] in DispatchQueue.main.async { speaker?.toggle() } }
         executor.registerCommand("text.stop_speaking") { [weak speaker] in DispatchQueue.main.async { speaker?.stop() } }
         executor.registerCommand("display.next_profile") { [weak displayTools] in DispatchQueue.main.async { displayTools?.applyNextProfile() } }
@@ -291,8 +321,23 @@ final class AppEnvironment {
             DispatchQueue.main.async { links?.chooseBrowserForClipboardLink() }
         }
         pointerEffects.start()
+        clipboardMerger.start()
         folderRules.start()
         menuBarHider.start()
+        systemMonitor.start()
+        appAudio.start()
+        soundRules.start()
+        focusSession.start()
+        worldClock.meetings = launcherTools.meetings
+        worldClock.start()
+        sharedClipboard.start()
+        dialogFolders.type = { [weak keyboard] text in keyboard?.injector.insert(text, cursorBack: 0) }
+        dictation.insert = { [weak keyboard] text in DispatchQueue.global(qos: .userInitiated).async { keyboard?.injector.insert(text, cursorBack: 0) } }
+        let keys = VolumeKeys(events: events, engine: appAudio)
+        volumeKeys = keys
+        keys.start()
+        Task { @MainActor in SoundIntentBridge.engine = self.appAudio; SoundIntentBridge.mixer = self.soundMixer }
+        clipboard.monitor.rules = clipboardRules
         remote.runCommand = { [weak keyboard] id in keyboard?.run(.command(command: id)) }
         remote.runAction = { [weak keyboard] id in keyboard?.run(.action(actionId: id)) }
         remote.runWorkflow = { [weak automation] id in automation?.fire(id, source: "Command line") }
@@ -340,17 +385,40 @@ final class AppEnvironment {
         devices.activeDeviceID = { [weak activity] in activity?.currentDeviceID() }
         devices.lastUsedProvider = { [weak activity] id in activity?.lastUsed(id) }
         clipboard.quick.extraMenuActions = { [weak intelligence, weak clipboard] item in
-            guard let intelligence, intelligence.service.isAvailable, intelligence.service.settings.onClipboardItems, !item.sensitive,
-                  item.kind == .text || item.kind == .richText || item.kind == .url,
+            guard !item.sensitive, item.kind == .text || item.kind == .richText || item.kind == .url,
                   let text = clipboard?.store.blob(item.id)?.plain, !text.isEmpty else { return [] }
-            return [
-                ("Summarize", IntelligenceTask.summarize, "text.append"), ("Explain", .explain, "questionmark.bubble"),
-                ("Fix Grammar", .fixGrammar, "checkmark.circle"), ("Make Professional", .professional, "briefcase"),
-            ].map { title, task, symbol in
-                QuickMenuAction(title: title, symbol: symbol, submenu: "Apple Intelligence") { intelligence.perform(task, on: text) }
+            // Paste it already tidied: the history item itself is left as it was.
+            var actions = TextFilter.allCases.map { filter in
+                QuickMenuAction(title: filter.title, symbol: filter.symbol, submenu: "Paste Changed") { clipboard?.paster.pasteTransformed(filter.apply(to: text)) }
             }
+            if let intelligence, intelligence.service.isAvailable, intelligence.service.settings.onClipboardItems {
+                actions += [
+                    ("Summarize", IntelligenceTask.summarize, "text.append"), ("Explain", .explain, "questionmark.bubble"),
+                    ("Fix Grammar", .fixGrammar, "checkmark.circle"), ("Make Professional", .professional, "briefcase"),
+                ].map { title, task, symbol in
+                    QuickMenuAction(title: title, symbol: symbol, submenu: "Apple Intelligence") { intelligence.perform(task, on: text) }
+                }
+            }
+            return actions
         }
+        sources.finder = finder
+        sources.audio = audio
+        sources.notes = notes
+        sources.sharedClipboard = sharedClipboard
+        sources.focus = focusSession
+        notes.summarize = { [weak intelligence] text in intelligence?.perform(.summarize, on: text) }
+        sources.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "Command launcher", input: text) }
+        sources.workflowTitle = { [weak automation] id in automation?.store.workflow(id)?.name }
         sources.register(in: keyboard.palette)
+        let launcherHotkeys = LauncherHotkeys(prefs: keyboard.palette.prefs)
+        keyboard.palette.hotkeys = launcherHotkeys
+        launcherHotkeys.runResult = { [weak palette = keyboard.palette] id in palette?.runResult(withID: id) }
+        launcherHotkeys.showSelection = { [weak palette = keyboard.palette] in palette?.showForSelection() }
+        self.launcherHotkeys = launcherHotkeys
+        launcherTools.hotkeys = launcherHotkeys
+        launcherTools.contactsAccess = { [weak sources] in sources?.contacts.isAllowed ?? false }
+        launcherTools.requestContactsAccess = { [weak sources] done in sources?.contacts.requestAccess(done) ?? done(false) }
+        launcherHotkeys.start()
         // Apple Intelligence on the selection: the bar offers its actions only where it can run and the person allows it.
         selection.runner.runIntelligence = { [weak intelligence] task, text, pointer, replace in
             DispatchQueue.main.async { intelligence?.perform(task, on: text, near: pointer, replace: replace) }
@@ -392,6 +460,17 @@ extension View {
             .environmentObject(env.folderRules)
             .environmentObject(env.folderRules.store)
             .environmentObject(env.menuBarHider)
+            .environmentObject(env.systemMonitor)
+            .environmentObject(env.notes)
+            .environmentObject(env.appAudio)
+            .environmentObject(env.soundMixer)
+            .environmentObject(env.soundRules)
+            .environmentObject(env.focusSession)
+            .environmentObject(env.worldClock)
+            .environmentObject(env.sharedClipboard)
+            .environmentObject(env.dictation)
+            .environmentObject(env.speaker)
+            .environmentObject(env.clipboardRules)
             .environmentObject(env.workspaceStore)
             .environmentObject(env.pointerStore)
             .environmentObject(env.dragStore)

@@ -747,7 +747,7 @@ private struct ActionFields: View {
             TextEditor(text: Binding(get: { script }, set: { action = .runShell(script: $0) })).font(.system(.callout, design: .monospaced)).frame(height: 70)
         case .runScript(let language, let source):
             TextEditor(text: Binding(get: { source }, set: { action = .runScript(language: language, source: $0) })).font(.system(.callout, design: .monospaced)).frame(height: 70)
-        case .noop, .sequence:
+        case .noop, .sequence, .click:
             Text(action.summary).font(.callout).foregroundStyle(.secondary)
         }
     }

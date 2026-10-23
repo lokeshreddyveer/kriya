@@ -5,6 +5,8 @@ final class FolderRulesStore: ObservableObject {
     static let maxRules = 40
 
     @Published private(set) var rules: [FolderRule]
+    /// Pauses every rule at once without switching each off.
+    @Published var paused: Bool { didSet { defaults.set(paused, forKey: "folderRules.paused") } }
     private let defaults: UserDefaults
     private let key = "folderRules.v1"
     private let folderExists: (String) -> Bool
@@ -12,6 +14,7 @@ final class FolderRulesStore: ObservableObject {
     init(defaults: UserDefaults = .standard, folderExists: @escaping (String) -> Bool = { var d: ObjCBool = false; return FileManager.default.fileExists(atPath: $0, isDirectory: &d) && d.boolValue }) {
         self.defaults = defaults
         self.folderExists = folderExists
+        paused = defaults.bool(forKey: "folderRules.paused")
         rules = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([FolderRule].self, from: $0) } ?? []
     }
 
@@ -51,6 +54,27 @@ final class FolderRulesStore: ObservableObject {
     func delete(_ id: String) {
         rules.removeAll { $0.id == id }
         persist()
+    }
+
+    /// The rules as a file to keep or share.
+    func exported() -> Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(rules.map { var r = $0; r.enabled = false; return r })
+    }
+
+    /// Adds rules from a file. They come in switched off with new ids, and any that is not safe here (its folder is missing, or
+    /// it names a system folder) is left out. Returns how many were added and how many were skipped.
+    @discardableResult
+    func importRules(_ data: Data) -> (added: Int, skipped: Int)? {
+        guard let incoming = try? JSONDecoder().decode([FolderRule].self, from: data) else { return nil }
+        var added = 0, skipped = 0
+        for var rule in incoming.prefix(Self.maxRules) {
+            rule.id = UUID().uuidString
+            rule.enabled = false
+            if save(rule) == nil { added += 1 } else { skipped += 1 }
+        }
+        return (added, skipped + max(incoming.count - Self.maxRules, 0))
     }
 
     private func persist() {

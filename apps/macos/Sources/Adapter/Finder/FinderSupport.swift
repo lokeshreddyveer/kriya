@@ -33,9 +33,15 @@ enum ProtectedPaths {
 }
 
 /// A short message at the bottom of the screen that fades by itself.
-final class Toast {
+final class Toast: NSObject {
     private var panel: NSPanel?
     private var hideWork: DispatchWorkItem?
+
+    @objc private func dismiss() {
+        hideWork?.cancel()
+        guard let panel else { return }
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; panel.animator().alphaValue = 0 }, completionHandler: { panel.orderOut(nil) })
+    }
 
     func show(_ text: String, isError: Bool = false) {
         DispatchQueue.main.async { [self] in
@@ -55,13 +61,16 @@ final class Toast {
             if isError { box.layer?.borderColor = NSColor.systemRed.withAlphaComponent(0.7).cgColor; box.layer?.borderWidth = 1.5 }
             label.frame = NSRect(x: 18, y: 10, width: size.width, height: size.height)
             box.addSubview(label)
+            let click = NSClickGestureRecognizer(target: self, action: #selector(self.dismiss))
+            box.addGestureRecognizer(click)
 
             let panel = self.panel ?? NSPanel(contentRect: box.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             self.panel = panel
             panel.isOpaque = false
             panel.backgroundColor = .clear
             panel.level = .statusBar
-            panel.ignoresMouseEvents = true
+            // A click puts it away at once.
+            panel.ignoresMouseEvents = false
             panel.hasShadow = true
             panel.isReleasedWhenClosed = false
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]

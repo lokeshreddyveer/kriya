@@ -11,8 +11,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.3.0"
-    CURRENT_PROJECT_VERSION: "24"
+    MARKETING_VERSION: "0.5.0"
+    CURRENT_PROJECT_VERSION: "25"
     ENABLE_HARDENED_RUNTIME: YES
     GENERATE_INFOPLIST_FILE: NO
     # One binary for Apple Silicon and Intel.
@@ -63,6 +63,10 @@ targets:
         NSPrincipalClass: NSApplication
         NSHumanReadableCopyright: "Copyright © 2026 Kriya. All rights reserved."
         NSAppleEventsUsageDescription: "Kriya runs the AppleScripts you create, which may control other apps."
+        NSMicrophoneUsageDescription: "Kriya listens only while you dictate, turns your speech into text on this Mac, and keeps nothing."
+        NSSpeechRecognitionUsageDescription: "Kriya turns what you say into text, on this Mac, when you use dictation."
+        NSAudioCaptureUsageDescription: Kriya listens to one app's sound only to change its volume, equaliser or output, and plays it straight back. Nothing is recorded or stored.
+        NSContactsUsageDescription: "Kriya looks people up in your contacts when you search for them in the launcher. It stays on this Mac."
         NSCalendarsFullAccessUsageDescription: "Kriya reads your next calendar event so the launcher can show it and open its video call. It stays on this Mac."
         SUFeedURL: https://raw.githubusercontent.com/lokeshreddyveer/kriya/main/appcast.xml
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
@@ -122,6 +126,7 @@ targets:
       # Not sandboxed: Kriya watches input and moves other apps' windows. Hardened runtime, notarized.
       properties:
         com.apple.security.automation.apple-events: true
+        com.apple.security.device.audio-input: true
     settings:
       base:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

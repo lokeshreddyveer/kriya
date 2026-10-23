@@ -10,6 +10,8 @@ struct ToolResult: Equatable, Identifiable {
     let symbol: String
     /// Not remembered, and never written anywhere (a generated password).
     var sensitive = false
+    /// A colour to show in place of the icon, as `#RRGGBB`.
+    var swatchHex: String?
 }
 
 // MARK: - Units
@@ -287,9 +289,9 @@ enum ColorTool {
         guard let c = parse(input) else { return [] }
         let hexText = hex(c)
         return [
-            ToolResult(id: "color:hex", title: hexText, subtitle: "Hex colour", copy: hexText, symbol: "paintpalette"),
-            ToolResult(id: "color:rgb", title: "rgb(\(c.r), \(c.g), \(c.b))", subtitle: "Copy as RGB", copy: "rgb(\(c.r), \(c.g), \(c.b))", symbol: "paintpalette"),
-            ToolResult(id: "color:hsl", title: hsl(c), subtitle: "Copy as HSL", copy: hsl(c), symbol: "paintpalette"),
+            ToolResult(id: "color:hex", title: hexText, subtitle: "Hex colour", copy: hexText, symbol: "paintpalette", swatchHex: hexText),
+            ToolResult(id: "color:rgb", title: "rgb(\(c.r), \(c.g), \(c.b))", subtitle: "Copy as RGB", copy: "rgb(\(c.r), \(c.g), \(c.b))", symbol: "paintpalette", swatchHex: hexText),
+            ToolResult(id: "color:hsl", title: hsl(c), subtitle: "Copy as HSL", copy: hsl(c), symbol: "paintpalette", swatchHex: hexText),
         ]
     }
 }

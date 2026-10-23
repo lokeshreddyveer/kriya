@@ -61,3 +61,28 @@ final class SettingsSyncTests: XCTestCase {
         XCTAssertEqual(SettingsSync.newerFromOtherMac(files: [file("kriya – laptop", 900), file("KRIYA – STUDIO", 100)], thisMac: "Studio", dismissedAt: nil)?.date, Date(timeIntervalSince1970: 900), "names are compared without case")
     }
 }
+
+final class ClickRecordingTests: XCTestCase {
+    func testClickInsideTheFrontWindowIsSavedRelativeToIt() {
+        let click = RecordedClick.make(point: CGPoint(x: 150, y: 220), window: CGRect(x: 100, y: 200, width: 400, height: 300), right: false, count: 1, time: 0)
+        XCTAssertEqual(click.action, .click(x: 50, y: 20, button: 0, count: 1, inWindow: true))
+    }
+
+    func testClickOutsideAnyWindowIsAbsolute() {
+        let click = RecordedClick.make(point: CGPoint(x: 10, y: 5), window: CGRect(x: 100, y: 200, width: 400, height: 300), right: true, count: 2, time: 0)
+        XCTAssertEqual(click.action, .click(x: 10, y: 5, button: 1, count: 2, inWindow: false))
+    }
+
+    func testKeysAndClicksKeepTheirOrder() throws {
+        let keys = [RecordedKey(keyCode: 8, modifiers: 8, time: 0.1), RecordedKey(keyCode: 9, modifiers: 8, time: 0.9)]
+        let clicks = [RecordedClick(x: 5, y: 6, right: false, count: 1, inWindow: true, time: 0.5)]
+        guard case .sequence(let steps, _) = try XCTUnwrap(KeystrokeRecording.action(keys: keys, clicks: clicks)) else { return XCTFail("expected a sequence") }
+        XCTAssertEqual(steps.count, 3)
+        XCTAssertEqual(steps[1], .click(x: 5, y: 6, button: 0, count: 1, inWindow: true))
+    }
+
+    func testAClickAloneIsNotWrappedInASequence() {
+        let clicks = [RecordedClick(x: 5, y: 6, right: false, count: 1, inWindow: false, time: 0)]
+        XCTAssertEqual(KeystrokeRecording.action(keys: [], clicks: clicks), .click(x: 5, y: 6, button: 0, count: 1, inWindow: false))
+    }
+}

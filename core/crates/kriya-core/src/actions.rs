@@ -57,6 +57,15 @@ pub enum Action {
     RunShortcut {
         name: String,
     },
+    /// A mouse click at a point. With `in_window` the point is measured from the top-left of the front window, so the
+    /// click still lands on the same control when the window has moved. `button` is 0 for left and 1 for right.
+    Click {
+        x: i32,
+        y: i32,
+        button: u8,
+        count: u8,
+        in_window: bool,
+    },
     /// A command a feature registers with the shell, such as `window.left_half`.
     Builtin {
         command: String,
@@ -208,6 +217,28 @@ fn validate_at(action: &Action, depth: usize) -> Result<(), CoreError> {
             }
             Ok(())
         }
+        Action::Click {
+            x,
+            y,
+            button,
+            count,
+            ..
+        } => {
+            if *button > 1 {
+                return Err(CoreError::invalid(
+                    "a click is made with the left or right button",
+                ));
+            }
+            if !(1..=3).contains(count) {
+                return Err(CoreError::invalid(
+                    "a click is made once, twice or three times",
+                ));
+            }
+            if x.abs() > 30_000 || y.abs() > 30_000 {
+                return Err(CoreError::invalid("the click is outside the screen"));
+            }
+            Ok(())
+        }
         Action::OpenApplication { target } => require_text(target, "choose an app to open"),
         Action::OpenUrl { url } => {
             let parsed = url::Url::parse(url.trim())
@@ -310,6 +341,23 @@ fn push_steps(action: &Action, out: &mut Vec<ActionStep>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn click_is_checked() {
+        let click = |button, count, x| Action::Click {
+            x,
+            y: 10,
+            button,
+            count,
+            in_window: true,
+        };
+        assert!(validate(&click(0, 1, 5)).is_ok());
+        assert!(validate(&click(1, 2, -40)).is_ok());
+        assert!(validate(&click(2, 1, 5)).is_err());
+        assert!(validate(&click(0, 0, 5)).is_err());
+        assert!(validate(&click(0, 4, 5)).is_err());
+        assert!(validate(&click(0, 1, 90_000)).is_err());
+    }
 
     #[test]
     fn url_scheme_is_checked() {

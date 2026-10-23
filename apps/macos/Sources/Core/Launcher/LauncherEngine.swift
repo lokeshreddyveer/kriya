@@ -123,6 +123,33 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// A key combination that runs a launcher result (or opens the selection actions) from anywhere.
+struct LauncherHotkey: Codable, Equatable {
+    var keyCode: UInt16
+    var modifiers: UInt64
+}
+
+/// What a stray letter match is worth: Low lets "msg" find Messages, High wants the start of a word.
+enum LauncherStrictness: Int, CaseIterable, Identifiable {
+    case low = 0, medium = 1, high = 2
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .low: return "Loose: letters anywhere in order"
+        case .medium: return "Balanced"
+        case .high: return "Strict: starts of words and whole words"
+        }
+    }
+    /// The lowest score a match needs (see `FuzzyMatcher`: prefixes score 900, words 600 to 800, spread letters up to 500).
+    var minimumScore: Int {
+        switch self {
+        case .low: return 0
+        case .medium: return 90
+        case .high: return 400
+        }
+    }
+}
+
 struct LauncherUsage: Codable, Equatable {
     var count: Int
     var last: Date
@@ -144,6 +171,24 @@ struct LauncherPrefsData: Codable, Equatable {
     var currencyRates: Bool?
     /// Shows the next calendar event, once the person allowed it.
     var showMeeting: Bool?
+    /// Results kept out of the launcher by the person's choice.
+    var hidden: [String] = []
+    /// A key for a result, by its id. The special id "@selection" opens the actions for the selected text.
+    var hotkeys: [String: LauncherHotkey] = [:]
+    /// What text that matches nothing is offered to, in order: "web", "ai", "engine:<id>", "quicklink:<id>", "script:<id>".
+    /// Nil is the default, the web search.
+    var fallbacks: [String]?
+    /// A `LauncherStrictness` raw value. Nil is balanced.
+    var strictness: Int?
+    /// Recent files and today's events when nothing is typed. Nil is on.
+    var showRecentFiles: Bool?
+    var showTodayEvents: Bool?
+    /// People from Contacts show up in results, once the person allowed it.
+    var searchContacts: Bool?
+
+    static let defaultFallbacks = ["web"]
+    var activeFallbacks: [String] { fallbacks ?? Self.defaultFallbacks }
+    var matchStrictness: LauncherStrictness { LauncherStrictness(rawValue: strictness ?? 1) ?? .medium }
 
     func isEnabled(_ category: LauncherCategory) -> Bool { !disabledCategories.contains(category.rawValue) }
 }
@@ -168,8 +213,10 @@ enum LauncherEngine {
     /// The ids in the order they should be shown.
     static func rank(_ items: [LauncherCandidate], query: String, prefs: LauncherPrefsData, now: Date = Date(), limit: Int = 60, suggestions: [String] = []) -> [String] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let visible = items.filter { prefs.isEnabled($0.category) }
+        let hidden = Set(prefs.hidden)
+        let visible = items.filter { prefs.isEnabled($0.category) && !hidden.contains($0.id) }
         if text.isEmpty { return startList(visible, prefs: prefs, now: now, suggestions: suggestions) }
+        let floor = prefs.matchStrictness.minimumScore
 
         let alias = text.lowercased().filter { !$0.isWhitespace }
         var scored: [(candidate: LauncherCandidate, score: Int)] = []
@@ -182,7 +229,7 @@ enum LauncherEngine {
             } else {
                 let title = FuzzyMatcher.best(text, in: [item.title] + item.keywords)
                 let subtitle = FuzzyMatcher.score(text, in: item.subtitle).map { $0 - 200 }
-                guard let best = [title, subtitle].compactMap({ $0 }).max() else { continue }
+                guard let best = [title, subtitle].compactMap({ $0 }).max(), best >= floor else { continue }
                 score = best
             }
             score += item.category.bias
@@ -214,7 +261,7 @@ enum LauncherEngine {
 
     /// The heading a row sits under when nothing is typed.
     static func startSection(for id: String, prefs: LauncherPrefsData) -> String {
-        if prefs.pinned.contains(id) { return "Pinned" }
+        if prefs.pinned.contains(id) { return "Favorites" }
         return prefs.usage[id] != nil ? "Recent" : "Suggested"
     }
 
@@ -291,6 +338,24 @@ final class LauncherPrefs: ObservableObject {
             }
         }
     }
+
+    func hide(_ id: String) { change { if !$0.hidden.contains(id) { $0.hidden.append(id) } ; $0.pinned.removeAll { $0 == id } } }
+    func unhide(_ id: String) { change { $0.hidden.removeAll { $0 == id } } }
+    func isHidden(_ id: String) -> Bool { data.hidden.contains(id) }
+
+    /// Forgets what was learned about one result, so it ranks as if never chosen.
+    func resetRanking(_ id: String) { change { $0.usage[id] = nil } }
+
+    func setHotkey(_ key: LauncherHotkey?, for id: String) {
+        change { if let key, key.modifiers != 0 { $0.hotkeys[id] = key } else { $0.hotkeys[id] = nil } }
+    }
+    func hotkey(for id: String) -> LauncherHotkey? { data.hotkeys[id] }
+
+    func setFallbacks(_ list: [String]) { change { $0.fallbacks = list == LauncherPrefsData.defaultFallbacks ? nil : list } }
+    func setStrictness(_ value: LauncherStrictness) { change { $0.strictness = value == .medium ? nil : value.rawValue } }
+    func setShowRecentFiles(_ on: Bool) { change { $0.showRecentFiles = on ? nil : false } }
+    func setShowTodayEvents(_ on: Bool) { change { $0.showTodayEvents = on ? nil : false } }
+    func setSearchContacts(_ on: Bool) { change { $0.searchContacts = on } }
 
     func setCurrencyRates(_ on: Bool) { change { $0.currencyRates = on } }
     func setShowMeeting(_ on: Bool) { change { $0.showMeeting = on } }

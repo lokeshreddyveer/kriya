@@ -222,3 +222,49 @@ final class FolderRulesServiceTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("Out/b.pdf").path))
     }
 }
+
+final class FolderRuleTagAndArchiveTests: XCTestCase {
+    private func rule(_ action: FolderAction) -> FolderRule {
+        FolderRule(name: "r", enabled: true, folder: NSTemporaryDirectory(), conditions: [.nameContains("")], action: action)
+    }
+
+    func testTagSkipsFilesThatAlreadyHaveIt() {
+        let r = FolderRule(name: "t", enabled: true, folder: NSTemporaryDirectory(), conditions: [.olderThanDays(0)], action: .tag("Review"))
+        let old = Date(timeIntervalSinceNow: -86_400 * 3)
+        let files = [FolderFile(name: "a.pdf", modified: old), FolderFile(name: "b.pdf", modified: old, tags: ["review"])]
+        let changes = FolderRuleEngine.plan(r, files: files, now: Date(), existingNames: { _ in [] })
+        XCTAssertEqual(changes.map(\.kind), [.tag])
+        XCTAssertEqual(changes.first?.to, "Review")
+        XCTAssertTrue(changes.first?.from.hasSuffix("a.pdf") == true)
+    }
+
+    func testArchiveGoesIntoMonthFoldersInsideTheWatchedFolder() {
+        let r = FolderRule(name: "a", enabled: true, folder: NSTemporaryDirectory(), conditions: [.olderThanDays(0)], action: .archiveByMonth)
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = .current
+        let date = cal.date(from: DateComponents(year: 2026, month: 3, day: 9, hour: 12))!
+        let changes = FolderRuleEngine.plan(r, files: [FolderFile(name: "x.txt", modified: date)], now: Date(), existingNames: { _ in [] })
+        XCTAssertEqual(changes.count, 1)
+        XCTAssertTrue(changes[0].to?.contains("/Archive/2026-03/x.txt") == true, changes[0].to ?? "")
+    }
+
+    func testBadTagNamesAreRefused() {
+        XCTAssertNotNil(FolderRuleEngine.problem(for: rule(.tag("  ")), folderExists: { _ in true }))
+        XCTAssertNotNil(FolderRuleEngine.problem(for: rule(.tag("a,b")), folderExists: { _ in true }))
+    }
+
+    func testExportedRulesImportSwitchedOffWithNewIds() throws {
+        let d = UserDefaults(suiteName: "kriya.test.\(UUID().uuidString)")!
+        let a = FolderRulesStore(defaults: d, folderExists: { _ in true })
+        var r = FolderRule(name: "Tidy", enabled: false, folder: NSHomeDirectory() + "/Downloads", conditions: [.olderThanDays(30)], action: .tag("Old"))
+        r.enabled = false
+        XCTAssertNil(a.save(r))
+        _ = a.setEnabled(a.rules[0].id, true)
+        let data = try XCTUnwrap(a.exported())
+        let b = FolderRulesStore(defaults: UserDefaults(suiteName: "kriya.test.\(UUID().uuidString)")!, folderExists: { _ in true })
+        let result = try XCTUnwrap(b.importRules(data))
+        XCTAssertEqual(result.added, 1)
+        XCTAssertFalse(b.rules[0].enabled, "an imported rule is never on")
+        XCTAssertNotEqual(b.rules[0].id, a.rules[0].id)
+        XCTAssertNil(b.importRules(Data("nope".utf8)))
+    }
+}

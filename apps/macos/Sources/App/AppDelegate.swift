@@ -5,6 +5,9 @@ import CoreServices
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var env: AppEnvironment?
     private var statusItem: StatusItemController?
+    private var monitorItem: MonitorStatusItem?
+    private var soundItem: SoundStatusItem?
+    private var clockItem: WorldClockStatusItem?
     private var settingsWindow: SettingsWindowController?
     private var setupGuide: SetupGuideController?
     private var pendingURLs: [URL] = []
@@ -42,8 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupGuide = SetupGuideController(env: env, finish: { [weak self] in self?.showSettings(.features) })
         env.navigator.openSetupGuide = { [weak self] in self?.setupGuide?.show() }
         statusItem = StatusItemController(env: env, openSettings: { [weak self] pane in self?.showSettings(pane) })
+        clockItem = WorldClockStatusItem(model: env.worldClock)
+        soundItem = SoundStatusItem(engine: env.appAudio, mixer: env.soundMixer, openSettings: { [weak self] in self?.showSettings(.sound) })
+        monitorItem = MonitorStatusItem(monitor: env.systemMonitor, openSettings: { [weak self] in self?.showSettings(.system) })
 
         env.keyboard.palette.openSettings = { [weak self] pane in self?.showSettings(pane) }
+        env.launcherSources?.openSettings = { [weak self] pane in self?.showSettings(pane) }
         env.keyboard.palette.toggleFeature = { feature, on in env.services.setFeature(feature, enabled: on) }
         NSApp.servicesProvider = env.finder.services
         NSUpdateDynamicServices()

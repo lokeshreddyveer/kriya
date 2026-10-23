@@ -11,6 +11,7 @@ final class ScreenCaptureService: ObservableObject {
 
     private let toast = Toast()
     private let recognizer = TextRecognizer()
+    let ruler = PixelRuler()
     private let queue = DispatchQueue(label: "app.kriya.capture", qos: .userInitiated)
     private var hotkeys: HotkeyCenter?
     private var cancellables = Set<AnyCancellable>()
@@ -74,6 +75,14 @@ final class ScreenCaptureService: ObservableObject {
         }
         isCapturing = true
         let current = settings.settings
+        if action == .record || action == .recordGIF { return record(asGIF: action == .recordGIF, settings: current) }
+        if action == .scroll { return scrollingCapture(settings: current) }
+        if action == .ruler { isCapturing = false; DispatchQueue.main.async { self.ruler.show() }; return }
+        if action == .pin {
+            isCapturing = false
+            DispatchQueue.main.async { if !PinnedShots.shared.pinClipboardOrLatest(folder: current.folder) { self.toast.show("There is no picture on the clipboard or in the capture folder to pin.", isError: true) } }
+            return
+        }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-capture-\(UUID().uuidString).png")
         let arguments = ScreenCaptureArguments.make(mode: mode, delay: current.delaySeconds, sound: current.playSound, output: file)
         queue.async { [self] in
@@ -85,6 +94,52 @@ final class ScreenCaptureService: ObservableObject {
                 return
             }
             process(image, action: action, settings: current)
+        }
+    }
+
+    /// Records part of the screen with the system's own recorder, which shows its stop button in the menu bar.
+    private func record(asGIF: Bool, settings: CaptureSettings) {
+        let folder = settings.folder
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let stamp = ScreenCaptureArguments.fileName(for: Date()).replacingOccurrences(of: "Capture", with: "Recording").replacingOccurrences(of: ".png", with: "")
+        let movie = folder.appendingPathComponent(stamp + ".mov")
+        toast.show("Choose what to record. Click the stop button in the menu bar when you are done.")
+        queue.async { [self] in
+            capturer(["-i", "-v", movie.path])
+            DispatchQueue.main.async { self.isCapturing = false }
+            guard FileManager.default.fileExists(atPath: movie.path) else { return }
+            guard asGIF else { DispatchQueue.main.async { self.toast.show("Recording saved as \(movie.lastPathComponent)") }; return }
+            let gif = movie.deletingPathExtension().appendingPathExtension("gif")
+            Task {
+                let ok = await GIFExporter.convert(movie: movie, to: gif)
+                await MainActor.run {
+                    if ok { try? FileManager.default.removeItem(at: movie); self.toast.show("GIF saved as \(gif.lastPathComponent)") }
+                    else { self.toast.show("The recording was saved, but could not be turned into a GIF.", isError: true) }
+                }
+            }
+        }
+    }
+
+    /// Scrolls the window in front from top to bottom and joins what it sees.
+    private func scrollingCapture(settings: CaptureSettings) {
+        guard AXIsProcessTrusted() else {
+            isCapturing = false
+            toast.show("Allow Accessibility for Kriya to scroll the window for you.", isError: true)
+            return
+        }
+        guard let frame = AXWindow.focused()?.frame?.cg, frame.width > 100, frame.height > 100 else {
+            isCapturing = false
+            toast.show("There is no window in front to capture.", isError: true)
+            return
+        }
+        toast.show("Capturing the whole page. Keep the mouse still.")
+        queue.async { [self] in
+            let image = ScrollingCapture(capturer: capturer).run(frame: frame)
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                guard let image else { self.toast.show("The page could not be captured.", isError: true); return }
+                self.deliver(image, settings: settings, hidden: 0)
+            }
         }
     }
 
@@ -104,6 +159,17 @@ final class ScreenCaptureService: ObservableObject {
                 self.isCapturing = false
                 self.deliverText(text)
             }
+        case .qr:
+            let found = QRCodeReader.read(image)
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                guard let first = found.first else { self.toast.show("No QR code found in that picture.", isError: true); return }
+                self.pasteboard.clearContents()
+                self.pasteboard.setString(first, forType: .string)
+                self.toast.show(found.count > 1 ? "Copied the first of \(found.count) codes: \(String(first.prefix(60)))" : "Copied: \(String(first.prefix(60)))")
+            }
+        case .record, .recordGIF, .scroll, .ruler, .pin:
+            DispatchQueue.main.async { self.isCapturing = false }
         case .normal, .redacted:
             var picture = image
             var hidden = 0

@@ -88,9 +88,47 @@ final class PasteStack: ObservableObject {
 }
 
 /// Reads text aloud with the system voice. Asked again while speaking, it stops.
-final class Speaker {
+final class Speaker: ObservableObject {
+    private static let voiceKey = "speech.voice", rateKey = "speech.rate", pitchKey = "speech.pitch"
     private let synthesizer = AVSpeechSynthesizer()
     private let toast = Toast()
+
+    /// The chosen voice's identifier. Empty means the system voice.
+    @Published var voiceID: String { didSet { UserDefaults.standard.set(voiceID, forKey: Self.voiceKey) } }
+    /// 0...1 on the system's own scale; the default is about 0.5.
+    @Published var rate: Double { didSet { UserDefaults.standard.set(rate, forKey: Self.rateKey) } }
+    @Published var pitch: Double { didSet { UserDefaults.standard.set(pitch, forKey: Self.pitchKey) } }
+
+    init() {
+        let d = UserDefaults.standard
+        voiceID = d.string(forKey: Self.voiceKey) ?? ""
+        rate = d.object(forKey: Self.rateKey) as? Double ?? Double(AVSpeechUtteranceDefaultSpeechRate)
+        pitch = d.object(forKey: Self.pitchKey) as? Double ?? 1
+    }
+
+    /// The voices installed, the ones in the person's language first, better voices before plainer ones.
+    static func voices() -> [AVSpeechSynthesisVoice] {
+        let mine = Locale.current.language.languageCode?.identifier ?? "en"
+        return AVSpeechSynthesisVoice.speechVoices().sorted { a, b in
+            let am = a.language.hasPrefix(mine), bm = b.language.hasPrefix(mine)
+            if am != bm { return am }
+            if a.quality.rawValue != b.quality.rawValue { return a.quality.rawValue > b.quality.rawValue }
+            return a.name < b.name
+        }
+    }
+
+    func speak(_ text: String) {
+        let utterance = AVSpeechUtterance(string: String(text.prefix(8000)))
+        if !voiceID.isEmpty, let voice = AVSpeechSynthesisVoice(identifier: voiceID) { utterance.voice = voice }
+        utterance.rate = Float(min(max(rate, Double(AVSpeechUtteranceMinimumSpeechRate)), Double(AVSpeechUtteranceMaximumSpeechRate)))
+        utterance.pitchMultiplier = Float(min(max(pitch, 0.5), 2))
+        synthesizer.speak(utterance)
+    }
+
+    func preview() {
+        synthesizer.stopSpeaking(at: .immediate)
+        speak("This is how Kriya will read text aloud to you.")
+    }
 
     func toggle() {
         if synthesizer.isSpeaking { stop(); return }
@@ -100,7 +138,7 @@ final class Speaker {
             return
         }
         // Long text is cut so one command never talks for many minutes by accident.
-        synthesizer.speak(AVSpeechUtterance(string: String(text.prefix(8000))))
+        speak(text)
     }
 
     func stop() {

@@ -99,5 +99,7 @@ enum IntentError: Error, CustomLocalizedStringResourceConvertible {
 struct KriyaShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: OpenKriyaLauncherIntent(), phrases: ["Open the launcher in \(.applicationName)", "Search with \(.applicationName)"], shortTitle: "Open Launcher", systemImageName: "magnifyingglass")
+        AppShortcut(intent: SetAppVolumeIntent(), phrases: ["Set an app's volume in \(.applicationName)"], shortTitle: "Set App Volume", systemImageName: "speaker.wave.2")
+        AppShortcut(intent: SetSoundOutputIntent(), phrases: ["Play sound on a device with \(.applicationName)"], shortTitle: "Play Sound On", systemImageName: "hifispeaker")
     }
 }

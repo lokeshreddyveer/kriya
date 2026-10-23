@@ -26,7 +26,10 @@ macOS asks for these when a feature first needs them. **Settings › Permissions
 | Accessibility | moving and resizing windows, the window switcher, window buttons, reading selected text |
 | Input Monitoring | mouse buttons and gestures, keyboard shortcuts and remapping, text expansion, drag tools |
 | Screen Recording | window previews in the switcher, the pointer magnifier, screen capture |
+| Screen & System Audio Recording | changing one app's volume, equaliser or output in the sound mixer (asked once, the first time you change an app) |
+| Microphone and Speech Recognition | dictation only, asked the first time you dictate; nothing is recorded or kept |
 | Calendars | showing your next meeting in the launcher (optional, off until you allow it) |
+| Contacts | finding people in the launcher (optional, off until you allow it) |
 | Finder extension | the right-click menu (switch on “Kriya” in System Settings › Login Items & Extensions › Finder) |
 
 ### If Kriya starts in safe mode
@@ -117,6 +120,8 @@ Each effect is also a command, so it can go on a shortcut, a mouse button, a ges
   a display and give each an app, then choose what happens to other windows (leave, minimize, hide or close) and whether apps
   that are not running should open. Restore with a click or a shortcut. Kriya also keeps its own snapshot for each set of displays
   and brings it back when those displays reconnect, and pulls off-screen windows back.
+  - *Layout for a display setup:* press the small display icon on a saved layout and it comes back by itself whenever the displays it was
+    made for are connected (for example “laptop on its own” and “docked with two monitors” each get their own). It wins over the automatic snapshot.
   - *Restore details:* after a restore, a report lists each window: placed, sent to another or the main display (its own display
     was not connected), or not found, with the reason (app not running, hidden, only minimized, no window, excluded, or a window
     that would not move). **Choose Window…** places a window you pick and remembers it for next time; **Try Again** repeats the restore.
@@ -181,14 +186,16 @@ again when the same displays reconnect, and hot corners that run a saved action.
 
 1. **Add Rule** (or start from “Tidy Downloads by Kind”, “Clear Old Installers”, “Screenshots to a Folder”).
 2. Choose the folder to watch, add **conditions** (a kind of file, a file type, name contains or starts with, older than N days,
-   larger or smaller than N MB; all must be true) and an **action** (move, copy, rename with a pattern, move to the Trash, or sort
-   into folders by kind).
+   larger or smaller than N MB; all must be true) and an **action** (move, copy, rename with a pattern, add a Finder tag, archive into
+   month folders, move to the Trash, or sort into folders by kind). A tag is added once; files that already have it are skipped.
 3. A new rule is **off**. Press **Preview** to see exactly which files it would change and where they would go, then switch it on.
    **Run Now** does it at once.
 
 Rules check their folder every minute. They only touch files that have been still for a minute (so downloads in progress are left
 alone), never folders or hidden files, never your home folder or system folders, and never overwrite. Everything a rule does is in
 Finder Actions › Recent file operations, with Undo. Changing a rule's conditions switches it off again until you preview it.
+**Pause all** stops every rule at once without switching each off. **Export** saves your rules to a file and **Import** adds rules from one;
+imported rules come in switched off, and any whose folder is missing or not allowed here is skipped.
 
 # Clipboard
 
@@ -200,8 +207,18 @@ Finder Actions › Recent file operations, with Undo. Changing a rule's conditio
   ⌘P to pin. Drag the top bar to move it. Right-click an item: Paste, Paste as Plain Text, Copy, Pin, Save as Snippet, Show in
   Finder, Open Link, Apple Intelligence actions for text, and Delete. **Drag an item out** into any app, message or folder.
 - **Paste as plain text** and **remove formatting** have their own shortcuts.
+- **Paste changed text:** right-click a text item › *Paste Changed* to paste it as UPPER / lower / Title Case, trimmed, on one line,
+  with lines sorted, de-duplicated or reversed, as a quote, numbered or bulleted list, with tags removed, as formatted or shrunk JSON,
+  Base64 or web-address encoded or decoded, or as snake_case, kebab-case or camelCase. The saved item stays as it was.
+- **⌘C twice adds to the copy before** (off by default; turn it on under *What to record*): copy something, then select more and press ⌘C
+  twice quickly, and the clipboard holds both, one under the other. Text only.
+- **Rules for what is copied:** tidy text the moment it is copied, for every app or chosen ones: remove tracking from links
+  (`utm_`, `fbclid`, `gclid` and more), trim, keep plain text only, change case, join into one line, remove tags. What you paste and
+  what the history keeps is the tidy version. Files and pictures are never touched.
 - **Paste stack:** turn it on, copy several things, then paste them one after another in the order you copied them.
-- **Snippets:** saved text you can insert from the history or by abbreviation. Import and export are supported.
+- **Snippets:** saved text you can insert from the history or by abbreviation. Import and export are supported. They can hold dates
+  (`{date+3d}`), the clipboard, prompts, `{snippet:other}` (another snippet, nested), `{workday+3}` (working days), `{random:1-100}`,
+  `{counter:invoice}` (counts up each time) and `{clipboard:upper}` (the clipboard changed by a filter). Per-app snippets are set on the snippet.
 - **Privacy:** excluded apps (password managers by default), copies marked secret by apps, and text that looks like a password,
   key or card number are never recorded unless encryption is on, in which case they are saved shown as dots and can expire.
   - *Encrypted history:* seals the history with AES-256-GCM, with a key kept in your login Keychain. An optional Touch ID or
@@ -222,32 +239,69 @@ Finder Actions › Recent file operations, with Undo. Changing a rule's conditio
 
 # Launcher
 
-Press the launcher shortcut (set in **Settings › Launcher**; the menu-bar window's search uses the same results). A bar opens near the top of the screen and
-grows as results appear. With nothing typed it shows your pinned items, what you used recently, and your open apps.
+The launcher looks and moves like the system's own search: a pill-shaped search bar over a separate glass panel, a row of small
+pills for the kinds of thing found (click one to jump to it), plain rows with a soft highlight, and file results that show their
+kind, size, date and folder. The letters you typed are bold in each title. It rises into place with a small spring.
 
-- **Keys:** ↑ ↓ move, Return opens, ⌘K shows more things to do with a result, ⌘P pins it, ⌘1–⌘9 open one directly, Esc closes.
+- **Themes** (Settings › Launcher › Look): Glass (follows the system), Dark Glass, Light Glass, and the flat Midnight, Paper and Graphite,
+  plus a highlight colour for the row you are on (Neutral, Blue, Purple, Pink, Orange, Green).
+- **Quicklinks with variables:** besides `{query}`, an address can use `{clipboard}` and `{selection}` (the text selected when the launcher
+  opened). A quicklink that uses only those opens from its keyword alone.
+- **Where it opens** (Settings › Launcher › Position): near the top, in the middle, at the pointer, or where you left it. **Drag it**
+  by its search bar or its panel background and it opens there next time, on whichever display that was.
+
+Press the launcher shortcut (set in **Settings › Launcher**; the menu-bar window's search uses the same results). A bar opens near the top of the screen and
+grows as results appear. With nothing typed it shows, in sections: your **Favorites**, the **file buffer** if it holds files,
+**today's events** (if you allowed Calendars), your **recent files**, and your open apps.
+
+- **Keys:** ↑ ↓ move, Return opens, **⌘K** opens the actions for the highlighted result, **⌘Return** does its first action, ⌘P adds it
+  to Favorites, ⌘1–⌘9 open one directly, Esc clears the text, then the chip, then closes.
+- **Actions menu (⌘K):** what you can do depends on what the result is. An app: Show in Finder, Copy Path, Hide or Quit, Uninstall…
+  A file or folder: Show in Finder, Copy Path, Open With…, Quick Look, Add to the File Buffer, Move to the Trash (Undo is in Finder
+  Actions › Recent file operations). A calendar event: copy its link or details. Every result: Add to Favorites, **Set Alias…**,
+  **Set Hotkey…** (runs it from anywhere), Reset Ranking, and **Hide from the Launcher** (undo it in Launcher settings).
+- **Words that take an argument:** type a keyword and a space and it becomes a **chip** in the search bar (`gh ` → GitHub). What you
+  type after is the argument. Backspace on an empty box takes the chip off. This works for search sites (`yt`, `gh`, `wiki`…),
+  your quicklinks and scripts, script files, `ask` (Apple Intelligence), `define` (the Mac's dictionary), and any workflow you gave
+  a short name with ⌘K › Set Alias: the text goes to the workflow as its input.
 - **Finds:** apps, open windows (switch to one), files and folders (Spotlight, only for what you type), clipboard history, snippets,
-  saved actions, workflows, window layouts, Kriya and macOS settings, commands.
+  saved actions, workflows, window layouts, Kriya and macOS settings, commands, and people in Contacts (turn on in Launcher settings).
+- **Browse folders:** type a path starting with `/` or `~` and the folder's contents are listed. **Tab** goes into the highlighted
+  folder, **Shift-Tab** goes up, Return opens, ⌘K › **Add to the File Buffer** collects files from several places. The buffer
+  then offers Move to…, Copy to…, Compress, Copy the Paths and Empty. Moves and copies use the same chooser, history and Undo as Finder actions.
+- **Text selected in another app:** set a shortcut under *Actions for selected text* in Launcher settings. Select text anywhere and press
+  it: the launcher opens with things to do with it: Apple Intelligence (summarize, explain, fix grammar, professional, friendlier,
+  concise, reply), change case, count, Base64, URL encoding, SHA-256, format JSON, open an address, search a site or a quicklink for
+  it, and the converters. With nothing selected it uses the clipboard. Typing narrows the list.
 - **Calculator and timers:** type `12*8`, `15% of 200`, `timer 5m`.
 - **Converters:** `5 km to mi`, `100 f in c`, `2.5 kg to lb`, `1 gb to mb`; `time in tokyo`, `3pm nyc in london`; a colour like
-  `#ff8800` (shows hex, RGB, HSL); `base64 hello`, `base64 decode …`, `urlencode …`, `sha256 …`, `md5 …`, `upper …`, `slug …`,
-  `count …`, `json {…}`, `timestamp 1700000000`.
+  `#ff8800` (shows a swatch, and hex, RGB, HSL); `base64 hello`, `base64 decode …`, `urlencode …`, `sha256 …`, `md5 …`, `upper …`,
+  `slug …`, `count …`, `json {…}`, `timestamp 1700000000`.
+- **Dictionary:** `define serendipity` shows the definition from the Mac's own dictionary; Return opens the Dictionary app.
 - **Generators:** `uuid`, `password 24`, `lorem 2`, `qr some text` (copies a QR code picture), and “Pick a color from the screen”.
   Choosing a result copies it.
+- **System commands:** lock the screen, sleep, turn the display off, switch light and dark mode, empty the Trash, show or hide desktop
+  icons, restart, shut down and log out. The ones that delete or close things ask first. `quit safari` and `force quit safari`
+  (or `kill safari`) quit a running app.
+- **The front app's menu:** type `menu paste` or `> paste` to search the menu items of the app you were in, and run one (it shows
+  the shortcut too). Needs Accessibility.
 - **Currency** (turn on in Launcher settings): `100 usd to eur` uses daily reference rates from frankfurter.app. Only the two
   currency codes are sent.
 - **Next meeting** (turn on in Launcher settings, allow Calendars): shows your next event, with a **Join** button when it has a
   Zoom, Meet, Teams or Webex link.
-- **Web:** the last row searches the web for what you typed (choose Google, DuckDuckGo, Bing, Brave or Ecosia). Type an address
-  like `apple.com` to open it. A short word picks a site: `yt` YouTube, `maps` Apple Maps, `gh` GitHub, `wiki` Wikipedia,
-  `so` Stack Overflow, `ddg` DuckDuckGo, `g` Google.
+- **Fallbacks:** text that matches nothing is offered to what you choose under *Fallbacks* in Launcher settings, in your order, under
+  “Search with”: a web search (Google, DuckDuckGo, Bing, Brave or Ecosia), Apple Intelligence, a quicklink or a script. A short word picks a
+  site: `yt` YouTube, `maps` Apple Maps, `gh` GitHub, `wiki` Wikipedia, `so` Stack Overflow, `ddg` DuckDuckGo, `g` Google. An address
+  like `apple.com` opens.
 - **Quicklinks:** your own saved addresses with `{query}` for your words. “gh swift” with `https://github.com/search?q={query}`
   searches GitHub. A few come ready (maps, translate, Amazon, npm); add, edit or remove them in Launcher settings.
-- **Scripts:** your own zsh scripts as launcher commands. Type the keyword, and anything after it arrives as `$1`. Choose whether
-  the output is shown, copied or ignored. Only add scripts you wrote or trust.
-- **Ask Apple Intelligence:** type `ask` followed by a question.
-- **Short names and pins:** in ⌘K, “Give It a Short Name” lets a few letters bring a result first (`ff` for Firefox). Choose
-  which kinds of result are searched under *What it searches*.
+- **Scripts:** your own zsh scripts as launcher commands (type the keyword; what follows arrives as `$1`), and **script folders**: add
+  a folder under *Script folders* and every file in it with a title line becomes a command. The header is Raycast's
+  (`# @raycast.title`, `@raycast.mode silent|compact|fullOutput`, `@raycast.argument1 {…}`, `@raycast.packageName`, `@raycast.description`),
+  or the same with `@kriya.`, plus `# @kriya.keyword hi` so `hi Ada` runs it. The file must be executable or start with `#!`.
+  “Make an Example” creates a working one. Only add scripts you wrote or trust.
+- **Short names, favorites and matching:** under *How it behaves*, choose how strictly letters must match (loose: `msg` finds Messages;
+  strict: starts of words), and whether recent files and today's events show on the opening list.
 
 # Apple Intelligence
 
@@ -269,7 +323,18 @@ an optional delay, and copy or save the result.
 - **Copy text from a region** with the Mac's own text recognition.
 - **Hide private text:** blur or block emails, phone numbers, card numbers, addresses, keys and words you list.
 - **Editor:** boxes, arrows, highlights, blocks, mosaic and notes.
-- Nothing is uploaded. Scrolling capture is not available.
+- **Capture history and pins:** the Capture pane lists your last captures with Pin, Copy and Show in Finder. A pinned picture stays on top of
+  every window (drag it, scroll to resize, ⌥-scroll to see through it, double-click to close). The *Pin* button and the “Pin the clipboard
+  picture or the latest capture” command pin whatever is on the clipboard, or the newest capture.
+- **Pixel ruler:** freezes the screen and lets you measure on it. Move for a magnifier and the colour under the pointer, drag to measure
+  a box (in pixels, and points on a Retina screen), click to measure the box of one colour you are on, hold ⌥ for the distance to the edges
+  around the pointer. C copies the colour, Return copies the size, Esc leaves. Nothing is saved.
+- **Whole page:** scrolls the window in front by itself, takes each page and joins them into one tall picture. Keep the mouse still; a bar
+  fixed at the top of the page may repeat. Needs Accessibility.
+- **Record and Record GIF:** choose an area, record, and click the stop button in the menu bar. The movie (or an animated GIF made from it)
+  is saved in the capture folder.
+- **Read QR Code:** choose a region and Kriya copies what the code says.
+- Nothing is uploaded.
 
 # Link routing and browsers
 
@@ -294,7 +359,9 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
 - **Actions** (sidebar): saved, named actions that mouse buttons, gestures, shortcuts and hot corners can run: press keys, open an
   app or address, run a script or Shortcut, a window command, or a sequence of those. **Add Common Actions** saves ready-made ones
   (Back, Forward, Mission Control, desktops, tabs, lock screen, and more). **Record Keys** lets you press keys once and saves them
-  as an action (a single key press or a timed sequence; only key codes are kept, and recording stops when the window closes).
+  as an action (a single key press or a timed sequence; only key codes are kept, and recording stops when the window closes). The same recorder also
+  records **mouse clicks** (left, right, double): each is saved as where it landed in the front window, so it still hits the same button
+  after the window has moved. Replaying needs Accessibility, and the pointer goes back to where it was.
 - **Automation** (sidebar): *workflows* with a trigger, optional conditions and steps. Triggers include a shortcut, a mouse button, a
   gesture, a window being placed, something being copied, a hot corner, an app opening or quitting, and a display connecting. Steps
   include opening or quitting apps, running scripts, pressing keys, moving windows, changing text, switching a mouse preset, waiting
@@ -325,6 +392,54 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
     icons to the left of the divider, then click the arrow to hide or show them. Choose when they hide again. If macOS will not
     make room, Kriya says so and switches it off.
   - *Command line and Shortcuts:* see below.
+- **System Monitor:** a live read of this Mac: model, chip, system and how long it has been on; processor use (and each core) with the
+  busiest programs; memory (apps, held by the system, squeezed, cached, swap) with the programs using most; every disk and its free
+  space; network speed, totals and this Mac's address; battery charge, time left, cycles and health; the battery of Bluetooth mice,
+  keyboards and trackpads; and the temperature state. Turn on *Show readings in the menu bar* for a second menu-bar item with the
+  readings you pick (processor, memory, disk, network, battery); click it for everything. *Storage* measures the folders that take the
+  most room (Downloads, caches, developer files, Trash and more) with a Show in Finder button for each and Empty for the Trash; it only
+  measures, and deletes nothing else. Kriya also warns once when a mouse, keyboard or trackpad drops to 15%. Nothing is read while it is off and the page is closed.
+- **Notes:** a floating window on a shortcut (set *Open Notes* in Keyboard). Type, and it saves as you stop. Each note is a plain
+  Markdown file in a folder you choose (Documents › Kriya Notes by default), searchable, with Summarize (on-device, Apple Intelligence),
+  Copy, Show in Finder and Delete. In the launcher, type `note buy milk` to save one at once, `notes` to open the window, or `notes shopping` to find.
+- **Sound:** commands for volume up, down, mute, microphone mute and the next sound output, usable from shortcuts, mouse buttons and
+  the launcher. In the launcher type `volume 40`, `volume up`, or `output` to switch the speakers, headphones or microphone.
+- **Disk Map:** a picture of where the room went. Every item in a folder is a tile as big as the item (folders get colours, files are
+  coloured by kind); click a folder to look inside it, use the path at the top to go back up, right-click a tile for Show in Finder or Move to
+  Trash. It starts at your Home folder; *Look At* chooses another. It only measures, and macOS may ask before Kriya can read some folders.
+- **Focus Sessions:** a timed session (25 minutes by default) that hides the Dock and desktop icons, asks chosen apps to quit and runs two
+  Shortcuts you name (macOS gives apps no way to switch Do Not Disturb, so make a Shortcut with the “Set Focus” action). A setting that was
+  already as wanted is left alone, and if Kriya quits mid-session it puts everything back next time. Launcher: `focus`, `focus 45`, `focus off`.
+- **World Clock:** a second menu-bar item with the places you pick (`NYC 9:05 AM   LON 2:05 PM`); click it for each place with its
+  difference from here, and what is left on your calendar today with a Join button for video calls.
+- **Large files and copies** (in System Monitor): choose a folder, find its biggest files, or find files with exactly the same contents.
+  Move to Trash is a button on each file; nothing is removed by itself, and your Library folder is skipped.
+- **Shared clipboard** (Clipboard pane): send the clipboard's text to your other Macs on request, sealed with a passphrase you set on each
+  Mac, through iCloud Drive; the shared file is removed after ten minutes. Use the “Send the clipboard to my other Macs” command or type
+  `send clipboard` in the launcher; on the other Mac choose “Paste from other Mac”. Text only, 100 KB at most.
+- **Dictation:** give “Start or stop dictation” a shortcut (or use the Dictate tile). Press it, speak, press it again, and the words are
+  typed where you are, with “comma”, “period”, “question mark”, “new line” and “new paragraph” turned into the real thing. It listens only
+  between the two presses and uses the on-device recogniser; Apple's servers are used only if you allow it for a language the Mac lacks.
+- **Read aloud voices:** choose the voice, speed and pitch the Read Aloud command uses (Settings › Sound).
+- **Sound:** a mixer, like SoundSource. *This Mac*: system volume and mute, output and input devices, microphone level and mute, sample
+  rate and balance. *Apps*: every app making sound gets its own **volume** (up to 400%), **mute**, **output** (one device, or several at
+  once), a ten-band **equaliser** with ready-made shapes (Bass Boost, Voice, Small Speakers, Loudness, Headphones and more), and a level
+  meter. *All sound* changes everything at once and is also how outputs without a volume of their own (many monitors) get one. Save a
+  setting as a **profile** and give it to any app. **Sound rules** do something when a device connects or disconnects or an app opens or
+  quits: switch the output, switch the microphone, mute or unmute, set the volume. A **speaker in the menu bar** (turn it on in Settings › Sound)
+  opens this mixer; right-click it for outputs and mutes. The **volume keys work on outputs without a volume of their own** (many HDMI and
+  DisplayPort monitors) by changing the “All sound” level. **Shortcuts** has actions to set an app's volume, mute an app, switch the output
+  and set the Mac's volume. Needs macOS 14.2 for per-app control; macOS asks
+  once to allow it, and nothing is recorded. If Kriya quits, every app's sound goes back to normal at once.
+- **Menu-bar icons in the launcher:** type `mb wifi`, `menu bar battery` or `status bluetooth` to find another app's menu-bar icon by name
+  and open it, even when it is hidden behind the arrow or squeezed out by the notch. Needs Accessibility; it reads icon names only.
+- **Open and Save dialogs:** the *Go to a folder in the Open or Save dialog* command (give it a shortcut, or use the Dialog Folders tile)
+  shows a list while a dialog is in front: the folder Finder is in, Finder's other windows, your favourite folders and recent ones. Click one and
+  the dialog goes there (Kriya types the path into the dialog's own “Go to the folder” sheet). Needs Accessibility.
+- **Launcher system jobs:** `kill chrome` (force quit), `port 3000` (what is using it, with a button to end it), `wifi off` / `wifi on`,
+  `quit all` (asks every other app to close), `eject` (all removable disks), `hidden files` (show or hide them in Finder), `pick color`
+  (click any pixel to copy its hex code), and `note clipboard` (save the clipboard as a note). The quick panel also has tiles for Notes,
+  Mute, Mute Mic, Next Output, Pick Colour, Whole Page, Record Screen and Read QR.
 - **Menu Bar Window:** what the quick panel shows: tiles, layouts, theme, and its search.
 - **Sleep & Power:** *Keep Awake* in timed sessions, until turned off, only while chosen apps run, or until a battery level.
 - **Backup & Restore:** back up all your settings to a file or to iCloud Drive, restore one, and protect backups with a passphrase
@@ -375,6 +490,6 @@ Nothing else changes your files or apps by itself: removing an app, installing f
 # Not available
 
 Moving windows between Spaces and always-on-top (macOS allows them only through private APIs), multi-finger trackpad gestures,
-a Safari extension, Logitech-specific device features, scrolling screen capture, and running JavaScript extensions from a catalog.
+a Safari extension, Logitech-specific device features, brightness of external displays (macOS keeps that private), and running JavaScript extensions from a catalog.
 
 Building the app from source is described in `DEVELOPING.md`.

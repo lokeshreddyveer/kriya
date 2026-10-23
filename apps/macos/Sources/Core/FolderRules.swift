@@ -7,6 +7,8 @@ struct FolderFile: Equatable {
     var isHidden = false
     var size: Int64 = 0
     var modified: Date
+    /// The Finder tags already on the file.
+    var tags: [String] = []
 
     var fileExtension: String { (name as NSString).pathExtension.lowercased() }
     var baseName: String { (name as NSString).deletingPathExtension }
@@ -44,6 +46,10 @@ enum FolderAction: Codable, Equatable {
     case trash
     /// Moves into folders by kind (Images, Documents, …) inside the watched folder.
     case sortByKind
+    /// Adds a Finder tag. Files that already have it are left alone.
+    case tag(String)
+    /// Moves into "Archive/2026-10" inside the watched folder, by the month the file was last changed.
+    case archiveByMonth
 
     var summary: String {
         switch self {
@@ -52,6 +58,8 @@ enum FolderAction: Codable, Equatable {
         case .rename(let pattern): return "rename as “\(pattern)”"
         case .trash: return "move to the Trash"
         case .sortByKind: return "sort into folders by kind"
+        case .tag(let name): return "tag as “\(name)”"
+        case .archiveByMonth: return "archive into month folders"
         }
     }
 }
@@ -73,7 +81,7 @@ struct FolderRule: Codable, Identifiable, Equatable {
 
 /// One thing a rule would do.
 struct PlannedChange: Equatable {
-    enum Kind: Equatable { case move, copy, trash }
+    enum Kind: Equatable { case move, copy, trash, tag }
     var kind: Kind
     var from: String
     /// Where it goes. Nil for the Trash, which picks its own place.
@@ -135,7 +143,11 @@ enum FolderRuleEngine {
         case .rename(let pattern):
             if !pattern.contains("{name}") && !pattern.contains("{n}") && !pattern.contains("{date}") && !pattern.contains("{time}") { return "The new name needs {name}, {date}, {time} or {n} in it, or every file would get the same name." }
             if pattern.contains("/") || pattern.contains(":") || pattern.count > 120 { return "That is not a usable file name." }
-        case .trash, .sortByKind:
+        case .tag(let name):
+            let t = name.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty { return "Give the tag a name." }
+            if t.count > 50 || t.contains(",") || t.contains("\n") { return "That is not a usable tag name." }
+        case .trash, .sortByKind, .archiveByMonth:
             break
         }
         return nil
@@ -204,6 +216,16 @@ enum FolderRuleEngine {
                 changes.append(PlannedChange(kind: .move, from: from, to: (watched as NSString).appendingPathComponent(unique(newName, in: watched))))
             case .trash:
                 changes.append(PlannedChange(kind: .trash, from: from, to: nil))
+            case .tag(let name):
+                let tag = name.trimmingCharacters(in: .whitespaces)
+                guard !file.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) else { continue }
+                changes.append(PlannedChange(kind: .tag, from: from, to: tag))
+            case .archiveByMonth:
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.dateFormat = "yyyy-MM"
+                let folder = ((watched as NSString).appendingPathComponent("Archive") as NSString).appendingPathComponent(f.string(from: file.modified))
+                changes.append(PlannedChange(kind: .move, from: from, to: (folder as NSString).appendingPathComponent(unique(file.name, in: folder))))
             case .sortByKind:
                 guard let kind = FolderTools.category(for: file.name) else { continue }
                 let folder = (watched as NSString).appendingPathComponent(kind)

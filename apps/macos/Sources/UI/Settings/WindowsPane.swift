@@ -411,6 +411,8 @@ private struct LayoutsTab: View {
     @State private var naming = false
     @State private var name = ""
     @State private var restoring: String?
+    @State private var bindingTick = 0
+    private let bindings = DisplaySetupBindings()
     @State private var message: String?
     @State private var designing: DesignerTarget?
     @State private var showingReport = false
@@ -519,6 +521,12 @@ private struct LayoutsTab: View {
                     .help("The shortcut that restores this layout")
             }
             if restoring == layout.id { ProgressView().controlSize(.small) }
+            Button { bindings.toggle(layout: layout.id, setup: layout.displayKey); bindingTick += 1 } label: {
+                Image(systemName: bindings.isBound(layout: layout.id, to: layout.displayKey) ? "display.2" : "display")
+                    .foregroundStyle(bindings.isBound(layout: layout.id, to: layout.displayKey) ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.borderless).id(bindingTick)
+            .help(bindings.isBound(layout: layout.id, to: layout.displayKey) ? "Comes back by itself whenever the displays it was made for are connected. Click to stop." : "Bring this layout back by itself whenever the displays it was made for are connected")
             Button("Edit") { designing = DesignerTarget(layout: layout) }.controlSize(.small)
             Button("Restore") { restore(layout) }.controlSize(.small)
             Button(role: .destructive) { store.deleteLayout(layout.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)

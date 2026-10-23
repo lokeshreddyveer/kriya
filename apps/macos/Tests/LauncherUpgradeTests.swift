@@ -87,7 +87,7 @@ final class LauncherLayoutTests: XCTestCase {
         let items = [candidate("p", "Pinned"), candidate("r", "Recent"), candidate("a", "A"), candidate("b", "B")]
         let order = LauncherEngine.rank(items, query: "", prefs: prefs, suggestions: ["a", "b", "missing", "p"])
         XCTAssertEqual(order, ["p", "r", "a", "b"])
-        XCTAssertEqual(LauncherEngine.startSection(for: "p", prefs: prefs), "Pinned")
+        XCTAssertEqual(LauncherEngine.startSection(for: "p", prefs: prefs), "Favorites")
         XCTAssertEqual(LauncherEngine.startSection(for: "r", prefs: prefs), "Recent")
         XCTAssertEqual(LauncherEngine.startSection(for: "a", prefs: prefs), "Suggested")
         XCTAssertEqual(LauncherEngine.rank(items, query: "", prefs: LauncherPrefsData()), [], "with nothing to suggest it is empty")

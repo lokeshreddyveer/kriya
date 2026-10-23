@@ -87,8 +87,15 @@ final class SnippetInserter {
 
     /// The text a snippet becomes now, for a preview or a copy. Prompts show as empty.
     static func preview(_ body: String, prompts: [PromptValue] = []) -> TemplateOutput {
-        renderSnippet(body: body, context: context(prompts: prompts))
+        var env = SnippetPreprocessor.Environment()
+        env.snippet = lookup
+        env.counter = { SnippetCounters.peek($0) }
+        env.clipboard = NSPasteboard.general.string(forType: .string)
+        return renderSnippet(body: SnippetPreprocessor.process(body, env), context: context(prompts: prompts))
     }
+
+    /// Finds another snippet by its abbreviation or title, for `{snippet:…}`. Set by the app.
+    static var lookup: (String) -> String? = { _ in nil }
 
     static func context(prompts: [PromptValue]) -> TemplateContext {
         TemplateContext(
@@ -122,7 +129,7 @@ final class SnippetInserter {
             injector.deleteBackwards(deleting)
             // The delimiter goes at the very end, so the cursor has to step back over it as well.
             injector.insert(output.text + trailing, cursorBack: output.cursorBack > 0 ? Int(output.cursorBack) + trailing.count : 0)
-            DispatchQueue.main.async { store.markUsed(snippet.id) }
+            DispatchQueue.main.async { store.markUsed(snippet.id); SnippetCounters.advance(in: snippet.body) }
         }
     }
 }

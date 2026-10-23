@@ -31,10 +31,21 @@ struct CapturePane: View {
                     Button { capture.capture(.region, action: .text) } label: { Label("Copy Text", systemImage: "text.viewfinder") }
                     Spacer()
                 }
+                HStack(spacing: 8) {
+                    Button { capture.capture(.window, action: .scroll) } label: { Label("Whole Page", systemImage: "arrow.down.to.line") }
+                    Button { capture.capture(.region, action: .record) } label: { Label("Record", systemImage: "record.circle") }
+                    Button { capture.capture(.region, action: .recordGIF) } label: { Label("Record GIF", systemImage: "photo.stack") }
+                    Button { capture.capture(.region, action: .qr) } label: { Label("Read QR Code", systemImage: "qrcode.viewfinder") }
+                    Button { capture.capture(.screen, action: .ruler) } label: { Label("Pixel Ruler", systemImage: "ruler") }
+                    Button { capture.capture(.screen, action: .pin) } label: { Label("Pin", systemImage: "pin") }
+                    Spacer()
+                }
                 .disabled(capture.isCapturing)
             } header: { Text("Capture now") } footer: {
-                Text("Region and window captures use the system's own selection: drag, or click a window, and press Escape to cancel. “Copy Text” reads the words in the region you pick and copies only the text. Scrolling captures are not included.")
+                Text("Region and window captures use the system's own selection: drag, or click a window, and press Escape to cancel. “Copy Text” reads the words in the region you pick and copies only the text. “Whole Page” scrolls the window in front by itself and joins the pages, so keep the mouse still; pages with a bar fixed at the top may repeat it. “Record” and “Record GIF” use the system recorder: choose the area, then click its stop button in the menu bar. “Read QR Code” copies what the code says. “Pixel Ruler” freezes the screen: move for a magnifier and the colour under the pointer, drag to measure a box, click to measure the box of one colour, hold ⌥ for distances to the edges, C copies the colour and Return copies the size.")
             }
+
+            CaptureHistorySection()
 
             Section {
                 Toggle("Copy the picture to the clipboard", isOn: bind(\.copyImage))
@@ -86,7 +97,7 @@ struct CapturePane: View {
                     }
                 }
             } header: { Text("Shortcuts") } footer: {
-                Text("The same commands (capture.region, capture.window, capture.screen, capture.text, capture.redacted) can be used from a mouse button, a hot corner, a workflow, the selection bar or the launcher.")
+                Text("The same commands (capture.region, capture.window, capture.screen, capture.text, capture.redacted, capture.qr, capture.record, capture.gif, capture.scroll, capture.ruler, capture.pin) can be used from a mouse button, a hot corner, a workflow, the selection bar or the launcher.")
             }
         }
         .formStyle(.grouped)
@@ -113,4 +124,46 @@ struct CapturePane: View {
         panel.message = "Where should captures be saved?"
         if panel.runModal() == .OK, let url = panel.url { store.update { $0.folderPath = url.path } }
     }
+}
+
+/// The last pictures and recordings in the capture folder, to pin, copy or find again.
+struct CaptureHistorySection: View {
+    @EnvironmentObject private var capture: ScreenCaptureService
+    @State private var entries: [CaptureHistory.Entry] = []
+
+    var body: some View {
+        Section {
+            if entries.isEmpty { Text("Nothing in the capture folder yet.").foregroundStyle(.secondary) }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(entries) { entry in
+                        VStack(spacing: 4) {
+                            thumbnail(entry).frame(width: 120, height: 80).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
+                            Text(entry.date.formatted(date: .abbreviated, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                if !entry.isMovie { Button { if let image = NSImage(contentsOfFile: entry.path) { PinnedShots.shared.pin(image) } } label: { Image(systemName: "pin") }.help("Pin on screen") }
+                                if !entry.isMovie { Button { if let image = NSImage(contentsOfFile: entry.path) { NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([image]) } } label: { Image(systemName: "doc.on.doc") }.help("Copy") }
+                                Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)]) } label: { Image(systemName: "magnifyingglass") }.help("Show in Finder")
+                            }.buttonStyle(.borderless).controlSize(.small)
+                        }
+                    }
+                }
+            }
+        } header: {
+            HStack { Text("Recent captures"); Spacer(); Button { reload() } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless) }
+        } footer: {
+            Text("Pin keeps a picture on top of everything: drag it, scroll to resize it, ⌥-scroll to make it see-through, double-click to close.")
+        }
+        .onAppear(perform: reload)
+    }
+
+    @ViewBuilder
+    private func thumbnail(_ entry: CaptureHistory.Entry) -> some View {
+        if entry.isMovie { ZStack { Color.black.opacity(0.7); Image(systemName: "play.fill").foregroundStyle(.white) } }
+        else if let image = NSImage(contentsOfFile: entry.path) { Image(nsImage: image).resizable().scaledToFill() }
+        else { Color.gray.opacity(0.2) }
+    }
+
+    private func reload() { entries = CaptureHistory.read(folder: capture.settings.settings.folder, limit: 12) }
 }

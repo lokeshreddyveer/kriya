@@ -70,6 +70,8 @@ final class ActionExecutor {
             return .success
         case .keyPress(let keyCode, let modifiers):
             return pressKey(keyCode: keyCode, modifiers: modifiers)
+        case .click(let x, let y, let button, let count, let inWindow):
+            return click(x: x, y: y, right: button == 1, count: count, inWindow: inWindow)
         case .openApplication(let target):
             return await openApplication(target)
         case .openUrl(let url):
@@ -105,6 +107,32 @@ final class ActionExecutor {
             event.setIntegerValueField(.eventSourceUserData, value: EventMonitor.syntheticMarker)
             event.post(tap: .cghidEventTap)
         }
+        return .success
+    }
+
+    /// Moves to a point, clicks, and puts the pointer back where it was.
+    private func click(x: Int32, y: Int32, right: Bool, count: UInt8, inWindow: Bool) -> ActionOutcome {
+        guard permissions.isGranted(.accessibility) else { return .failure("Accessibility permission is needed to click.") }
+        var point = CGPoint(x: CGFloat(x), y: CGFloat(y))
+        if inWindow {
+            guard let frame = AXWindow.focused()?.frame?.cg else { return .failure("There is no window in front to click in.") }
+            point = CGPoint(x: frame.minX + point.x, y: frame.minY + point.y)
+        }
+        let source = CGEventSource(stateID: .hidSystemState)
+        let button: CGMouseButton = right ? .right : .left
+        let downType: CGEventType = right ? .rightMouseDown : .leftMouseDown
+        let upType: CGEventType = right ? .rightMouseUp : .leftMouseUp
+        let before = CGEvent(source: nil)?.location
+        for n in 1...Int(max(count, 1)) {
+            guard let down = CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: point, mouseButton: button),
+                  let up = CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: point, mouseButton: button) else { return .failure("Could not create the click.") }
+            for event in [down, up] {
+                event.setIntegerValueField(.mouseEventClickState, value: Int64(n))
+                event.setIntegerValueField(.eventSourceUserData, value: EventMonitor.syntheticMarker)
+                event.post(tap: .cghidEventTap)
+            }
+        }
+        if let before { CGWarpMouseCursorPosition(before) }
         return .success
     }
 

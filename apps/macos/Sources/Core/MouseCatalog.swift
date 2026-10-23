@@ -133,6 +133,14 @@ enum WindowCommands {
         ]
         list += WorkspaceController.commands.map { (command: $0.command, title: $0.title) }
         list += PointerEffects.commands.map { (command: $0.command, title: $0.title) }
+        list.append((command: "notes.open", title: "Open Notes"))
+        list.append((command: "dialog.folders", title: "Go to a folder in the Open or Save dialog"))
+        list.append((command: "dictation.toggle", title: "Start or stop dictation"))
+        list.append((command: "clipboard.send_other", title: "Send the clipboard to my other Macs"))
+        list.append((command: "clipboard.receive_other", title: "Paste what another Mac sent"))
+        list.append((command: "focus.session", title: "Start or end a focus session"))
+        list.append((command: "color.pick", title: "Pick a colour from the screen"))
+        list += AudioControl.commands.map { (command: $0.command, title: $0.title) }
         list += dynamic().map { (command: $0.command, title: $0.title) }
         return list
     }

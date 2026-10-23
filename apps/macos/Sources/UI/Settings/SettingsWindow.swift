@@ -21,8 +21,8 @@ enum SettingsPaneGroup: CaseIterable, Identifiable {
 
 /// Declared in sidebar order, so "next pane" and the Cmd-number shortcuts follow what the person sees.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, folderRules, clipboard, selection, capture, links, shelf, apps, launcher, intelligence, automation, actions, profiles
-    case menuBar, power, general, permissions, backup, diagnostics, about
+    case features, mouse, pointer, keyboard, shortcutMap, devices, windows, workspaces, buttons, displays, finder, folderRules, clipboard, selection, capture, links, shelf, apps, launcher, intelligence, automation, actions, profiles, focus
+    case menuBar, system, diskMap, sound, notes, clock, power, general, permissions, backup, diagnostics, about
 
     var id: String { rawValue }
 
@@ -37,6 +37,12 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .capture: return "Screen Capture"
         case .apps: return "Apps"
         case .menuBar: return "Menu Bar Window"
+        case .system: return "System Monitor"
+        case .notes: return "Notes"
+        case .focus: return "Focus Sessions"
+        case .diskMap: return "Disk Map"
+        case .clock: return "World Clock"
+        case .sound: return "Sound"
         case .power: return "Sleep & Power"
         case .permissions: return "Permissions"
         case .mouse: return "Mouse & Trackpad"
@@ -72,6 +78,12 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .capture: return "camera.viewfinder"
         case .apps: return "square.grid.3x3.square"
         case .menuBar: return "menubar.rectangle"
+        case .system: return "gauge.with.dots.needle.33percent"
+        case .notes: return "note.text"
+        case .focus: return "scope"
+        case .diskMap: return "chart.pie"
+        case .clock: return "clock"
+        case .sound: return "slider.vertical.3"
         case .power: return "bolt.circle"
         case .permissions: return "lock.shield"
         case .mouse: return "computermouse.fill"
@@ -102,10 +114,10 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .mouse, .pointer, .keyboard, .shortcutMap, .devices: return .input
         case .windows, .workspaces, .buttons: return .windows
         case .finder, .folderRules, .clipboard, .selection, .links, .capture: return .filesAndText
-        case .automation, .actions, .profiles, .launcher, .intelligence: return .automate
+        case .automation, .actions, .profiles, .launcher, .intelligence, .focus: return .automate
         case .displays: return .windows
         case .shelf, .apps: return .filesAndText
-        case .menuBar, .power, .general, .permissions, .backup, .diagnostics, .about: return .system
+        case .menuBar, .system, .diskMap, .sound, .notes, .clock, .power, .general, .permissions, .backup, .diagnostics, .about: return .system
         }
     }
 
@@ -150,6 +162,12 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .launcher: return "search spotlight raycast alfred palette command apps files windows clipboard calculator timer emoji alias pin recent fuzzy shortcut"
         case .intelligence: return "apple intelligence ai on-device model summarize rewrite proofread grammar tone explain reply writing tools foundation models ask"
         case .capture: return "screenshot screen capture ocr text recognition redact blur hide annotate arrow markup region window delay snip"
+        case .clock: return "world clock time zones menu bar calendar today events meetings tokyo london new york"
+        case .diskMap: return "disk map space storage usage treemap daisydisk largest files folders cleanup what is taking room"
+        case .focus: return "focus session pomodoro timer concentrate hide dock desktop icons quit apps do not disturb deep work"
+        case .sound: return "sound audio volume mixer per app output speakers headphones airplay bluetooth equalizer eq bass boost mute microphone input balance sample rate soundsource rules profile"
+        case .notes: return "notes note markdown quick jot write text file folder summarize floating"
+        case .system: return "system monitor cpu processor memory ram disk storage space network speed download upload battery bluetooth temperature thermal uptime activity processes usage menu bar"
         case .menuBar: return "popover menu bar icon window quick actions tiles theme colour tint compact search layout customize"
         case .power: return "sleep wake awake caffeinate keep awake prevent display lid battery"
         case .general: return "appearance dark light dock menu bar login startup updates"
@@ -273,6 +291,12 @@ struct SettingsRootView: View {
         case .general: GeneralPane()
         case .power: PowerPane()
         case .menuBar: MenuBarPane()
+        case .system: SystemPane()
+        case .notes: NotesPane()
+        case .focus: FocusPane()
+        case .diskMap: DiskMapPane()
+        case .clock: ClockPane()
+        case .sound: SoundPane()
         case .displays: DisplaysPane()
         case .shelf: ShelfPane(shelf: shelf)
         case .apps: AppsPane()

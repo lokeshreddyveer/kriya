@@ -11,15 +11,21 @@ struct Quicklink: Codable, Identifiable, Equatable {
 
     static let placeholder = "{query}"
     var takesQuery: Bool { template.contains(Self.placeholder) }
+    /// `{clipboard}` and `{selection}` fill in from the clipboard and the selected text, so the keyword alone is enough.
+    var usesVariables: Bool { template.contains("{clipboard}") || template.contains("{selection}") }
 
     /// The address for `query`, or nil when it is not a web address. The words are encoded so they cannot change the address.
-    func url(for query: String) -> URL? {
-        let words = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard words.count <= 500 else { return nil }
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: "&+=#?/;:@$,")
-        guard let encoded = words.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+    func url(for query: String, clipboard: String = "", selection: String = "") -> URL? {
+        func encode(_ raw: String) -> String? {
+            let words = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard words.count <= 500 else { return nil }
+            var allowed = CharacterSet.urlQueryAllowed
+            allowed.remove(charactersIn: "&+=#?/;:@$,")
+            return words.addingPercentEncoding(withAllowedCharacters: allowed)
+        }
+        guard let encoded = encode(query), let clip = encode(clipboard), let sel = encode(selection) else { return nil }
         let text = template.replacingOccurrences(of: Self.placeholder, with: encoded)
+            .replacingOccurrences(of: "{clipboard}", with: clip).replacingOccurrences(of: "{selection}", with: sel)
         guard let url = URL(string: text), let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http", url.host?.isEmpty == false else { return nil }
         return url
     }
@@ -83,6 +89,13 @@ enum LauncherExtraMatch {
         return (link, rest)
     }
 
+    /// A quicklink whose address uses the clipboard or the selected text, found by typing just its keyword.
+    static func variableLink(in text: String, among links: [Quicklink]) -> Quicklink? {
+        let word = text.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !word.isEmpty, !word.contains(" ") else { return nil }
+        return links.first { !$0.keyword.isEmpty && $0.keyword.lowercased() == word && $0.usesVariables && !$0.takesQuery }
+    }
+
     static func script(in text: String, among scripts: [ScriptCommand]) -> (script: ScriptCommand, argument: String)? {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         if let (word, rest) = split(trimmed), let script = scripts.first(where: { !$0.keyword.isEmpty && $0.keyword.lowercased() == word }) {
@@ -99,8 +112,11 @@ final class LauncherExtras: ObservableObject {
 
     @Published private(set) var quicklinks: [Quicklink]
     @Published private(set) var scripts: [ScriptCommand]
+    /// Folders of script files (Raycast's format works as it is).
+    @Published private(set) var scriptFolders: [String]
 
     private let defaults: UserDefaults
+    private let foldersKey = "launcherScriptFolders.v1"
     private let linksKey = "launcherQuicklinks.v1"
     private let scriptsKey = "launcherScripts.v1"
 
@@ -108,6 +124,7 @@ final class LauncherExtras: ObservableObject {
         self.defaults = defaults
         quicklinks = defaults.data(forKey: linksKey).flatMap { try? JSONDecoder().decode([Quicklink].self, from: $0) } ?? Self.starterLinks
         scripts = defaults.data(forKey: scriptsKey).flatMap { try? JSONDecoder().decode([ScriptCommand].self, from: $0) } ?? []
+        scriptFolders = defaults.stringArray(forKey: foldersKey) ?? []
     }
 
     /// A few to begin with, so the feature is visible. They are ordinary quicklinks and can be changed or removed.
@@ -157,6 +174,24 @@ final class LauncherExtras: ObservableObject {
         }
         persist()
         return nil
+    }
+
+    /// Adds a folder of scripts. Returns why it cannot be used, or nil.
+    @discardableResult
+    func addScriptFolder(_ path: String, folderExists: (String) -> Bool = { var d: ObjCBool = false; return FileManager.default.fileExists(atPath: $0, isDirectory: &d) && d.boolValue }) -> String? {
+        let clean = (path as NSString).standardizingPath
+        guard clean.hasPrefix("/"), folderExists(clean) else { return "That folder does not exist." }
+        if clean == "/" || clean == NSHomeDirectory() { return "Choose a folder inside it that holds only scripts, not the whole home folder." }
+        if scriptFolders.contains(clean) { return "That folder is already added." }
+        guard scriptFolders.count < 10 else { return "That is as many folders as can be kept." }
+        scriptFolders.append(clean)
+        defaults.set(scriptFolders, forKey: foldersKey)
+        return nil
+    }
+
+    func removeScriptFolder(_ path: String) {
+        scriptFolders.removeAll { $0 == path }
+        defaults.set(scriptFolders, forKey: foldersKey)
     }
 
     func deleteQuicklink(_ id: String) { quicklinks.removeAll { $0.id == id }; persist() }

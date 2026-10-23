@@ -15,11 +15,17 @@ enum FuzzyMatcher {
         let lowered = String(t)
         let phrase = String(q)
         if lowered == phrase { return 1000 }
-        if lowered.hasPrefix(phrase) { return 900 - min(t.count - q.count, 100) }
+        if lowered.hasPrefix(phrase) {
+            // "app" is a better match for "App Store" than for "Apple Music": the whole word counts for more.
+            let wholeWord = t.count == q.count || !t[q.count].isLetter && !t[q.count].isNumber
+            return min(990, 900 - min(t.count - q.count, 100) + (wholeWord ? 60 : 0))
+        }
         if let range = lowered.range(of: phrase) {
             let offset = lowered.distance(from: lowered.startIndex, to: range.lowerBound)
             let atWordStart = offset == 0 || !t[offset - 1].isLetter && !t[offset - 1].isNumber
-            return (atWordStart ? 800 : 600) - min(offset, 100)
+            let end = offset + q.count
+            let wholeWord = atWordStart && (end >= t.count || !t[end].isLetter && !t[end].isNumber)
+            return (atWordStart ? 800 : 600) - min(offset, 100) + (wholeWord ? 50 : 0)
         }
 
         // Letters in order, rewarding runs, word starts and capital letters, and charging for gaps.

@@ -11,6 +11,8 @@ final class ClipboardMonitor {
     private var ignored: Set<Int> = []
 
     var onRecorded: () -> Void = {}
+    /// Rules that tidy a copy before it is recorded. Set by the app.
+    var rules: ClipboardRuleStore?
 
     init(store: ClipboardStore) {
         self.store = store
@@ -51,10 +53,26 @@ final class ClipboardMonitor {
             DispatchQueue.main.async { [store] in store.noteSkipped(reason) }
             return
         }
+        applyRules(to: board, source: source, types: types)
         guard let clip = Self.read(board, source: source, config: config) else { return }
         queue.async { [store, onRecorded] in
             if store.record(clip) != nil { DispatchQueue.main.async { store.refreshStats(); onRecorded() } }
         }
+    }
+
+    /// Rewrites copied text under the person's rules, so what they paste and what is recorded are both the tidy version.
+    /// Only plain text is touched: a copy that holds files or a picture is left alone.
+    private func applyRules(to board: NSPasteboard, source: String?, types: [String]) {
+        guard let rules = rules?.active, !rules.isEmpty else { return }
+        let kinds = Set(types)
+        guard !kinds.contains(NSPasteboard.PasteboardType.fileURL.rawValue), !kinds.contains(NSPasteboard.PasteboardType.png.rawValue), !kinds.contains(NSPasteboard.PasteboardType.tiff.rawValue),
+              let text = board.string(forType: .string) else { return }
+        let outcome = ClipboardRules.apply(rules, to: text, sourceApp: source)
+        guard outcome.changed || (outcome.wantsPlain && kinds.contains(NSPasteboard.PasteboardType.rtf.rawValue) || outcome.wantsPlain && kinds.contains(NSPasteboard.PasteboardType.html.rawValue)) else { return }
+        board.clearContents()
+        board.setString(outcome.text, forType: .string)
+        ignore(changeCount: board.changeCount)
+        lastChange = board.changeCount
     }
 
     /// What is on the clipboard now, as a `NewClip`. Files win over text, text over an image.
@@ -134,6 +152,19 @@ final class ClipboardPaster {
             return
         }
         store.markUsed(item.id)
+        if store.currentConfig.autoPaste, AXIsProcessTrusted() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { Self.sendPaste() }
+        } else {
+            toast.show(store.currentConfig.autoPaste ? "Copied. Allow Accessibility to paste automatically." : "Copied. Press ⌘V to paste.")
+        }
+    }
+
+    /// Pastes some text that was changed first (the history item stays as it was).
+    func pasteTransformed(_ text: String) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(text, forType: .string)
+        monitor.ignore(changeCount: board.changeCount)
         if store.currentConfig.autoPaste, AXIsProcessTrusted() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { Self.sendPaste() }
         } else {

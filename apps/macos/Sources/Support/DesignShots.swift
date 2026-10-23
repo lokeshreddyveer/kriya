@@ -17,6 +17,7 @@ enum DesignShots {
                     capturePopover(env: env, to: dir.appendingPathComponent("popover.png"))
                     captureClipboardPanel(env: env, to: dir.appendingPathComponent("quickpaste.png"))
                     captureSwitcher(to: dir.appendingPathComponent("switcher.png"))
+                    await captureLauncher(env: env, into: dir)
                     let only = ProcessInfo.processInfo.environment["KRIYA_SHOT_PANES"]?.split(separator: ",").map(String.init)
                     for pane in SettingsPane.allCases where only == nil || only!.contains(pane.rawValue) {
                         show(pane)
@@ -97,6 +98,36 @@ enum DesignShots {
         RunLoop.current.run(until: Date().addingTimeInterval(0.6))
         snap(window, to: url.deletingLastPathComponent().appendingPathComponent("quickpaste-image.png"))
         window.orderOut(nil)
+    }
+
+    /// The launcher in four states: opening list, a chip with a query, a typed search, and selected-text actions.
+    @MainActor
+    private static func captureLauncher(env: AppEnvironment, into dir: URL) async {
+        let palette = env.keyboard.palette
+        func settle(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+        func snapPanel(_ name: String) {
+            guard let window = palette.debugWindow else { return }
+            snap(window, to: dir.appendingPathComponent(name))
+        }
+        palette.show()
+        await settle(0.9)
+        snapPanel("launcher-start.png")
+        palette.model.query = "gh "
+        await settle(0.4)
+        palette.model.query = "swift concurrency"
+        await settle(0.5)
+        snapPanel("launcher-chip.png")
+        palette.model.query = "#ff8800"
+        await settle(0.5)
+        snapPanel("launcher-color.png")
+        palette.model.query = "5 km to mi"
+        await settle(0.5)
+        snapPanel("launcher-convert.png")
+        palette.close()
+        palette.show(selection: "the quick brown fox jumps over the lazy dog")
+        await settle(0.9)
+        snapPanel("launcher-selection.png")
+        palette.close()
     }
 
     /// The window switcher's cards with sample windows, drawn on a plain backdrop so the glass shows.
