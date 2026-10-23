@@ -139,3 +139,48 @@ final class LauncherApprovalTests: XCTestCase {
         XCTAssertTrue(LauncherPane.describeSpotlight("").contains("could not"))
     }
 }
+
+final class FinderWindowTests: XCTestCase {
+    func testClosedWindowsAreRememberedAndReopenedOnesAreNot() {
+        var history = FinderWindowHistory()
+        history.observe(["/a", "/b/"])
+        XCTAssertEqual(history.open, ["/a", "/b"])
+        history.observe(["/b"])
+        XCTAssertEqual(history.closed, ["/a"])
+        history.observe(["/b", "/c"])
+        history.observe(["/c"])
+        XCTAssertEqual(history.closed, ["/b", "/a"], "newest closed first")
+        history.observe(["/c", "/a"])
+        XCTAssertEqual(history.closed, ["/b"], "an open window is not closed")
+    }
+
+    func testExcludedFoldersAreNeverKeptAndOnlyTheLatestAreKept() {
+        var history = FinderWindowHistory()
+        history.observe(["/x/secret", "/y"]) { $0.hasPrefix("/x") }
+        history.observe([])
+        XCTAssertEqual(history.closed, ["/y"])
+        for i in 0..<(FinderWindowHistory.capacity + 5) { history.observe(["/f\(i)"]) }
+        history.observe([])
+        XCTAssertEqual(history.closed.count, FinderWindowHistory.capacity)
+    }
+
+    func testFolderSetsKeepExistingFoldersOnceInOrder() {
+        let set = FolderSet(name: "Project", paths: ["/a", "/gone", "/a/", "/b"])
+        XCTAssertEqual(set.openable { $0 != "/gone" }, ["/a", "/b"])
+        XCTAssertNil(FolderSets.from(open: [], named: "x"))
+        XCTAssertNil(FolderSets.from(open: ["/a"], named: "  "))
+        XCTAssertEqual(FolderSets.from(open: ["/a"], named: " Work ")?.name, "Work")
+    }
+
+    func testRecentFoldersSkipExcludedOnes() {
+        let defaults = UserDefaults(suiteName: "kriya-dest-\(UUID().uuidString)")!
+        let destinations = FolderDestinations(defaults: defaults, key: "k", isFolder: { _ in true }, isProtected: { _ in false })
+        destinations.used("/tmp/kriya-a/one")
+        destinations.exclude("/tmp/kriya-a")
+        XCTAssertTrue(destinations.recents.isEmpty, "excluding drops what was already there")
+        destinations.used("/tmp/kriya-a/two")
+        XCTAssertTrue(destinations.recents.isEmpty)
+        XCTAssertTrue(FolderSets.isExcluded("/tmp/kriya-a/two", folders: ["/tmp/kriya-a"]))
+        XCTAssertFalse(FolderSets.isExcluded("/tmp/kriya-ab", folders: ["/tmp/kriya-a"]))
+    }
+}

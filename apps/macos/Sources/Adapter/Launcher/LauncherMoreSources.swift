@@ -69,6 +69,22 @@ extension LauncherSources {
         return entries
     }
 
+    /// Folder sets, and the Finder windows closed lately, so they can be opened again.
+    func finderWindowEntries() -> [PaletteEntry] {
+        guard prefs.data.isEnabled(.command) else { return [] }
+        var entries = FolderSetStore.shared.sets.map { set in
+            PaletteEntry(id: "folderset:\(set.id)", title: "Open folder set: \(set.name)", subtitle: "\(set.paths.count) folders", symbol: "rectangle.stack.badge.plus", category: .command,
+                         keywords: ["folder", "set", "project", "windows", set.name.lowercased()]) { FolderSetStore.shared.open(set) }
+        }
+        let tracker = FinderWindowTracker.shared
+        for path in tracker.history.closed.prefix(8) where FileManager.default.fileExists(atPath: path) {
+            let name = path == "/" ? "Macintosh HD" : (path as NSString).lastPathComponent
+            entries.append(PaletteEntry(id: "closedwindow:\(path)", title: "Reopen Finder window: \(name)", subtitle: (path as NSString).abbreviatingWithTildeInPath, symbol: "arrow.uturn.backward.square", category: .command,
+                                        keywords: ["finder", "window", "closed", "reopen", name.lowercased()]) { tracker.reopen(path) })
+        }
+        return entries
+    }
+
     /// Apps used lately, offered when the box is empty.
     func recentAppEntries(limit: Int = 6) -> [(entry: PaletteEntry, section: String)] {
         guard prefs.data.isEnabled(.app) else { return [] }

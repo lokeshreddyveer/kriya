@@ -20,7 +20,7 @@ final class FileActionRunner {
     /// Shows the batch rename window. Set by the app; tests leave it out.
     var presentBatchRename: ((_ names: [String], _ others: [String], _ rule: BatchRenameRule, _ apply: @escaping (BatchRenameRule) -> Void) -> Void)?
 
-    init(store: FinderStore, history: FileOperationHistory = FileOperationHistory(), destinations: FolderDestinations = FolderDestinations()) {
+    init(store: FinderStore, history: FileOperationHistory = FileOperationHistory(), destinations: FolderDestinations = .shared) {
         self.store = store
         self.history = history
         self.destinations = destinations

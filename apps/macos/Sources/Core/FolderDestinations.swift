@@ -18,11 +18,14 @@ struct DestinationChoice: Identifiable, Equatable {
 /// Where the person has moved or copied things lately, and the folders they starred. It keeps folder paths only (nothing
 /// about the items), drops folders that no longer exist, and never offers a system folder.
 final class FolderDestinations: ObservableObject {
+    static let shared = FolderDestinations()
     static let recentLimit = 12
     static let favoriteLimit = 30
 
     @Published private(set) var favorites: [String]
     @Published private(set) var recents: [String]
+    /// Folders (and everything inside them) that never become a recent folder.
+    @Published private(set) var excluded: [String]
 
     private let defaults: UserDefaults
     private let key: String
@@ -42,6 +45,7 @@ final class FolderDestinations: ObservableObject {
         let saved = defaults.dictionary(forKey: key)
         favorites = saved?["favorites"] as? [String] ?? []
         recents = saved?["recents"] as? [String] ?? []
+        excluded = saved?["excluded"] as? [String] ?? []
     }
 
     /// The folder as it is kept: links followed, no trailing slash, so the same folder never appears twice.
@@ -54,7 +58,7 @@ final class FolderDestinations: ObservableObject {
     /// Notes that items were sent to this folder.
     func used(_ path: String) {
         let folder = Self.normalized(path)
-        guard !isProtected(folder), folder != "/" else { return }
+        guard !isProtected(folder), folder != "/", !FolderSets.isExcluded(folder, folders: excluded) else { return }
         recents.removeAll { $0 == folder }
         recents.insert(folder, at: 0)
         recents = Array(recents.prefix(Self.recentLimit))
@@ -69,6 +73,19 @@ final class FolderDestinations: ObservableObject {
             guard !isProtected(folder), folder != "/", favorites.count < Self.favoriteLimit else { return }
             favorites.append(folder)
         }
+        save()
+    }
+
+    /// Leaves a folder out of the recent lists from now on, and drops it from them now.
+    func exclude(_ path: String) {
+        let folder = Self.normalized(path)
+        if !excluded.contains(folder) { excluded.append(folder) }
+        recents.removeAll { FolderSets.isExcluded($0, folders: [folder]) }
+        save()
+    }
+
+    func include(_ path: String) {
+        excluded.removeAll { $0 == path }
         save()
     }
 
@@ -94,6 +111,6 @@ final class FolderDestinations: ObservableObject {
     }
 
     private func save() {
-        defaults.set(["favorites": favorites, "recents": recents], forKey: key)
+        defaults.set(["favorites": favorites, "recents": recents, "excluded": excluded], forKey: key)
     }
 }

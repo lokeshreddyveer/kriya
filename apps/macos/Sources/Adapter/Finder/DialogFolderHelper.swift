@@ -150,7 +150,7 @@ final class DialogFolderHelper {
     }
 
     /// The folder of Finder's front window, and the folders of its other windows.
-    private static func finderFolders() -> (String?, [String]) {
+    static func finderFolders() -> (String?, [String]) {
         let source = """
         tell application "Finder"
             set out to {}

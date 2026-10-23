@@ -587,6 +587,8 @@ private struct SetupTab: View {
                 Text("Give an app a folder and its Open and Save dialogs go there as soon as they appear, by typing the path into the dialog's “Go to the folder” sheet. It needs Accessibility, and it checks the front app a little more than once a second only while an app with a folder is in front. The “Dialog Folders” command shows a searchable list of Finder's folders, favorites and recent folders, with a button for hidden files.")
             }
 
+            FolderMemorySection()
+
             DefaultAppsSection()
 
             Section {
@@ -598,5 +600,69 @@ private struct SetupTab: View {
         .formStyle(.grouped)
         .onAppear { finder.refreshExtensionStatus() }
         .onReceive(ticker) { _ in finder.refreshExtensionStatus() }
+    }
+}
+
+/// Finder's open and recently closed windows, groups of folders, and the folders left out of the recent lists.
+private struct FolderMemorySection: View {
+    @ObservedObject private var tracker = FinderWindowTracker.shared
+    @ObservedObject private var sets = FolderSetStore.shared
+    @ObservedObject private var destinations = FolderDestinations.shared
+    @State private var newName = ""
+
+    var body: some View {
+        Section {
+            Toggle("Remember Finder windows I close", isOn: $tracker.enabled)
+            ForEach(tracker.history.closed.prefix(8), id: \.self) { path in
+                HStack {
+                    Text((path as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button("Reopen") { tracker.reopen(path) }.controlSize(.small)
+                    Button { tracker.forget(path) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help("Forget this window").accessibilityLabel("Forget this window")
+                }
+            }
+        } header: { Text("Finder windows") } footer: {
+            Text("Off by default. When on, Kriya asks Finder which folders it has open every few seconds and keeps the last closed ones (folder names only) so “Reopen Finder window” in the launcher can bring them back. Turning it off forgets them.")
+        }
+
+        Section {
+            ForEach(sets.sets) { set in
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(set.name)
+                        Text("\(set.paths.count) folders").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Open") { sets.open(set) }.controlSize(.small)
+                    Button(role: .destructive) { sets.sets.removeAll { $0.id == set.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete \(set.name)")
+                }
+            }
+            HStack {
+                TextField("Name for the folders open in Finder now", text: $newName)
+                Button("Save as Set") { if sets.saveOpenFolders(named: newName) { newName = "" } else { Toast().show("Open some Finder windows and type a name first.", isError: true) } }
+                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        } header: { Text("Folder sets") } footer: {
+            Text("Saves the folders Finder has open under a name. “Open folder set” in the launcher opens them all again.")
+        }
+
+        Section {
+            ForEach(destinations.excluded, id: \.self) { folder in
+                HStack {
+                    Text((folder as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button(role: .destructive) { destinations.include(folder) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Stop leaving this folder out")
+                }
+            }
+            Button {
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = false
+                panel.canChooseDirectories = true
+                panel.prompt = "Leave Out"
+                if panel.runModal() == .OK, let url = panel.url { destinations.exclude(url.path) }
+            } label: { Label("Leave a Folder Out of Recent Folders…", systemImage: "plus") }
+        } header: { Text("Recent folders") } footer: {
+            Text("A folder left out here, and everything inside it, never shows up in recent folders or in Finder window history.")
+        }
     }
 }
