@@ -328,3 +328,165 @@ final class AIToolPolicyTests: XCTestCase {
         guard case .confirm = AIToolPolicy.decide(tool("s", .sensitiveRead), settings: settings, context: outside) else { return XCTFail() }
     }
 }
+
+/// A stand-in for the network that records what was sent and gives back a prepared answer.
+final class StubTransport: HTTPTransport {
+    var requests: [URLRequest] = []
+    var status = 200
+    var body = Data()
+    var failure: Error?
+    var streamLines: [String] = []
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        if let failure { throw failure }
+        return (body, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+    }
+
+    func lines(_ request: URLRequest) -> AsyncThrowingStream<String, Error> {
+        requests.append(request)
+        let lines = streamLines, failure = failure
+        return AsyncThrowingStream { c in
+            if let failure { c.finish(throwing: failure); return }
+            lines.forEach { c.yield($0) }
+            c.finish()
+        }
+    }
+}
+
+final class AIGatewayTests: XCTestCase {
+    private func makeGateway(_ transport: StubTransport = StubTransport(), configure: (AIProviderStore) -> Void = { _ in }) -> (AIGateway, AIProviderStore, UserDefaults) {
+        let defaults = UserDefaults(suiteName: "kriya-ai-\(UUID().uuidString)")!
+        let store = AIProviderStore(defaults: defaults)
+        configure(store)
+        return (AIGateway(store: store, transport: transport, defaults: defaults), store, defaults)
+    }
+
+    private func remote(features: Set<AIFeature> = [.selection]) -> AIProviderConfig {
+        AIProviderConfig(id: "r1", name: "Remote", kind: .openAICompatible, baseURL: "https://llm.example.com/v1", model: "m", supportsTools: true, enabledFeatures: features)
+    }
+
+    func testAnAnswerIsReturnedAndOnlyCountsAreRecorded() async throws {
+        let stub = StubTransport()
+        stub.body = Data(#"{"choices":[{"message":{"content":"Hello there"}}],"usage":{"prompt_tokens":12,"completion_tokens":3}}"#.utf8)
+        let (gateway, store, _) = makeGateway(stub) { $0.update(self.remote()) }
+        KeychainSecretsStub.install(for: store.config("r1")!, value: "k")
+        let response = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "my private sentence")]), secretsHidden: 2)
+        XCTAssertEqual(response.text, "Hello there")
+        XCTAssertEqual(stub.requests.first?.url?.absoluteString, "https://llm.example.com/v1/chat/completions")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let entry = try XCTUnwrap(gateway.history.first)
+        XCTAssertEqual(entry.secretsHidden, 2)
+        XCTAssertEqual(entry.tokens, 15)
+        XCTAssertEqual(entry.status, "ok")
+        let saved = String(decoding: try JSONEncoder().encode(gateway.history), as: UTF8.self)
+        XCTAssertFalse(saved.contains("private sentence"), "the text sent is never kept")
+        XCTAssertFalse(saved.contains("Hello there"), "nor the answer")
+        KeychainSecretsStub.remove(store.config("r1")!)
+    }
+
+    func testAProviderNotSwitchedOnForTheFeatureIsNeverCalled() async {
+        let stub = StubTransport()
+        let (gateway, _, _) = makeGateway(stub) { $0.update(self.remote(features: [.clipboard])) }
+        do { _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")])); XCTFail() }
+        catch { XCTAssertEqual(error as? AIError, .providerOffForFeature("Selection bar")) }
+        XCTAssertTrue(stub.requests.isEmpty)
+    }
+
+    func testLocalOnlyModeBlocksRemoteProvidersBeforeAnythingIsSent() async {
+        let stub = StubTransport()
+        let (gateway, _, _) = makeGateway(stub) { $0.update(self.remote()) }
+        let was = LocalOnly.isOn
+        LocalOnly.isOn = true
+        defer { LocalOnly.isOn = was }
+        do { _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")])); XCTFail() }
+        catch { XCTAssertEqual(error as? AIError, .blockedByLocalOnly) }
+        XCTAssertTrue(stub.requests.isEmpty)
+        if case .failure(let e) = await gateway.testConnection(store(gateway).config("r1")!) { XCTAssertEqual(e, .blockedByLocalOnly) } else { XCTFail() }
+    }
+
+    private func store(_ g: AIGateway) -> AIProviderStore { g.store }
+
+    func testMissingKeysAndRefusedKeysAreReportedPlainly() async {
+        let stub = StubTransport()
+        let (gateway, store, _) = makeGateway(stub) { $0.update(self.remote()) }
+        do { _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")])); XCTFail() }
+        catch { XCTAssertEqual(error as? AIError, .noKey) }
+        KeychainSecretsStub.install(for: store.config("r1")!, value: "k")
+        defer { KeychainSecretsStub.remove(store.config("r1")!) }
+        stub.status = 401
+        stub.body = Data(#"{"error":{"message":"Incorrect API key sk-abcdefghijklmnopqrstuvwxyz"}}"#.utf8)
+        do { _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")])); XCTFail() }
+        catch { XCTAssertEqual(error as? AIError, .unauthorized) }
+        stub.status = 500
+        do { _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")])); XCTFail() }
+        catch { XCTAssertFalse((error as? AIError)?.errorDescription?.contains("sk-abcdefgh") ?? true, "a provider message is cleaned") }
+    }
+
+    func testOfflineIsReportedAndTheDailyBudgetStopsFurtherRequests() async throws {
+        let stub = StubTransport()
+        stub.failure = URLError(.notConnectedToInternet)
+        let (gateway, store, _) = makeGateway(stub) { s in var c = self.remote(); c.dailyTokenLimit = 20; s.update(c); s.fallbackOnDevice = false }
+        KeychainSecretsStub.install(for: store.config("r1")!, value: "k")
+        defer { KeychainSecretsStub.remove(store.config("r1")!) }
+        do { _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")])); XCTFail() }
+        catch { XCTAssertEqual(error as? AIError, .offline) }
+        stub.failure = nil
+        stub.body = Data(#"{"choices":[{"message":{"content":"a"}}],"usage":{"prompt_tokens":30,"completion_tokens":0}}"#.utf8)
+        _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")]))
+        do { _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")])); XCTFail() }
+        catch { XCTAssertEqual(error as? AIError, .budgetExceeded("token")) }
+    }
+
+    func testToolsAreLeftOutForProvidersThatDoNotSupportThem() async throws {
+        let stub = StubTransport()
+        stub.body = Data(#"{"choices":[{"message":{"content":"ok"}}]}"#.utf8)
+        var config = remote(); config.supportsTools = false
+        let (gateway, store, _) = makeGateway(stub) { $0.update(config) }
+        KeychainSecretsStub.install(for: store.config("r1")!, value: "k")
+        defer { KeychainSecretsStub.remove(store.config("r1")!) }
+        let tool = AITool(name: "kriya.list_windows", description: "d", parameters: .object(["type": .string("object")]), risk: .readOnly)
+        _ = try await gateway.generate(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")], tools: [tool]))
+        let body = try JSONSerialization.jsonObject(with: stub.requests[0].httpBody!) as! [String: Any]
+        XCTAssertNil(body["tools"])
+    }
+
+    func testStreamingDeliversTextThenFinishes() async throws {
+        let stub = StubTransport()
+        stub.streamLines = [#"data: {"choices":[{"delta":{"content":"Hi"}}]}"#, #"data: {"choices":[{"delta":{"content":"!"}}]}"#, "data: [DONE]"]
+        let (gateway, store, _) = makeGateway(stub) { $0.update(self.remote()) }
+        KeychainSecretsStub.install(for: store.config("r1")!, value: "k")
+        defer { KeychainSecretsStub.remove(store.config("r1")!) }
+        var text = ""
+        for try await event in gateway.stream(feature: .selection, providerID: "r1", AIRequest(messages: [AIMessage(.user, "x")])) { if case .text(let t) = event { text += t } }
+        XCTAssertEqual(text, "Hi!")
+    }
+
+    func testStoreKeepsKeysOutOfSettingsAndForgetRemovesThem() {
+        let (_, store, defaults) = makeGateway()
+        let config = AIProviderConfig(id: "k1", name: "Mine", kind: .openAICompatible, baseURL: "https://x.example.com/v1", model: "m")
+        store.update(config)
+        XCTAssertTrue(store.saveKey("sk-this-is-a-secret-key-123456", for: config))
+        let saved = String(decoding: defaults.data(forKey: "ai.settings.v1") ?? Data(), as: UTF8.self)
+        XCTAssertFalse(saved.contains("this-is-a-secret"), "keys are not in preferences")
+        XCTAssertTrue(store.hasKey(config))
+        XCTAssertFalse(store.saveKey("two\nlines", for: config))
+        store.forget(config)
+        XCTAssertFalse(store.hasKey(config))
+        XCTAssertNil(store.config("k1"))
+        XCTAssertNotNil(store.config(AIProviderStore.appleID), "Apple Intelligence cannot be forgotten")
+    }
+
+    func testEmbeddingsFromARemoteProviderNeedExplicitPermission() async {
+        let (gateway, store, _) = makeGateway { s in var c = self.remote(features: [.search]); c.embeddingModel = "emb"; s.update(c); s.embeddingProviderID = "r1" }
+        do { _ = try await gateway.embed(EmbeddingRequest(model: "", inputs: ["x"])); XCTFail() }
+        catch { XCTAssertEqual(error as? AIError, .providerOffForFeature("embeddings (cloud embeddings are off)")) }
+        _ = store
+    }
+}
+
+/// Puts a key in the real Keychain under a provider's account for a test, and takes it out again.
+enum KeychainSecretsStub {
+    static func install(for config: AIProviderConfig, value: String) { _ = KeychainSecrets.set(value, for: config.keyAccount) }
+    static func remove(_ config: AIProviderConfig) { _ = KeychainSecrets.delete(config.keyAccount) }
+}

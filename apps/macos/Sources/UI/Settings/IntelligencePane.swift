@@ -17,6 +17,8 @@ struct IntelligencePane: View {
 
     var body: some View {
         Form {
+            AIProvidersSection()
+
             Section {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: intelligence.isAvailable ? "sparkles" : "exclamationmark.triangle")
@@ -32,7 +34,7 @@ struct IntelligencePane: View {
                 }
                 .animation(.smooth(duration: 0.2), value: intelligence.availability)
             } header: { Text("Status") } footer: {
-                Text("Kriya uses only the model that runs on this Mac. It never uses a cloud model, and sends nothing to Apple or anyone else. What you select or copy is not logged, saved or kept after the result is shown. Because it works offline it cannot look things up: it does not know current facts, films, or other specifics, and may refuse or guess. Use it to rewrite, summarize or explain the text you give it, and use a web search (the “Search with” rows in the launcher) to find facts.")
+                Text("By default Kriya uses only the model that runs on this Mac and sends nothing to Apple or anyone else. If you add another AI provider below and switch it on for a feature, that feature sends its text to that provider, with secrets hidden first. What you select or copy is not logged, saved or kept after the result is shown. Because it works offline it cannot look things up: it does not know current facts, films, or other specifics, and may refuse or guess. Use it to rewrite, summarize or explain the text you give it, and use a web search (the “Search with” rows in the launcher) to find facts.")
             }
 
             Section {

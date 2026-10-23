@@ -121,7 +121,7 @@ final class AppEnvironment {
         let bridge = BrowserBridge(support: paths.support)
         let safariInbox = SafariInboxWatcher(support: paths.support)
         let capture = ScreenCaptureService(settings: CaptureSettingsStore())
-        let intelligence = IntelligenceCoordinator(service: AppleIntelligence())
+        let intelligence = IntelligenceCoordinator(service: AppleIntelligence(model: GatewayTextModel(gateway: .shared)))
         let workspaceStore = WorkspaceStore(core: core)
         let pointerStore = PointerEffectsStore(core: core)
         let launcherTools = LauncherToolSources(extras: LauncherExtras(), prefs: keyboard.palette.prefs)

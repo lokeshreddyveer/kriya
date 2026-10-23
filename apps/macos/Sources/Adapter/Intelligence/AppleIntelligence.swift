@@ -51,6 +51,8 @@ enum IntelligenceError: Error, Equatable, LocalizedError {
     case busy
     case cancelled
     case failed
+    /// A provider other than the on-device model said no, or could not be used; the words are Kriya's own, never the text sent.
+    case provider(String)
 
     var errorDescription: String? {
         switch self {
@@ -63,6 +65,7 @@ enum IntelligenceError: Error, Equatable, LocalizedError {
         case .busy: return "Apple Intelligence is busy. Try again in a moment."
         case .cancelled: return "Stopped."
         case .failed: return "Apple Intelligence could not finish that. Try again."
+        case .provider(let message): return message
         }
     }
 
