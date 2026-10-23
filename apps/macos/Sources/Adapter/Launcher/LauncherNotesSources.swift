@@ -26,6 +26,12 @@ extension LauncherSources {
                 if notes.quickSave(clip) != nil { Toast().show("Note saved") } else { Toast().show("The note could not be saved.", isError: true) }
             })
         }
+        if lower == "pinned" || lower == "pinned notes" || lower == "notes pinned" {
+            let pins = NotePins.stored
+            for note in notes.model.store.list().filter({ pins.contains(NotePins.key($0.url)) }).prefix(8) {
+                found.append(make("note:pin:\(note.url.path)", note.title, note.locked ? "Pinned note, locked" : "Pinned note", "pin.fill", score: 650) { DispatchQueue.main.async { notes.show(opening: note.url) } })
+            }
+        }
         if lower == "note" || lower == "notes" || lower == "new note" {
             found.append(make("note:open", "Open Notes", "The floating notes window", "note.text") { DispatchQueue.main.async { notes.show() } })
         }

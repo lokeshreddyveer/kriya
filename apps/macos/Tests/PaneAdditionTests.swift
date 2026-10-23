@@ -1080,3 +1080,126 @@ final class ToolbarNavigationTests: XCTestCase {
         XCTAssertEqual(ToolbarNavigator(count: 0).announcement(titles: []), "")
     }
 }
+
+final class NoteToolsTests: XCTestCase {
+    private func store() -> (NoteStore, URL) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-notes-\(UUID().uuidString)", isDirectory: true)
+        var s = NoteStore(folder: dir)
+        let key = NoteCrypto.newKey()
+        s.keyProvider = { _ in key }
+        return (s, dir)
+    }
+
+    func testTagsAreFoundInTextButNotInHeadingsCodeOrAddresses() {
+        let text = "# Heading\nPlan the #Launch with #design and #q4-2026.\nSee https://x.com/#anchor and a&#b.\n```\n#include <x>\n```\nemail#notatag\n#Launch again"
+        XCTAssertEqual(NoteTags.extract(text), ["launch", "design", "q4-2026"])
+        XCTAssertEqual(NoteTags.extract("#1 is a number"), [])
+    }
+
+    func testTagQueriesAndCounts() {
+        XCTAssertEqual(NoteTags.parseQuery("tag:work #budget  quarterly report").tags, ["work", "budget"])
+        XCTAssertEqual(NoteTags.parseQuery("tag:work #budget quarterly report").words, "quarterly report")
+        XCTAssertEqual(NoteTags.counts(["#a #b", "#a", "none"]).map { "\($0.tag)\($0.notes)" }, ["a2", "b1"])
+    }
+
+    func testTagSearchFindsNotesAndSkipsLockedOnes() throws {
+        let (s, dir) = store()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = s.create("Budget #work #money")
+        let secret = try XCTUnwrap(s.create("Diary #work private"))
+        _ = try XCTUnwrap(s.lock(secret))
+        XCTAssertEqual(s.search("tag:work").count, 1)
+        XCTAssertEqual(s.search("tag:money budget").count, 1)
+        XCTAssertTrue(s.search("private").isEmpty, "locked words are not searched")
+        XCTAssertEqual(s.list().first { $0.locked }?.title, "Locked note")
+    }
+
+    func testLockingEncryptsOnDiskAndUnlockingBringsTheTextBack() throws {
+        let (s, dir) = store()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plain = try XCTUnwrap(s.create("my secret words"))
+        let locked = try XCTUnwrap(s.lock(plain))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plain.path))
+        XCTAssertFalse(String(decoding: try Data(contentsOf: locked), as: UTF8.self).contains("secret"))
+        XCTAssertEqual(s.read(locked), "my secret words")
+        XCTAssertTrue(s.save("changed words", to: locked))
+        XCTAssertEqual(s.read(locked), "changed words")
+        let back = try XCTUnwrap(s.unlock(locked))
+        XCTAssertEqual(s.read(back), "changed words")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: locked.path))
+    }
+
+    func testWrongKeyOrDamageIsRefusedAndNothingIsLost() throws {
+        let key = NoteCrypto.newKey()
+        let sealed = try NoteCrypto.seal("hello", key: key)
+        XCTAssertEqual(try NoteCrypto.open(sealed, key: key), "hello")
+        XCTAssertThrowsError(try NoteCrypto.open(sealed, key: NoteCrypto.newKey()))
+        var bent = sealed; bent[bent.count - 1] ^= 1
+        XCTAssertThrowsError(try NoteCrypto.open(bent, key: key))
+        XCTAssertThrowsError(try NoteCrypto.open(Data("plain".utf8), key: key)) { XCTAssertEqual($0 as? NoteCrypto.Failure, .notEncrypted) }
+        XCTAssertThrowsError(try NoteCrypto.seal("x", key: Data([1, 2, 3]))) { XCTAssertEqual($0 as? NoteCrypto.Failure, .badKey) }
+        XCTAssertNotEqual(try NoteCrypto.seal("hello", key: key), try NoteCrypto.seal("hello", key: key), "each lock uses a fresh nonce")
+        let (s, dir) = store()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var other = s
+        other.keyProvider = { _ in nil }
+        let note = try XCTUnwrap(s.create("keep me"))
+        XCTAssertNil(other.lock(note), "no key, no lock")
+        XCTAssertEqual(s.read(note), "keep me")
+    }
+
+    func testTemplatesFillInTheirVariablesAndMarkWhereTheCaretGoes() {
+        let t = NoteTemplate(name: "T", body: "# {title} {date}\n\n{cursor}\nfrom {clipboard}")
+        let date = Date(timeIntervalSince1970: 1_760_000_000)
+        let out = t.render(title: "Plan", date: date, clipboard: "copied")
+        XCTAssertTrue(out.text.hasPrefix("# Plan 20"))
+        XCTAssertFalse(out.text.contains("{"))
+        XCTAssertTrue(out.text.contains("from copied"))
+        XCTAssertEqual(out.cursor, out.text.distance(from: out.text.startIndex, to: out.text.range(of: "\nfrom copied")!.lowerBound))
+        XCTAssertEqual(NoteTemplate.fileName(for: "../Weekly: plan"), "Weekly plan.md")
+        XCTAssertEqual(NoteTemplate.fileName(for: ""), "Template.md")
+    }
+
+    func testSavedTemplatesAppearBeforeTheReadyMadeOnesAndOverrideByName() throws {
+        let (s, dir) = store()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(s.templates().map(\.name), NoteTemplate.starters.map(\.name))
+        XCTAssertTrue(s.saveTemplate(named: "Meeting", body: "mine"))
+        XCTAssertTrue(s.saveTemplate(named: "Zed", body: "z"))
+        let names = s.templates().map(\.name)
+        XCTAssertEqual(names.prefix(2), ["Meeting", "Zed"])
+        XCTAssertEqual(s.templates().first { $0.name == "Meeting" }?.body, "mine")
+        XCTAssertEqual(names.filter { $0 == "Meeting" }.count, 1)
+    }
+
+    func testAttachmentsGetSafeUniqueNamesAndGoWithTheNote() throws {
+        let (s, dir) = store()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(NoteAttachments.safeName("../../etc/passwd"), "..-..-etc-passwd".trimmingCharacters(in: CharacterSet(charactersIn: ". ")))
+        XCTAssertEqual(NoteAttachments.safeName(".hidden"), "hidden")
+        XCTAssertEqual(NoteAttachments.safeName(""), "file")
+        XCTAssertLessThanOrEqual(NoteAttachments.safeName(String(repeating: "a", count: 300) + ".pdf").count, 100)
+        let note = try XCTUnwrap(s.create("with a file"))
+        let source = dir.appendingPathComponent("report.pdf")
+        try Data("pdf".utf8).write(to: source)
+        let first = try XCTUnwrap(s.attach(source, to: note))
+        let second = try XCTUnwrap(s.attach(source, to: note))
+        XCTAssertTrue(first.contains(".attachments/"))
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(s.attachments(of: note).count, 2)
+        XCTAssertTrue(NoteAttachments.link(noteStem: "a b", fileName: "x y.png").hasPrefix("!["), "pictures are shown inline")
+        XCTAssertFalse(NoteAttachments.link(noteStem: "a", fileName: "x.pdf").hasPrefix("!"))
+        XCTAssertNil(s.attach(dir, to: note), "folders are not attached")
+    }
+
+    func testPinnedNotesComeFirstAndKeepTheirPinWhenLocked() {
+        let a = NoteFile(url: URL(fileURLWithPath: "/n/a.md"), title: "a", modified: Date())
+        let b = NoteFile(url: URL(fileURLWithPath: "/n/b.md"), title: "b", modified: Date())
+        let c = NoteFile(url: URL(fileURLWithPath: "/n/c.kriyanote"), title: "Locked note", modified: Date())
+        XCTAssertEqual(NotePins.apply([a, b, c], pinned: ["c"]).map(\.title), ["Locked note", "a", "b"])
+        var pins = NotePins.toggled([], b.url)
+        XCTAssertEqual(pins, ["b"])
+        pins = NotePins.toggled(pins, URL(fileURLWithPath: "/n/b.kriyanote"))
+        XCTAssertTrue(pins.isEmpty, "same note, different ending")
+    }
+}

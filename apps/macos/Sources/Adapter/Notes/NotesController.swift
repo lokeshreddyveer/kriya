@@ -16,7 +16,48 @@ final class NotesModel: ObservableObject {
         return NoteStore(folder: path.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? NoteStore.defaultFolder)
     }
 
-    func reload() { notes = store.search(query) }
+    var pinned: Set<String> { NotePins.stored }
+    func isPinned(_ url: URL) -> Bool { pinned.contains(NotePins.key(url)) }
+
+    func reload() { notes = NotePins.apply(store.search(query), pinned: NotePins.stored) }
+
+    func togglePin() {
+        guard let url = current else { return }
+        NotePins.stored = NotePins.toggled(NotePins.stored, url)
+        reload()
+    }
+
+    /// Locks or unlocks the open note. The text on screen is saved first.
+    func toggleLock() {
+        guard let url = current else { return }
+        flush()
+        let next = url.pathExtension == NoteStore.lockedExtension ? store.unlock(url) : store.lock(url)
+        guard let next else { return }
+        loading = true; current = next; text = store.read(next); loading = false
+        reload()
+    }
+
+    var isLocked: Bool { current?.pathExtension == NoteStore.lockedExtension }
+
+    /// Copies a chosen file next to the note and puts a link to it at the end of the text.
+    func attach(_ file: URL) {
+        if current == nil { flush() }
+        guard let url = current, let link = store.attach(file, to: url) else { return }
+        text += (text.hasSuffix("\n") || text.isEmpty ? "" : "\n") + link + "\n"
+    }
+
+    var attachments: [URL] { current.map { store.attachments(of: $0) } ?? [] }
+
+    func newNote(from template: NoteTemplate) {
+        flush()
+        let rendered = template.render(title: "", date: Date(), clipboard: NSPasteboard.general.string(forType: .string) ?? "")
+        loading = true; current = nil; text = rendered.text; loading = false
+        flush()
+    }
+
+    var tagCounts: [(tag: String, notes: Int)] {
+        NoteTags.counts(store.list().filter { !$0.locked }.map { store.read($0.url) })
+    }
 
     func open(_ url: URL) {
         flush()
@@ -70,10 +111,26 @@ private struct NotesView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                TextField("Search notes", text: $model.query).textFieldStyle(.roundedBorder).padding(8)
+                TextField("Search notes, or tag:work", text: $model.query).textFieldStyle(.roundedBorder).padding(8)
+                let tags = model.tagCounts
+                if !tags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(tags.prefix(12), id: \.tag) { item in
+                                Button("#\(item.tag) \(item.notes)") { model.query = "tag:\(item.tag)" }
+                                    .buttonStyle(.plain).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.primary.opacity(0.08), in: Capsule())
+                            }
+                        }.padding(.horizontal, 8)
+                    }.padding(.bottom, 4)
+                }
                 List(model.notes, selection: Binding(get: { model.current }, set: { if let u = $0 { model.open(u) } })) { note in
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(note.title).lineLimit(1)
+                        HStack(spacing: 4) {
+                            if model.isPinned(note.url) { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary) }
+                            if note.locked { Image(systemName: "lock.fill").font(.caption2).foregroundStyle(.secondary) }
+                            Text(note.title).lineLimit(1)
+                        }
                         Text(note.modified, style: .relative).font(.caption).foregroundStyle(.secondary)
                     }.tag(note.url)
                 }
@@ -90,6 +147,26 @@ private struct NotesView: View {
                 Divider()
                 HStack(spacing: 14) {
                     Button { model.newNote(); editing = true } label: { Label("New", systemImage: "square.and.pencil") }.keyboardShortcut("n")
+                    Menu {
+                        ForEach(model.store.templates()) { template in Button(template.name) { model.newNote(from: template); editing = true } }
+                        Divider()
+                        Button("Save This Note as a Template…") { saveTemplate() }.disabled(model.text.isEmpty)
+                    } label: { Label("From Template", systemImage: "doc.badge.plus") }.menuIndicator(.hidden).fixedSize()
+                    Button { model.togglePin() } label: { Label(model.current.map(model.isPinned) == true ? "Unpin" : "Pin", systemImage: model.current.map(model.isPinned) == true ? "pin.slash" : "pin") }.disabled(model.current == nil)
+                    Button { model.toggleLock() } label: { Label(model.isLocked ? "Unlock" : "Lock", systemImage: model.isLocked ? "lock.open" : "lock") }.disabled(model.current == nil)
+                        .help(model.isLocked ? "Turn this note back into a plain Markdown file" : "Encrypt this note with a key kept in your Keychain. Without that key it cannot be read.")
+                    Menu {
+                        Button("Attach a File…") { attachFile() }.disabled(model.current == nil && model.text.isEmpty)
+                        let files = model.attachments
+                        if !files.isEmpty { Divider() }
+                        ForEach(files, id: \.self) { file in
+                            Menu(file.lastPathComponent) {
+                                Button("Open") { NSWorkspace.shared.open(file) }
+                                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                                Button("Move to Trash", role: .destructive) { model.store.removeAttachment(file) }
+                            }
+                        }
+                    } label: { Label("Attachments", systemImage: "paperclip") }.menuIndicator(.hidden).fixedSize()
                     Button { summarize(model.text) } label: { Label("Summarize", systemImage: "text.append") }.disabled(model.text.count < 40)
                     Menu {
                         Button("Suggest Tags") { NotesAI.suggestTags(model) }
@@ -117,6 +194,25 @@ private struct NotesView: View {
         .frame(minWidth: 620, minHeight: 380)
         .onAppear { model.reload(); editing = true }
         .onExitCommand { close() }
+    }
+
+    private func attachFile() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls { model.attach(url) }
+    }
+
+    private func saveTemplate() {
+        let alert = NSAlert()
+        alert.messageText = "Name this template"
+        alert.informativeText = "The text is saved as it is now. {title}, {date}, {time}, {weekday}, {clipboard} and {cursor} are filled in when you use it."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn, !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        model.store.saveTemplate(named: field.stringValue, body: model.text)
     }
 }
 
