@@ -23,7 +23,9 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             return ["ok": false, "error": "Kriya could not use that message."]
         }
         // In the sandbox this is the real Application Support folder through the one exception in the entitlements.
-        let home = URL(fileURLWithPath: NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory())
+        // The sandbox gives the extension its own home; the real one is in the user database.
+        guard let entry = getpwuid(getuid()), let path = entry.pointee.pw_dir else { return ["ok": false, "error": "No folder."] }
+        let home = URL(fileURLWithPath: String(cString: path))
         let root = home.appendingPathComponent("Library/Application Support/Kriya/Safari-Inbox", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
