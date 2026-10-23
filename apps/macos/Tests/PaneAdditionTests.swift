@@ -452,3 +452,33 @@ final class WindowToolsTests: XCTestCase {
         XCTAssertTrue(LayoutPreview.describe(rows[3], appName: "D").contains("main display"))
     }
 }
+
+final class WorkspaceToolsTests: XCTestCase {
+    func testThePlanSeparatesWhatOpensWhatIsOpenAndWhatIsMissing() {
+        let plan = WorkspaceLaunchPlan.make(appIDs: ["a", "b", "c", "a"], running: ["b"], installed: { $0 != "c" })
+        XCTAssertEqual(plan, WorkspaceLaunchPlan(toOpen: ["a"], alreadyRunning: ["b"], notInstalled: ["c"]))
+        XCTAssertEqual(plan.sentence(name: { $0.uppercased() }), "will open A; leaves B as it is; cannot find c")
+        XCTAssertEqual(WorkspaceLaunchPlan().sentence(name: { $0 }), "has no apps")
+    }
+
+    func testUndoOnlyTouchesWhatTheLaunchDidAndSkipsWhatHasGone() {
+        let entry = WorkspaceLaunchLog.Entry(at: Date(), workspaceID: "w", workspaceName: "Work", opened: ["new1", "new2"], alreadyRunning: ["old"], notInstalled: [], hidden: ["h1", "h2"], urlsOpened: 0)
+        let plan = WorkspaceRollback.plan(for: entry, running: ["new1", "old", "h2"])
+        XCTAssertEqual(plan, WorkspaceRollback.Plan(quit: ["new1"], unhide: ["h2"]))
+        XCTAssertFalse(plan.quit.contains("old"))
+    }
+
+    func testTheLogKeepsFiftyAndFindsTheLastUndoableOne() {
+        var log = WorkspaceLaunchLog()
+        func entry(_ opened: [String]) -> WorkspaceLaunchLog.Entry { .init(at: Date(), workspaceID: "w", workspaceName: "W", opened: opened, alreadyRunning: [], notInstalled: [], hidden: [], urlsOpened: 0) }
+        log.add(entry(["a"]))
+        let nothingOpened = entry([])
+        log.add(nothingOpened)
+        XCTAssertEqual(log.lastUndoable?.opened, ["a"], "a launch that did nothing is not worth undoing")
+        let id = log.lastUndoable!.id
+        log.markUndone(id)
+        XCTAssertNil(log.lastUndoable)
+        for _ in 0..<60 { log.add(entry(["x"])) }
+        XCTAssertEqual(log.entries.count, WorkspaceLaunchLog.limit)
+    }
+}

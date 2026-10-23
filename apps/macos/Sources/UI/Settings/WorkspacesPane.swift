@@ -6,6 +6,7 @@ struct WorkspacesPane: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var windows: WindowStore
     @State private var editing: Workspace?
+    @ObservedObject private var launchLog = WorkspaceLaunchLogStore.shared
 
     var body: some View {
         Form {
@@ -19,6 +20,8 @@ struct WorkspacesPane: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(workspace.name)
                             Text(summary(workspace)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text("Now: " + WorkspaceLaunchPlan.make(appIDs: workspace.appIds, running: Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)), installed: { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }).sentence(name: AppChoice.name(for:)))
+                                .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
                         }
                         Spacer()
                         Button("Edit") { editing = workspace }.controlSize(.small)
@@ -43,6 +46,26 @@ struct WorkspacesPane: View {
                 }
             } footer: {
                 Text("Each workspace is a command. Give it a shortcut under Keyboard, a button or gesture under Mouse, or a hot corner under Automation: choose a built-in command named “Workspace: …”.")
+            }
+
+            Section {
+                let entries = launchLog.log.entries
+                if entries.isEmpty { Text("Nothing opened yet.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(entries.prefix(6)) { entry in
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack {
+                            Text(entry.workspaceName)
+                            Spacer()
+                            Text(entry.at.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text(logLine(entry)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    Button("Clear Log") { launchLog.clear() }.controlSize(.small).disabled(entries.isEmpty)
+                }
+            } header: { Text("Launch log") } footer: {
+                Text("Only apps a workspace opened itself are quit when you undo it, and only apps it hid are shown again. Give “Undo the last workspace” a shortcut under Keyboard.")
             }
 
             Section {
@@ -90,6 +113,17 @@ struct WorkspacesPane: View {
         .sheet(item: $editing) { workspace in
             WorkspaceEditor(workspace: workspace, onSave: { store.upsert($0); editing = nil }, onCancel: { editing = nil })
         }
+    }
+
+    private func logLine(_ entry: WorkspaceLaunchLog.Entry) -> String {
+        var parts: [String] = []
+        if !entry.opened.isEmpty { parts.append("opened " + entry.opened.map(AppChoice.name(for:)).joined(separator: ", ")) }
+        if !entry.alreadyRunning.isEmpty { parts.append("\(entry.alreadyRunning.count) already open") }
+        if !entry.notInstalled.isEmpty { parts.append("\(entry.notInstalled.count) not installed") }
+        if !entry.hidden.isEmpty { parts.append("hid \(entry.hidden.count)") }
+        if entry.urlsOpened > 0 { parts.append("\(entry.urlsOpened) address\(entry.urlsOpened == 1 ? "" : "es")") }
+        if entry.undone { parts.append("undone") }
+        return parts.isEmpty ? "nothing to do" : parts.joined(separator: " · ")
     }
 
     private func summary(_ workspace: Workspace) -> String {

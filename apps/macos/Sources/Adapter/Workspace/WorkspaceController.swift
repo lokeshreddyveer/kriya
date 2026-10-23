@@ -17,6 +17,7 @@ final class WorkspaceController {
             entry("window.cycle_here", "Cycle the windows under the pointer"),
             entry("window.focus_other_display", "Focus a window on the next display"),
             entry("window.restore_minimized", "Bring back a minimized window"),
+            entry("workspace.undo_last", "Undo the last workspace: quit what it opened, show what it hid"),
         ]
         for slot in 1...5 {
             list.append(entry("window.favorite.\(slot)", "Go to favorite window \(slot)"))
@@ -105,6 +106,7 @@ final class WorkspaceController {
         case "window.cycle_here": cycleOverlapping()
         case "window.focus_other_display": focusOtherDisplay()
         case "window.restore_minimized": restoreMinimized()
+        case "workspace.undo_last": undoLastLaunch()
         default:
             if command.hasPrefix("window.favorite."), let slot = Int(command.dropFirst("window.favorite.".count)) {
                 goToFavorite(slot)
@@ -136,10 +138,13 @@ final class WorkspaceController {
     }
 
     /// Hides every app except the given ones, Kriya and the Finder.
-    private func hideApps(keeping keep: [String]) {
+    @discardableResult
+    private func hideApps(keeping keep: [String]) -> [String] {
         let running = runningRegular.compactMap(\.bundleIdentifier)
         let hide = Set(workspaceAppsToHide(running: running, keep: keep, selfId: Bundle.main.bundleIdentifier ?? ""))
-        for app in runningRegular where hide.contains(app.bundleIdentifier ?? "") { app.hide() }
+        var hidden: [String] = []
+        for app in runningRegular where hide.contains(app.bundleIdentifier ?? "") { if !app.isHidden, app.hide() { hidden.append(app.bundleIdentifier ?? "") } }
+        return hidden
     }
 
     private func quitAll() {
@@ -224,26 +229,45 @@ final class WorkspaceController {
     private func launch(_ id: String) {
         guard let workspace = store.current.workspaces.first(where: { $0.id == id }) else { return }
         let running = Set(runningRegular.compactMap(\.bundleIdentifier))
-        var started = false
-        for appID in workspace.appIds where !running.contains(appID) {
+        let plan = WorkspaceLaunchPlan.make(appIDs: workspace.appIds, running: running, installed: { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil })
+        var opened: [String] = []
+        for appID in plan.toOpen {
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appID) else { continue }
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = false
             NSWorkspace.shared.openApplication(at: url, configuration: configuration, completionHandler: nil)
-            started = true
+            opened.append(appID)
         }
-        for address in workspace.urls { if let url = URL(string: address) { NSWorkspace.shared.open(url) } }
+        var urlsOpened = 0
+        for address in workspace.urls { if let url = URL(string: address) { NSWorkspace.shared.open(url); urlsOpened += 1 } }
         toast.show("Opening \(workspace.name)")
         // Apps that were just started need a moment before their windows exist.
-        let wait: Double = started ? 2.5 : 0.3
+        let wait: Double = opened.isEmpty ? 0.3 : 2.5
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
             guard let self else { return }
-            if workspace.hideOthers { self.hideApps(keeping: workspace.appIds) }
+            let hidden = workspace.hideOthers ? self.hideApps(keeping: workspace.appIds) : []
             if let layoutID = workspace.layoutId, let layout = self.windows.layouts.first(where: { $0.id == layoutID }) {
                 self.windowController.restore(layout)
             }
             if let first = workspace.appIds.compactMap({ appID in self.runningRegular.first { $0.bundleIdentifier == appID } }).first { first.activate() }
+            WorkspaceLaunchLogStore.shared.add(WorkspaceLaunchLog.Entry(
+                at: Date(), workspaceID: workspace.id, workspaceName: workspace.name, opened: opened, alreadyRunning: plan.alreadyRunning,
+                notInstalled: plan.notInstalled, hidden: hidden, urlsOpened: urlsOpened
+            ))
         }
+    }
+
+    /// Puts things back the way they were before the last workspace: quits only what it opened and shows what it hid.
+    private func undoLastLaunch() {
+        guard let entry = WorkspaceLaunchLogStore.shared.log.lastUndoable else { toast.show("Nothing to undo"); return }
+        let running = Set(runningRegular.compactMap(\.bundleIdentifier))
+        let plan = WorkspaceRollback.plan(for: entry, running: running)
+        for app in runningRegular {
+            guard let id = app.bundleIdentifier else { continue }
+            if plan.quit.contains(id) { app.terminate() } else if plan.unhide.contains(id) { app.unhide() }
+        }
+        WorkspaceLaunchLogStore.shared.markUndone(entry.id)
+        toast.show("Undid “\(entry.workspaceName)”")
     }
 
     // MARK: Favourite windows
@@ -336,5 +360,28 @@ final class WorkspaceController {
             }
         }
         toast.show("No minimized windows")
+    }
+}
+
+
+/// The launch log, kept in preferences.
+final class WorkspaceLaunchLogStore: ObservableObject {
+    static let shared = WorkspaceLaunchLogStore()
+    private let key = "workspaceLaunchLog.v1"
+    @Published private(set) var log: WorkspaceLaunchLog
+
+    private init() {
+        log = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(WorkspaceLaunchLog.self, from: $0) } ?? WorkspaceLaunchLog()
+    }
+
+    func add(_ entry: WorkspaceLaunchLog.Entry) { change { $0.add(entry) } }
+    func markUndone(_ id: String) { change { $0.markUndone(id) } }
+    func clear() { change { $0 = WorkspaceLaunchLog() } }
+
+    private func change(_ edit: (inout WorkspaceLaunchLog) -> Void) {
+        var next = log
+        edit(&next)
+        log = next
+        if let data = try? JSONEncoder().encode(next) { UserDefaults.standard.set(data, forKey: key) }
     }
 }
