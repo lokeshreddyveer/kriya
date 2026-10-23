@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// One thing held on the shelf: a file or folder (by where it is), a piece of text, or an image.
+/// One thing held on the shelf, as the panel shows it.
 struct ShelfItem: Identifiable {
     enum Kind {
         case file(URL)
@@ -10,16 +10,23 @@ struct ShelfItem: Identifiable {
         case image(NSImage)
     }
 
-    let id = UUID()
+    let id: String
     let kind: Kind
+    let record: ShelfRecord
 
-    var title: String {
-        switch kind {
-        case .file(let url): return url.lastPathComponent
-        case .text(let text): return String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
-        case .image: return "Image"
+    init?(record: ShelfRecord, store: ShelfLibraryStore = .shared) {
+        self.record = record
+        id = record.id
+        switch record.kind {
+        case .file: kind = .file(URL(fileURLWithPath: record.value))
+        case .text: kind = .text(record.value)
+        case .image:
+            guard let image = store.image(named: record.value) else { return nil }
+            kind = .image(image)
         }
     }
+
+    var title: String { record.title }
 
     var icon: NSImage {
         switch kind {
@@ -39,14 +46,19 @@ struct ShelfItem: Identifiable {
     }
 }
 
+/// The panel's view of the saved shelves: what is on the current shelf, and adding to it.
 final class ShelfModel: ObservableObject {
-    @Published var items: [ShelfItem] = []
+    let store = ShelfLibraryStore.shared
     @Published var targeted = false
+    @Published var query = ""
 
-    func add(_ item: ShelfItem) {
-        // The same file is not held twice.
-        if case .file(let url) = item.kind, items.contains(where: { if case .file(let other) = $0.kind { return other == url } else { return false } }) { return }
-        items.append(item)
+    var items: [ShelfItem] { store.library.current.items.compactMap { ShelfItem(record: $0, store: store) } }
+
+    func addFile(_ url: URL) { store.change { _ = $0.add(ShelfRecord(kind: .file, value: url.path, added: Date())) } }
+    func addText(_ text: String) { store.change { _ = $0.add(ShelfRecord(kind: .text, value: text, added: Date())) } }
+    func addImage(_ image: NSImage) {
+        guard let name = store.storeImage(image) else { return }
+        store.change { _ = $0.add(ShelfRecord(kind: .image, value: name, added: Date())) }
     }
 }
 
@@ -213,11 +225,11 @@ final class FileShelf: NSObject, NSWindowDelegate, ObservableObject {
     func addClipboard() {
         let board = NSPasteboard.general
         if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            for url in urls { model.add(ShelfItem(kind: .file(url))) }
+            for url in urls { model.addFile(url) }
         } else if let image = NSImage(pasteboard: board) {
-            model.add(ShelfItem(kind: .image(image)))
+            model.addImage(image)
         } else if let text = board.string(forType: .string), !text.isEmpty {
-            model.add(ShelfItem(kind: .text(text)))
+            model.addText(text)
         }
         show()
     }
@@ -225,66 +237,159 @@ final class FileShelf: NSObject, NSWindowDelegate, ObservableObject {
 
 private struct ShelfView: View {
     @ObservedObject var model: ShelfModel
+    @ObservedObject private var store = ShelfLibraryStore.shared
     let onClose: () -> Void
-    @State private var hovered: UUID?
+    @State private var hovered: String?
+    @State private var searching = false
+    @State private var showingHistory = false
+    @State private var newName = ""
+    @State private var naming: Naming?
+
+    private enum Naming { case new, rename }
+
+    private var library: ShelfLibrary { store.library }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Label("Shelf", systemImage: "tray").font(.headline)
-                Spacer()
-                Button("Add Clipboard") { add(NSPasteboard.general) }.controlSize(.small)
-                Button { model.items.removeAll() } label: { Image(systemName: "trash") }
-                    .buttonStyle(.borderless).help("Clear the shelf").disabled(model.items.isEmpty)
-                Button(action: onClose) { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 9)
+            header
+            if searching { searchField }
             Divider()
-            if model.items.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "square.and.arrow.down").font(.system(size: 26)).foregroundStyle(.secondary)
-                    Text("Drop files, text or images here").foregroundStyle(.secondary)
-                    Text("Then drag them out into any app.").font(.caption).foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    VStack(spacing: 2) {
-                        ForEach(model.items) { item in row(item) }
-                    }
-                    .padding(6)
-                }
-            }
+            content
             Divider()
-            HStack {
-                Text("\(model.items.count) item\(model.items.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Zip All") { zipAll() }.controlSize(.small).disabled(!hasFiles)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 7)
+            footer
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(model.targeted ? Theme.accent : Color.primary.opacity(0.22), lineWidth: model.targeted ? 2 : 1))
         .animation(.smooth(duration: 0.15), value: model.targeted)
-        .animation(.smooth(duration: 0.2), value: model.items.count)
+        .animation(.smooth(duration: 0.2), value: library.current.items.count)
         .onDrop(of: [.fileURL, .url, .image, .plainText], isTargeted: $model.targeted) { providers in
             load(providers)
             return true
         }
-        .onKeyPress(.escape) { onClose(); return .handled }
+        .onKeyPress(.escape) {
+            if searching { searching = false; model.query = ""; return .handled }
+            onClose()
+            return .handled
+        }
+        .alert(naming == .new ? "New Shelf" : "Rename Shelf", isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("OK") {
+                let name = newName
+                store.change { if naming == .new { _ = $0.addShelf(named: name) } else { $0.rename($0.currentID, to: name) } }
+                naming = nil
+            }
+            Button("Cancel", role: .cancel) { naming = nil }
+        }
+    }
+
+    // MARK: Header and footer
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(library.shelves) { shelf in
+                    Button { store.change { $0.select(shelf.id) } } label: {
+                        Label("\(shelf.name) (\(shelf.items.count))", systemImage: shelf.id == library.currentID ? "checkmark" : "tray")
+                    }
+                }
+                Divider()
+                Button("New Shelf…") { newName = ""; naming = .new }.disabled(library.shelves.count >= ShelfLibrary.maxShelves)
+                Button("Rename This Shelf…") { newName = library.current.name; naming = .rename }
+                Button("Delete This Shelf", role: .destructive) { store.change { $0.deleteShelf($0.currentID) } }.disabled(library.shelves.count < 2)
+            } label: {
+                Label(library.current.name, systemImage: "tray").font(.headline)
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            Spacer()
+            Button { searching.toggle(); if !searching { model.query = "" } } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Search every shelf and the history")
+            Button("Add Clipboard") { add(NSPasteboard.general) }.controlSize(.small)
+            Button { store.change { $0.clear() } } label: { Image(systemName: "trash") }
+                .buttonStyle(.borderless).help("Clear this shelf (it goes to the history)").disabled(library.current.items.isEmpty)
+            Button(action: onClose) { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+    }
+
+    private var searchField: some View {
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search the shelves", text: $model.query).textFieldStyle(.plain)
+            if !model.query.isEmpty { Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.tertiary) }
+        }
+        .padding(.horizontal, 12).padding(.bottom, 8)
+    }
+
+    private var footer: some View {
+        HStack {
+            Text("\(library.current.items.count) item\(library.current.items.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+            Button(showingHistory ? "Hide History" : "History (\(library.history.count))") { showingHistory.toggle() }.controlSize(.small).disabled(library.history.isEmpty && !showingHistory)
+            Spacer()
+            Button("Zip All") { zipAll() }.controlSize(.small).disabled(!hasFiles)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+    }
+
+    // MARK: The list
+
+    @ViewBuilder
+    private var content: some View {
+        if searching, !model.query.trimmingCharacters(in: .whitespaces).isEmpty {
+            let hits = library.search(model.query)
+            if hits.isEmpty {
+                placeholder("Nothing matches", "Search covers every shelf and the history.")
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(hits, id: \.record.id) { hit in
+                            if let item = ShelfItem(record: hit.record, store: store) { row(item, note: hit.shelf ?? "History", fromHistory: hit.shelf == nil) }
+                        }
+                    }.padding(6)
+                }
+            }
+        } else if showingHistory {
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(library.history) { record in
+                        if let item = ShelfItem(record: record, store: store) { row(item, note: record.removed.map { RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: Date()) }, fromHistory: true) }
+                    }
+                    if !library.history.isEmpty {
+                        Button("Clear the History", role: .destructive) { store.change { $0.clearHistory() } }.controlSize(.small).padding(.top, 6)
+                    }
+                }.padding(6)
+            }
+        } else if model.items.isEmpty {
+            placeholder("Drop files, text or images here", "Then drag them out into any app.")
+        } else {
+            ScrollView {
+                VStack(spacing: 2) { ForEach(model.items) { item in row(item, note: nil, fromHistory: false) } }.padding(6)
+            }
+        }
+    }
+
+    private func placeholder(_ title: String, _ detail: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "square.and.arrow.down").font(.system(size: 26)).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(.secondary)
+            Text(detail).font(.caption).foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var hasFiles: Bool {
         model.items.contains { if case .file = $0.kind { return true } else { return false } }
     }
 
-    private func row(_ item: ShelfItem) -> some View {
+    private func row(_ item: ShelfItem, note: String?, fromHistory: Bool) -> some View {
         HStack(spacing: 10) {
             Image(nsImage: item.icon).resizable().scaledToFit().frame(width: 30, height: 30).clipShape(RoundedRectangle(cornerRadius: 5))
-            Text(item.title).lineLimit(1).truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.title).lineLimit(1).truncationMode(.middle)
+                if let note { Text(note).font(.caption).foregroundStyle(.secondary) }
+            }
             Spacer(minLength: 4)
             if hovered == item.id {
-                Button { remove(item) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help("Remove from the shelf")
+                if fromHistory { Button { store.change { _ = $0.restore(item.id) } } label: { Image(systemName: "arrow.uturn.backward") }.buttonStyle(.borderless).help("Put back on this shelf") }
+                else { Button { remove(item) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help("Remove from the shelf") }
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
@@ -304,7 +409,14 @@ private struct ShelfView: View {
             Button("AirDrop…") { NSSharingService(named: .sendViaAirDrop)?.perform(withItems: shareable(item)) }
             Button("Mail…") { NSSharingService(named: .composeEmail)?.perform(withItems: shareable(item)) }
             Divider()
-            Button("Remove") { remove(item) }
+            if fromHistory { Button("Put Back") { store.change { _ = $0.restore(item.id) } } } else {
+                Menu("Move to Another Shelf") {
+                    ForEach(library.shelves.filter { $0.id != library.currentID }) { shelf in
+                        Button(shelf.name) { move(item, to: shelf.id) }
+                    }
+                }
+                Button("Remove") { remove(item) }
+            }
         }
     }
 
@@ -317,7 +429,16 @@ private struct ShelfView: View {
         }
     }
 
-    private func remove(_ item: ShelfItem) { model.items.removeAll { $0.id == item.id } }
+    private func remove(_ item: ShelfItem) { store.change { $0.remove(item.id) } }
+
+    private func move(_ item: ShelfItem, to shelfID: String) {
+        store.change { library in
+            guard let from = library.shelves.firstIndex(where: { $0.items.contains { $0.id == item.id } }),
+                  let index = library.shelves[from].items.firstIndex(where: { $0.id == item.id }) else { return }
+            let record = library.shelves[from].items[index]
+            if library.add(record, to: shelfID) { library.shelves[from].items.remove(at: index) }
+        }
+    }
 
     private func quickLook(_ url: URL) {
         let process = Process()
@@ -330,9 +451,9 @@ private struct ShelfView: View {
 
     private func add(_ board: NSPasteboard) {
         if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            for url in urls { model.add(ShelfItem(kind: .file(url))) }
+            for url in urls { model.addFile(url) }
         } else if let text = board.string(forType: .string), !text.isEmpty {
-            model.add(ShelfItem(kind: .text(text)))
+            model.addText(text)
         }
     }
 
@@ -341,15 +462,15 @@ private struct ShelfView: View {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                     let url = (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) } ?? (item as? URL)
-                    if let url { DispatchQueue.main.async { model.add(ShelfItem(kind: .file(url))) } }
+                    if let url { DispatchQueue.main.async { model.addFile(url) } }
                 }
             } else if provider.canLoadObject(ofClass: NSImage.self) {
                 _ = provider.loadObject(ofClass: NSImage.self) { object, _ in
-                    if let image = object as? NSImage { DispatchQueue.main.async { model.add(ShelfItem(kind: .image(image))) } }
+                    if let image = object as? NSImage { DispatchQueue.main.async { model.addImage(image) } }
                 }
             } else if provider.canLoadObject(ofClass: NSString.self) {
                 _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-                    if let text = object as? String { DispatchQueue.main.async { model.add(ShelfItem(kind: .text(text))) } }
+                    if let text = object as? String { DispatchQueue.main.async { model.addText(text) } }
                 }
             }
         }
