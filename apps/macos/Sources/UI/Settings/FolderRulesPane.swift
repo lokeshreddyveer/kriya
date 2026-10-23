@@ -168,6 +168,7 @@ private struct FolderRuleEditor: View {
                         Button("Has a file type…") { rule.conditions.append(.extensionIs(["pdf"])) }
                         Button("Name contains…") { rule.conditions.append(.nameContains("")) }
                         Button("Name starts with…") { rule.conditions.append(.nameStartsWith("")) }
+                        Button("Name matches a pattern…") { rule.conditions.append(.nameMatches("")) }
                         Button("Is older than…") { rule.conditions.append(.olderThanDays(7)) }
                         Button("Is larger than…") { rule.conditions.append(.largerThanMB(100)) }
                         Button("Is smaller than…") { rule.conditions.append(.smallerThanMB(1)) }
@@ -242,6 +243,7 @@ private extension FolderAction {
 /// One condition, editable in place.
 private struct ConditionEditor: View {
     @Binding var condition: FolderCondition
+    @State private var sample = ""
     private static let kinds = ["Images", "Documents", "Archives", "Audio", "Video", "Installers"]
 
     var body: some View {
@@ -260,6 +262,17 @@ private struct ConditionEditor: View {
             HStack { Text("has a name containing"); TextField("text", text: Binding(get: { text }, set: { condition = .nameContains($0) })).frame(width: 160) }
         case .nameStartsWith(let text):
             HStack { Text("has a name starting with"); TextField("text", text: Binding(get: { text }, set: { condition = .nameStartsWith($0) })).frame(width: 160) }
+        case .nameMatches(let pattern):
+            VStack(alignment: .leading, spacing: 4) {
+                HStack { Text("has a name matching"); TextField("IMG_[0-9]+\\.jpe?g", text: Binding(get: { pattern }, set: { condition = .nameMatches($0) })).frame(width: 200) }
+                TextField("Try a file name", text: $sample).textFieldStyle(.roundedBorder).font(.caption)
+                if let problem = NamePattern.problem(pattern) {
+                    Text(problem).font(.caption).foregroundStyle(Theme.warn)
+                } else if !sample.isEmpty {
+                    Text(NamePattern.matches(pattern, sample) ? "Matches." : "Does not match.").font(.caption).foregroundStyle(.secondary)
+                }
+                Text("The whole name must fit. Capitals do not matter.").font(.caption).foregroundStyle(.tertiary)
+            }
         case .olderThanDays(let days):
             HStack { Text("is older than"); Stepper("\(days) day\(days == 1 ? "" : "s")", value: Binding(get: { days }, set: { condition = .olderThanDays($0) }), in: 0...3650) }
         case .largerThanMB(let mb):

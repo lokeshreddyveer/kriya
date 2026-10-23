@@ -10,6 +10,8 @@ struct FocusSessionConfig: Codable, Equatable {
     /// Names of Shortcuts to run when it starts and ends, for example one that turns on a Focus. Empty means none.
     var startShortcut = ""
     var endShortcut = ""
+    /// Say "take a break" every this many minutes of focus. Nil means never. Optional so older saved settings still load.
+    var breakEveryMinutes: Int?
 
     var clamped: FocusSessionConfig {
         var c = self
@@ -17,6 +19,7 @@ struct FocusSessionConfig: Codable, Equatable {
         c.quitAppIDs = Array(Set(quitAppIDs)).sorted()
         c.startShortcut = startShortcut.trimmingCharacters(in: .whitespaces)
         c.endShortcut = endShortcut.trimmingCharacters(in: .whitespaces)
+        if let every = breakEveryMinutes { c.breakEveryMinutes = every <= 0 ? nil : min(max(every, 5), 240) }
         return c
     }
 }
@@ -29,6 +32,14 @@ struct FocusSessionState: Codable, Equatable {
     var changedDock: Bool
     var changedDesktop: Bool
     var endShortcut: String
+    /// Added later, so optional: a session saved by an older version still loads.
+    var startedAt: Date?
+    var plannedMinutes: Int?
+    var pausedAt: Date?
+    var pausedTotal: TimeInterval?
+    var breaksGiven: Int?
+
+    var isPaused: Bool { pausedAt != nil }
 }
 
 enum FocusStep: Equatable {
@@ -51,7 +62,8 @@ enum FocusPlan {
         steps += c.quitAppIDs.map { .quit($0) }
         if !c.startShortcut.isEmpty { steps.append(.shortcut(c.startShortcut)) }
         let state = FocusSessionState(endsAt: now.addingTimeInterval(Double(c.minutes) * 60), dockWasHidden: dockHidden, desktopIconsWereShown: desktopIconsShown,
-                                      changedDock: changeDock, changedDesktop: changeDesktop, endShortcut: c.endShortcut)
+                                      changedDock: changeDock, changedDesktop: changeDesktop, endShortcut: c.endShortcut,
+                                      startedAt: now, plannedMinutes: c.minutes, pausedAt: nil, pausedTotal: 0, breaksGiven: 0)
         return (steps, state)
     }
 
@@ -81,4 +93,71 @@ enum FocusPlan {
     }
 
     enum Request: Equatable { case start(Int?), stop }
+}
+
+
+extension FocusPlan {
+    /// Stops the clock. The end time moves out by however long the pause lasts, when it is resumed.
+    static func paused(_ state: FocusSessionState, at now: Date) -> FocusSessionState {
+        guard state.pausedAt == nil else { return state }
+        var next = state
+        next.pausedAt = now
+        return next
+    }
+
+    static func resumed(_ state: FocusSessionState, at now: Date) -> FocusSessionState {
+        guard let since = state.pausedAt else { return state }
+        let gap = max(now.timeIntervalSince(since), 0)
+        var next = state
+        next.pausedAt = nil
+        next.endsAt = state.endsAt.addingTimeInterval(gap)
+        next.pausedTotal = (state.pausedTotal ?? 0) + gap
+        return next
+    }
+
+    /// Minutes of focus so far, not counting pauses.
+    static func focusedMinutes(_ state: FocusSessionState, now: Date) -> Int {
+        guard let start = state.startedAt else { return 0 }
+        let paused = (state.pausedTotal ?? 0) + (state.pausedAt.map { now.timeIntervalSince($0) } ?? 0)
+        return max(Int((now.timeIntervalSince(start) - paused) / 60), 0)
+    }
+
+    /// Whether a break reminder is due: one for every `every` minutes of focus, given once each.
+    static func breakDue(_ state: FocusSessionState, now: Date, every: Int?) -> Bool {
+        guard let every, every > 0, !state.isPaused else { return false }
+        return focusedMinutes(state, now: now) / every > (state.breaksGiven ?? 0)
+    }
+}
+
+/// Finished sessions, newest first, kept to the last hundred.
+struct FocusHistory: Codable, Equatable {
+    struct Entry: Codable, Equatable, Identifiable {
+        var id = UUID().uuidString
+        var startedAt: Date
+        var plannedMinutes: Int
+        var focusedMinutes: Int
+        /// True when the time ran out; false when the person ended it early.
+        var completed: Bool
+    }
+
+    var entries: [Entry] = []
+    static let limit = 100
+
+    mutating func add(_ entry: Entry) {
+        entries.insert(entry, at: 0)
+        if entries.count > Self.limit { entries.removeLast(entries.count - Self.limit) }
+    }
+
+    /// Minutes focused in the seven days up to `now`, and how many sessions.
+    func week(now: Date) -> (minutes: Int, sessions: Int) {
+        let recent = entries.filter { now.timeIntervalSince($0.startedAt) <= 7 * 86_400 && $0.startedAt <= now }
+        return (recent.reduce(0) { $0 + $1.focusedMinutes }, recent.count)
+    }
+
+    static func entry(for state: FocusSessionState, endedAt now: Date) -> Entry? {
+        guard let start = state.startedAt else { return nil }
+        let planned = state.plannedMinutes ?? 0
+        let focused = FocusPlan.focusedMinutes(state, now: now)
+        return Entry(startedAt: start, plannedMinutes: planned, focusedMinutes: focused, completed: state.endsAt <= now && !state.isPaused)
+    }
 }

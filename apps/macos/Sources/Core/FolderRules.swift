@@ -20,6 +20,8 @@ enum FolderCondition: Codable, Equatable {
     case extensionIs([String])
     case nameContains(String)
     case nameStartsWith(String)
+    /// The whole file name matches a pattern (a regular expression), ignoring capitals.
+    case nameMatches(String)
     /// One of "Images", "Documents", "Archives", "Audio", "Video", "Installers".
     case kind(String)
     case olderThanDays(Int)
@@ -33,6 +35,7 @@ enum FolderCondition: Codable, Equatable {
         case .extensionIs(let list): return "is " + list.map { ".\($0)" }.joined(separator: " or ")
         case .nameContains(let text): return "name contains “\(text)”"
         case .nameStartsWith(let text): return "name starts with “\(text)”"
+        case .nameMatches(let pattern): return "name matches the pattern “\(pattern)”"
         case .kind(let kind): return "is \(kind.lowercased())"
         case .olderThanDays(let days): return "is older than \(days) day\(days == 1 ? "" : "s")"
         case .largerThanMB(let mb): return "is larger than \(mb) MB"
@@ -115,6 +118,7 @@ enum FolderRuleEngine {
         case .extensionIs(let list): return list.contains { $0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ". ")) == file.fileExtension }
         case .nameContains(let text): return !text.isEmpty && file.name.range(of: text, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         case .nameStartsWith(let text): return !text.isEmpty && file.name.lowercased().hasPrefix(text.lowercased())
+        case .nameMatches(let pattern): return NamePattern.matches(pattern, file.name)
         case .kind(let kind): return FolderTools.category(for: file.name) == kind
         case .olderThanDays(let days): return now.timeIntervalSince(file.modified) >= Double(days) * 86_400
         case .largerThanMB(let mb): return file.size > Int64(mb) * 1_048_576
@@ -147,6 +151,8 @@ enum FolderRuleEngine {
             switch condition {
             case .extensionIs(let list) where list.filter({ !$0.trimmingCharacters(in: .whitespaces).isEmpty }).isEmpty: return "Name at least one file type."
             case .nameContains(let t) where t.trimmingCharacters(in: .whitespaces).isEmpty, .nameStartsWith(let t) where t.trimmingCharacters(in: .whitespaces).isEmpty: return "A name condition needs some text."
+            case .nameMatches(let pattern):
+                if let reason = NamePattern.problem(pattern) { return reason }
             case .olderThanDays(let d) where d < 0, .largerThanMB(let d) where d < 0, .smallerThanMB(let d) where d < 0: return "Numbers cannot be negative."
             default: break
             }
@@ -255,5 +261,75 @@ enum FolderRuleEngine {
             }
         }
         return changes
+    }
+}
+
+
+/// The pattern behind "name matches": kept small and checked, so a mistyped pattern cannot hang the rules or match everything.
+enum NamePattern {
+    static let maxLength = 120
+
+    /// What is wrong with a pattern, or nil when it can be used.
+    static func problem(_ pattern: String) -> String? {
+        let trimmed = pattern.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return "A pattern condition needs a pattern." }
+        if trimmed.count > maxLength { return "That pattern is too long." }
+        if hasNestedRepeat(trimmed) { return "That pattern repeats a repeat (like (a+)+), which can make it very slow. Simplify it." }
+        if (try? NSRegularExpression(pattern: trimmed, options: [.caseInsensitive])) == nil { return "That is not a valid pattern." }
+        if matches(trimmed, "") { return "That pattern matches an empty name, so it would match everything." }
+        return nil
+    }
+
+    /// True when the whole name fits the pattern.
+    static func matches(_ pattern: String, _ name: String) -> Bool {
+        let trimmed = pattern.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed.count <= maxLength, !hasNestedRepeat(trimmed),
+              let regex = try? NSRegularExpression(pattern: "^(?:\(trimmed))$", options: [.caseInsensitive]) else { return false }
+        let range = NSRange(name.startIndex..., in: name)
+        return regex.firstMatch(in: name, options: [], range: range) != nil
+    }
+
+    /// A group that ends in a repeat and is itself repeated: the shape behind runaway matching.
+    static func hasNestedRepeat(_ pattern: String) -> Bool {
+        pattern.range(of: "[+*}]\\)[+*{]", options: .regularExpression) != nil
+    }
+
+    /// Which of the sample names the pattern picks, for trying a pattern before saving a rule.
+    static func test(_ pattern: String, samples: [String]) -> [(name: String, matches: Bool)] {
+        samples.map { ($0, matches(pattern, $0)) }
+    }
+}
+
+/// Files that more than one switched-on rule in the same folder would act on, so the person can see who wins before it happens.
+enum RuleOverlap {
+    struct Overlap: Equatable {
+        let fileName: String
+        let rules: [String]
+    }
+
+    /// Rules run in the order of the list; the first to move, trash or rename a file takes it and later ones find it gone.
+    static func find(_ rules: [FolderRule], files: [FolderFile], now: Date) -> [Overlap] {
+        var result: [Overlap] = []
+        for (folder, group) in Dictionary(grouping: rules.filter(\.enabled), by: { ($0.folder as NSString).standardizingPath }) {
+            _ = folder
+            guard group.count > 1 else { continue }
+            for file in files.sorted(by: { $0.name < $1.name }) {
+                let hits = group.filter { FolderRuleEngine.matches($0, file, now: now) && !isHarmless($0.action) }
+                if hits.count > 1 { result.append(Overlap(fileName: file.name, rules: hits.map(\.name))) }
+            }
+        }
+        return result.sorted { ($0.fileName, $0.rules.first ?? "") < ($1.fileName, $1.rules.first ?? "") }
+    }
+
+    /// Tagging and copying leave the file where it is, so a second rule can still act on it.
+    private static func isHarmless(_ action: FolderAction) -> Bool {
+        switch action {
+        case .tag, .copyTo: return true
+        default: return false
+        }
+    }
+
+    static func sentence(_ overlap: Overlap) -> String {
+        "“\(overlap.fileName)” fits \(overlap.rules.map { "“\($0)”" }.joined(separator: " and ")). The first in the list acts on it."
     }
 }

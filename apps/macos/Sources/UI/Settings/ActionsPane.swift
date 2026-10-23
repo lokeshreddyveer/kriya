@@ -43,9 +43,22 @@ struct ActionsPane: View {
     @State private var results: [String: ActionOutcome] = [:]
     @State private var errorMessage: String?
     @State private var added: Int?
+    @State private var query = ""
 
     var body: some View {
+        let shown = ActionInsight.search(library.actions, text: query, describe: { $0.summary })
+        let duplicates = ActionInsight.duplicates(library.actions)
         Form {
+            if !duplicates.isEmpty {
+                Section {
+                    ForEach(Array(duplicates.enumerated()), id: \.offset) { _, group in
+                        Label(group.map { "“\($0.name)”" }.joined(separator: " and ") + " do the same thing.", systemImage: "square.on.square").font(.callout)
+                    }
+                } header: { Text("Duplicates") }
+            }
+            if library.actions.count > 5 {
+                Section { TextField("Search actions", text: $query) }
+            }
             if let added {
                 Section {
                     Text(added == 0 ? "The common actions are already in your list." : "Added \(added) common action\(added == 1 ? "" : "s").")
@@ -64,7 +77,7 @@ struct ActionsPane: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
                 }
-                ForEach(library.actions) { saved in
+                ForEach(shown) { saved in
                     ActionRow(saved: saved, outcome: results[saved.id], onRun: { run(saved) }, onDelete: { delete(saved) })
                 }
             } header: {
@@ -124,6 +137,8 @@ private struct ActionRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(saved.name).font(.headline)
                 Text(saved.action.summary).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                let risk = ActionInsight.risk(of: saved.action)
+                if risk >= .medium { StateBadge(text: risk.title, color: risk == .high ? Theme.danger : Theme.warn).help(ActionInsight.reason(for: saved.action)) }
                 if let outcome {
                     switch outcome {
                     case .success: StateBadge(text: "Done", color: Theme.ok)

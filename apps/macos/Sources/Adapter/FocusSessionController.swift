@@ -9,6 +9,8 @@ final class FocusSessionController: ObservableObject {
     @Published var config: FocusSessionConfig { didSet { save() } }
     @Published private(set) var state: FocusSessionState?
     @Published private(set) var remainingText = ""
+    @Published private(set) var history: FocusHistory
+    private static let historyKey = "focusSession.history.v1"
 
     private let defaults: UserDefaults
     private let toast = Toast()
@@ -21,6 +23,22 @@ final class FocusSessionController: ObservableObject {
         self.defaults = defaults
         config = (defaults.data(forKey: Self.configKey).flatMap { try? JSONDecoder().decode(FocusSessionConfig.self, from: $0) }) ?? FocusSessionConfig()
         state = defaults.data(forKey: Self.stateKey).flatMap { try? JSONDecoder().decode(FocusSessionState.self, from: $0) }
+        history = defaults.data(forKey: Self.historyKey).flatMap { try? JSONDecoder().decode(FocusHistory.self, from: $0) } ?? FocusHistory()
+    }
+
+    func pause() { update(FocusPlan.paused) ; toast.show("Focus paused") }
+    func resume() { update(FocusPlan.resumed); toast.show("Focus resumed"); tick() }
+    func clearHistory() { history = FocusHistory(); defaults.removeObject(forKey: Self.historyKey) }
+
+    private func update(_ change: (FocusSessionState, Date) -> FocusSessionState) {
+        guard let current = state else { return }
+        let next = change(current, Date())
+        state = next
+        persist(next)
+    }
+
+    private func persist(_ value: FocusSessionState) {
+        if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: Self.stateKey) }
     }
 
     /// A session left over from before Kriya last quit is carried on, or finished if its time has passed.
@@ -46,6 +64,10 @@ final class FocusSessionController: ObservableObject {
     func finish(announce: Bool) {
         guard let current = state else { return }
         timer?.invalidate(); timer = nil
+        if let entry = FocusHistory.entry(for: current, endedAt: Date()) {
+            history.add(entry)
+            if let data = try? JSONEncoder().encode(history) { defaults.set(data, forKey: Self.historyKey) }
+        }
         state = nil
         remainingText = ""
         defaults.removeObject(forKey: Self.stateKey)
@@ -62,7 +84,16 @@ final class FocusSessionController: ObservableObject {
 
     private func tick() {
         guard let state else { return }
-        if state.endsAt <= Date() { finish(announce: true) } else { remainingText = FocusPlan.remaining(until: state.endsAt, now: Date()) }
+        if state.isPaused { remainingText = "Paused"; return }
+        if state.endsAt <= Date() { finish(announce: true); return }
+        remainingText = FocusPlan.remaining(until: state.endsAt, now: Date())
+        if FocusPlan.breakDue(state, now: Date(), every: config.clamped.breakEveryMinutes) {
+            var next = state
+            next.breaksGiven = (state.breaksGiven ?? 0) + 1
+            self.state = next
+            persist(next)
+            toast.show("Time for a short break. Focus carries on when you are back.")
+        }
     }
 
     private func save() { if let data = try? JSONEncoder().encode(config) { defaults.set(data, forKey: Self.configKey) } }

@@ -33,7 +33,7 @@ struct DiskMapPane: View {
             .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             HStack {
-                if let h = hovered { Text("\(h.name) · \(ByteFormat.size(Double(h.size))) · \(Int((Double(h.size) / Double(max(scanner.total, 1)) * 100).rounded()))% of this folder").lineLimit(1) }
+                if let h = hovered { Text("\(h.name) · \(ByteFormat.size(Double(h.size))) · \(Int((Double(h.size) / Double(max(scanner.total, 1)) * 100).rounded()))% of this folder · \(DiskRisk.classify(h.url.path).level.title)").lineLimit(1).help(DiskRisk.classify(h.url.path).reason) }
                 else { Text("\(ByteFormat.size(Double(scanner.total))) in this folder").foregroundStyle(.secondary) }
                 Spacer()
                 if scanner.skipped > 0 { Text("\(scanner.skipped) item\(scanner.skipped == 1 ? "" : "s") macOS did not let Kriya read").font(.caption).foregroundStyle(.secondary) }

@@ -311,7 +311,7 @@ final class AppEnvironment {
         executor.registerCommand("clipboard.stack") { [weak pasteStack] in DispatchQueue.main.async { pasteStack?.toggle() } }
         executor.registerCommand("color.pick") { DispatchQueue.main.async { ScreenColorPicker.pick() } }
         executor.registerCommand("focus.session") { [weak self] in DispatchQueue.main.async { self?.focusSession.toggle() } }
-        executor.registerCommand("clipboard.paste_as_file") { DispatchQueue.global(qos: .userInitiated).async { DispatchQueue.main.async { PasteIntoFolderService.run() } } }
+        executor.registerCommand("clipboard.paste_as_file") { DispatchQueue.main.async { PasteIntoFolderService.run() } }
         executor.registerCommand("clipboard.send_other") { [weak self] in DispatchQueue.main.async { self?.sharedClipboard.send() } }
         executor.registerCommand("clipboard.receive_other") { [weak self] in DispatchQueue.main.async { self?.sharedClipboard.receive() } }
         executor.registerCommand("dictation.toggle") { [weak self] in DispatchQueue.main.async { self?.dictation.toggle() } }

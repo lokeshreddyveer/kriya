@@ -68,3 +68,216 @@ final class PasteIntoFolderTests: XCTestCase {
         XCTAssertFalse(PasteIntoFolder.isAllowedFolder("/Users/me/../other", home: "/Users/me"))
     }
 }
+
+final class WorldClockAdditionTests: XCTestCase {
+    private func place(_ label: String, _ zone: String) -> ClockPlace { ClockPlace(label: label, zoneID: zone) }
+    private func date(_ iso: String) -> Date { ISO8601DateFormatter().date(from: iso)! }
+
+    func testOverlapIsOnlyWhereEveryoneIsAtWork() {
+        // London and New York: 14:00-18:00 in London is 09:00-13:00 in New York (winter, 5 hours apart).
+        let places = [place("LON", "Europe/London"), place("NYC", "America/New_York")]
+        let slots = MeetingOverlap.merged(MeetingOverlap.slots(places: places, hours: BusinessHours(start: 9, end: 18), from: date("2026-01-12T00:00:00Z")))
+        XCTAssertFalse(slots.isEmpty)
+        let first = slots[0]
+        XCTAssertEqual(first.start, date("2026-01-12T14:00:00Z"))
+        XCTAssertEqual(first.end, date("2026-01-12T18:00:00Z"), "14:00 to 18:00 in London")
+    }
+
+    func testNoOverlapWhenTheDaysDoNotMeet() {
+        let places = [place("LON", "Europe/London"), place("SYD", "Australia/Sydney")]
+        let slots = MeetingOverlap.slots(places: places, hours: BusinessHours(start: 9, end: 17), from: date("2026-01-12T00:00:00Z"))
+        XCTAssertTrue(slots.isEmpty, "Sydney is 11 hours ahead of London in January")
+        XCTAssertTrue(MeetingOverlap.slots(places: [place("A", "Europe/London")], hours: BusinessHours(), from: Date()).isEmpty, "one place needs no overlap")
+        XCTAssertTrue(MeetingOverlap.slots(places: [place("A", "Nowhere/Bad"), place("B", "Europe/London")], hours: BusinessHours(), from: Date()).isEmpty)
+        XCTAssertTrue(MeetingOverlap.slots(places: [place("A", "Europe/London"), place("B", "Asia/Kolkata")], hours: BusinessHours(start: 10, end: 10), from: Date()).isEmpty)
+    }
+
+    func testHalfHourZonesAreHandled() {
+        let places = [place("LON", "Europe/London"), place("DEL", "Asia/Kolkata")]
+        let slots = MeetingOverlap.merged(MeetingOverlap.slots(places: places, hours: BusinessHours(start: 9, end: 18), from: date("2026-01-12T00:00:00Z")))
+        XCTAssertFalse(slots.isEmpty)
+        // London 09:00 is Kolkata 14:30, the first hour that is inside both working days.
+        XCTAssertEqual(slots[0].start, date("2026-01-12T09:00:00Z"))
+    }
+
+    func testSpringForwardIsWarnedAboutInTheRightPlace() {
+        let places = [place("NYC", "America/New_York"), place("DEL", "Asia/Kolkata")]
+        let changes = DaylightWarnings.upcoming(places: places, from: date("2026-03-01T00:00:00Z"), days: 14)
+        XCTAssertEqual(changes.map(\.place), ["NYC"])
+        XCTAssertEqual(changes[0].shift, 60)
+        XCTAssertTrue(DaylightWarnings.sentence(changes[0]).contains("forward 1 hour"))
+        XCTAssertTrue(DaylightWarnings.upcoming(places: places, from: date("2026-06-01T00:00:00Z"), days: 14).isEmpty)
+    }
+
+    func testTimesAreReadAndConvertedWithTheDayNamed() {
+        XCTAssertEqual(TimeConversion.minutes(from: "3pm"), 900)
+        XCTAssertEqual(TimeConversion.minutes(from: "9:05 AM"), 545)
+        XCTAssertEqual(TimeConversion.minutes(from: "12am"), 0)
+        XCTAssertEqual(TimeConversion.minutes(from: "12pm"), 720)
+        XCTAssertEqual(TimeConversion.minutes(from: "15:30"), 930)
+        for bad in ["25:00", "13pm", "0pm", "noon", "", "9:75", "1:2:3"] { XCTAssertNil(TimeConversion.minutes(from: bad), bad) }
+        let nyc = place("NYC", "America/New_York"), del = place("DEL", "Asia/Kolkata")
+        let lines = TimeConversion.lines(time: "9pm", from: nyc, to: [nyc, del], on: date("2026-01-12T12:00:00Z"), twentyFourHour: false)
+        XCTAssertEqual(lines, ["NYC 9:00 PM", "DEL 7:30 AM (tomorrow)"])
+        XCTAssertTrue(TimeConversion.lines(time: "nonsense", from: nyc, to: [nyc], on: Date(), twentyFourHour: false).isEmpty)
+    }
+}
+
+final class FolderRuleAdditionTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_760_000_000)
+    private func file(_ name: String) -> FolderFile { FolderFile(name: name, modified: now.addingTimeInterval(-3600)) }
+
+    func testPatternsMatchTheWholeNameIgnoringCapitals() {
+        XCTAssertTrue(NamePattern.matches(#"IMG_[0-9]+\.jpe?g"#, "img_2041.JPG"))
+        XCTAssertFalse(NamePattern.matches(#"IMG_[0-9]+\.jpe?g"#, "my IMG_2041.jpg"), "the whole name must fit")
+        XCTAssertFalse(NamePattern.matches("", "a"))
+        XCTAssertFalse(NamePattern.matches("(", "a"))
+    }
+
+    func testBadPatternsAreExplainedAndNeverRun() {
+        XCTAssertNotNil(NamePattern.problem(""))
+        XCTAssertNotNil(NamePattern.problem("("))
+        XCTAssertNotNil(NamePattern.problem(".*"), "matches everything")
+        XCTAssertNotNil(NamePattern.problem("(a+)+$"), "runaway shape")
+        XCTAssertNotNil(NamePattern.problem(String(repeating: "a", count: 200)))
+        XCTAssertNil(NamePattern.problem(#"Screenshot .*\.png"#))
+        XCTAssertFalse(NamePattern.matches("(a+)+$", String(repeating: "a", count: 40) + "!"), "refused, so it returns at once")
+        XCTAssertEqual(NamePattern.test("a.*", samples: ["abc", "bcd"]).map(\.matches), [true, false])
+    }
+
+    func testARuleUsingAPatternMatchesAndIsCheckedBeforeSaving() {
+        var rule = FolderRule(name: "Screens", folder: "/Users/me/Desktop", conditions: [.nameMatches(#"Screenshot.*"#)], action: .trash)
+        XCTAssertTrue(FolderRuleEngine.matches(rule, file("Screenshot 1.png"), now: now))
+        XCTAssertFalse(FolderRuleEngine.matches(rule, file("Photo.png"), now: now))
+        rule.conditions = [.nameMatches("(")]
+        XCTAssertEqual(FolderRuleEngine.problem(for: rule, folderExists: { _ in true }), "That is not a valid pattern.")
+        let decoded = try? JSONDecoder().decode(FolderRule.self, from: JSONEncoder().encode(FolderRule(name: "x", folder: "/a", conditions: [.nameMatches("a")], action: .trash)))
+        XCTAssertEqual(decoded?.conditions, [.nameMatches("a")])
+    }
+
+    func testTwoRulesThatBothMoveTheSameFileAreFlaggedButTagsAreNot() {
+        let a = FolderRule(name: "PDFs", enabled: true, folder: "/Users/me/Downloads", conditions: [.extensionIs(["pdf"])], action: .moveTo("/Users/me/Documents"))
+        let b = FolderRule(name: "Invoices", enabled: true, folder: "/Users/me/Downloads", conditions: [.nameContains("invoice")], action: .trash)
+        let tag = FolderRule(name: "Tag", enabled: true, folder: "/Users/me/Downloads", conditions: [.extensionIs(["pdf"])], action: .tag("x"))
+        let off = FolderRule(name: "Off", enabled: false, folder: "/Users/me/Downloads", conditions: [.extensionIs(["pdf"])], action: .trash)
+        let other = FolderRule(name: "Elsewhere", enabled: true, folder: "/Users/me/Desktop", conditions: [.extensionIs(["pdf"])], action: .trash)
+        let found = RuleOverlap.find([a, b, tag, off, other], files: [file("invoice.pdf"), file("notes.txt")], now: now)
+        XCTAssertEqual(found, [RuleOverlap.Overlap(fileName: "invoice.pdf", rules: ["PDFs", "Invoices"])])
+        XCTAssertTrue(RuleOverlap.sentence(found[0]).contains("The first in the list"))
+        XCTAssertTrue(RuleOverlap.find([a], files: [file("invoice.pdf")], now: now).isEmpty)
+    }
+}
+
+final class FocusAdditionTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_760_000_000)
+
+    private func session(minutes: Int = 50) -> FocusSessionState {
+        FocusPlan.start(FocusSessionConfig(minutes: minutes), dockHidden: false, desktopIconsShown: true, now: start).state
+    }
+
+    func testPausingStopsTheClockAndResumingMovesTheEndOut() {
+        let s = session()
+        let paused = FocusPlan.paused(s, at: start.addingTimeInterval(600))
+        XCTAssertTrue(paused.isPaused)
+        XCTAssertEqual(FocusPlan.paused(paused, at: start.addingTimeInterval(700)), paused, "pausing twice changes nothing")
+        let back = FocusPlan.resumed(paused, at: start.addingTimeInterval(900))
+        XCTAssertFalse(back.isPaused)
+        XCTAssertEqual(back.endsAt, s.endsAt.addingTimeInterval(300))
+        XCTAssertEqual(back.pausedTotal, 300)
+        XCTAssertEqual(FocusPlan.resumed(s, at: start), s, "resuming a running session changes nothing")
+    }
+
+    func testFocusedMinutesLeaveOutPauses() {
+        var s = session()
+        s = FocusPlan.resumed(FocusPlan.paused(s, at: start.addingTimeInterval(600)), at: start.addingTimeInterval(1200))
+        XCTAssertEqual(FocusPlan.focusedMinutes(s, now: start.addingTimeInterval(1800)), 20)
+        let paused = FocusPlan.paused(s, at: start.addingTimeInterval(1800))
+        XCTAssertEqual(FocusPlan.focusedMinutes(paused, now: start.addingTimeInterval(5000)), 20, "still paused")
+    }
+
+    func testABreakIsDueOncePerInterval() {
+        var s = session(minutes: 120)
+        XCTAssertFalse(FocusPlan.breakDue(s, now: start.addingTimeInterval(24 * 60), every: 25))
+        XCTAssertTrue(FocusPlan.breakDue(s, now: start.addingTimeInterval(26 * 60), every: 25))
+        s.breaksGiven = 1
+        XCTAssertFalse(FocusPlan.breakDue(s, now: start.addingTimeInterval(30 * 60), every: 25))
+        XCTAssertTrue(FocusPlan.breakDue(s, now: start.addingTimeInterval(51 * 60), every: 25))
+        XCTAssertFalse(FocusPlan.breakDue(s, now: start.addingTimeInterval(51 * 60), every: nil))
+        XCTAssertFalse(FocusPlan.breakDue(FocusPlan.paused(s, at: start), now: start.addingTimeInterval(9000), every: 25))
+        XCTAssertEqual(FocusSessionConfig(breakEveryMinutes: 1).clamped.breakEveryMinutes, 5)
+        XCTAssertNil(FocusSessionConfig(breakEveryMinutes: 0).clamped.breakEveryMinutes)
+    }
+
+    func testHistoryKeepsTheLastHundredAndTotalsTheWeek() {
+        var history = FocusHistory()
+        for i in 0..<120 { history.add(FocusHistory.Entry(startedAt: start.addingTimeInterval(Double(i)), plannedMinutes: 25, focusedMinutes: 25, completed: true)) }
+        XCTAssertEqual(history.entries.count, 100)
+        XCTAssertEqual(history.entries.first?.startedAt, start.addingTimeInterval(119))
+        let old = FocusHistory.Entry(startedAt: start.addingTimeInterval(-10 * 86_400), plannedMinutes: 25, focusedMinutes: 25, completed: true)
+        history.add(old)
+        XCTAssertEqual(history.week(now: start.addingTimeInterval(200)).sessions, 99, "100 kept, one is old")
+    }
+
+    func testAnEarlyEndIsRecordedAsEarlyAndOldSavedSessionsStillLoad() throws {
+        let s = session(minutes: 50)
+        let entry = FocusHistory.entry(for: s, endedAt: start.addingTimeInterval(10 * 60))
+        XCTAssertEqual(entry?.focusedMinutes, 10)
+        XCTAssertEqual(entry?.completed, false)
+        XCTAssertEqual(FocusHistory.entry(for: s, endedAt: s.endsAt)?.completed, true)
+        let legacy = #"{"endsAt":0,"dockWasHidden":false,"desktopIconsWereShown":true,"changedDock":false,"changedDesktop":false,"endShortcut":""}"#
+        let decoded = try JSONDecoder().decode(FocusSessionState.self, from: Data(legacy.utf8))
+        XCTAssertNil(decoded.startedAt)
+        XCTAssertNil(FocusHistory.entry(for: decoded, endedAt: start))
+    }
+}
+
+final class ActionInsightTests: XCTestCase {
+    func testRiskFollowsWhatTheActionCanDo() {
+        XCTAssertEqual(ActionInsight.risk(of: .noop), .none)
+        XCTAssertEqual(ActionInsight.risk(of: .openUrl(url: "https://a.com")), .low)
+        XCTAssertEqual(ActionInsight.risk(of: .runShell(script: "rm -rf x")), .high)
+        XCTAssertEqual(ActionInsight.risk(of: .builtin(command: "window.left_half")), .low)
+        XCTAssertEqual(ActionInsight.risk(of: .builtin(command: "capture.record")), .medium)
+        XCTAssertEqual(ActionInsight.risk(of: .sequence(steps: [.noop, .runShortcut(name: "x"), .runShell(script: "ls")], delayMs: 0)), .high, "a sequence is as risky as its worst step")
+        XCTAssertEqual(ActionInsight.risk(of: .sequence(steps: [], delayMs: 0)), .none)
+    }
+
+    func testSameActionUnderTwoNamesIsFoundAndSearchNeedsEveryWord() {
+        let a = NamedAction(id: "1", name: "Mail", action: .openApplication(target: "com.apple.mail"))
+        let b = NamedAction(id: "2", name: "Open Mail", action: .openApplication(target: "com.apple.mail"))
+        let c = NamedAction(id: "3", name: "Safari", action: .openApplication(target: "com.apple.Safari"))
+        XCTAssertEqual(ActionInsight.duplicates([a, b, c]).map { $0.map(\.id) }, [["1", "2"]])
+        XCTAssertEqual(ActionInsight.search([a, b, c], text: "open mail", describe: { _ in "" }).map(\.id), ["2"])
+        XCTAssertEqual(ActionInsight.search([a, b, c], text: "", describe: { _ in "" }).count, 3)
+        XCTAssertEqual(ActionInsight.search([a, b, c], text: "safari", describe: { _ in "Open com.apple.Safari" }).map(\.id), ["3"])
+    }
+}
+
+final class DiskRiskTests: XCTestCase {
+    private let home = "/Users/me"
+    private func level(_ path: String) -> DiskRisk.Level { DiskRisk.classify(path, home: home).level }
+
+    func testThingsProgramsRebuildAreSafeAndPersonalThingsAreKept() {
+        XCTAssertEqual(level("/Users/me/Library/Caches/com.app"), .safe)
+        XCTAssertEqual(level("/Users/me/Library/Developer/Xcode/DerivedData/App-abc"), .safe)
+        XCTAssertEqual(level("/Users/me/Documents/project/node_modules"), .safe, "rebuildable even inside Documents")
+        XCTAssertEqual(level("/Users/me/Documents/taxes.pdf"), .keep)
+        XCTAssertEqual(level("/Users/me/Pictures/Photos Library.photoslibrary"), .keep)
+        XCTAssertEqual(level("/Users/me/Library/Mobile Documents/com~apple~CloudDocs/a"), .keep)
+        XCTAssertEqual(level("/System/Library/Frameworks"), .keep)
+        XCTAssertEqual(level("/Users/me/code/app/.git"), .keep)
+        XCTAssertEqual(level("/Users/me/Downloads/old.dmg"), .review)
+        XCTAssertEqual(level("/Applications/Foo.app"), .review)
+        XCTAssertEqual(level("/Volumes/Backup/stuff"), .review)
+        XCTAssertEqual(level("/Users/me/Library/Application Support/Foo"), .keep)
+    }
+
+    func testCloudPlaceholdersAreRecognisedAndSuggestionsAreOnlyTheSafeOnesBiggestFirst() {
+        XCTAssertTrue(DiskRisk.isCloudPlaceholder(".report.pdf.icloud"))
+        XCTAssertFalse(DiskRisk.isCloudPlaceholder("report.pdf"))
+        let items: [(path: String, size: Int64)] = [("/Users/me/Library/Caches/a", 10), ("/Users/me/Documents/x", 999), ("/Users/me/Library/Caches/b", 50), ("/Users/me/Library/Logs/c", 5)]
+        let result = DiskRisk.cleanupSuggestions(items, limit: 2, home: home)
+        XCTAssertEqual(result.items.map(\.path), ["/Users/me/Library/Caches/b", "/Users/me/Library/Caches/a"])
+        XCTAssertEqual(result.total, 60)
+    }
+}
