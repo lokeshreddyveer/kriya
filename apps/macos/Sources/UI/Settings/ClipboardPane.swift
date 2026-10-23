@@ -535,6 +535,7 @@ private struct ClipSettingsTab: View {
 
             ClipboardRulesSection()
             SharedClipboardSection()
+            ClipboardSyncSection()
 
             Section {
                 Stepper("Keep up to \(config.maxItems) items", value: Binding(get: { Int(config.maxItems) }, set: { v in clip.updateConfig { $0.maxItems = UInt32(v) } }), in: 20...10_000, step: 20)
@@ -718,6 +719,36 @@ struct SharedClipboardSection: View {
             }
         } header: { Text("Shared clipboard") } footer: {
             Text("Nothing is sent unless you ask: use the “Send the clipboard to my other Macs” command (give it a shortcut in Keyboard) or type “send clipboard” in the launcher. The text is sealed with your passphrase before it leaves this Mac, passes through your iCloud Drive, and is removed after ten minutes. A Mac with the same passphrase tells you when something arrives; choose “Paste from other Mac” in the launcher to take it. Text only, up to 100 KB.")
+        }
+    }
+}
+
+
+/// Sharing snippets and pinned text with the person's other Macs through iCloud Drive.
+struct ClipboardSyncSection: View {
+    @ObservedObject private var sync = ClipboardSyncService.shared
+    @State private var passphrase = ""
+
+    var body: some View {
+        Section {
+            Toggle("Sync snippets and pinned text with my other Macs", isOn: $sync.enabled)
+                .disabled(!sync.hasPassphrase)
+            if !sync.hasPassphrase {
+                HStack {
+                    SecureField("Sync passphrase (8 or more characters)", text: $passphrase)
+                    Button("Set") { if sync.setPassphrase(passphrase) { passphrase = "" } }.disabled(passphrase.count < 8)
+                }
+            }
+            Toggle("Also share my last 100 text copies", isOn: $sync.includeHistory).disabled(!sync.enabled)
+            HStack {
+                Button("Sync Now") { sync.syncNow() }.disabled(!sync.enabled || sync.busy)
+                if sync.busy { ProgressView().controlSize(.small) }
+                Spacer()
+                if let last = sync.lastSync { Text("Last: \(last.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary) }
+            }
+            if let status = sync.status { Text(status).font(.caption).foregroundStyle(.secondary) }
+        } header: { Text("Sync between Macs") } footer: {
+            Text("Each Mac keeps one encrypted file in iCloud Drive › Kriya Sync and reads the others'. Use the same passphrase on every Mac; Kriya cannot recover it. Only text snippets, pinned text and, if you ask, recent text copies are shared. Anything that looked like a password or key, images, files, and copies from excluded apps never leave this Mac. Removing a snippet or unpinning removes it on the other Macs at their next sync; a snippet with the same name but different text is kept as a second copy.")
         }
     }
 }

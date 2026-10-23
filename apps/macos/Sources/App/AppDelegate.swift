@@ -117,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         env.windows.flushPendingSaves()
         env.traffic.flushPendingSaves()
         env.backup.flushICloud()
+        ClipboardSyncService.shared.syncNow()
         env.remap.stopAndWait()
         env.capture.stop()
         env.inventory.stopWatching()

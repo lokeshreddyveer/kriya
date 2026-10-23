@@ -715,3 +715,70 @@ final class TextSizeTests: XCTestCase {
         XCTAssertLessThanOrEqual(max(boosted.0, boosted.1, boosted.2), 1)
     }
 }
+
+final class ClipSyncTests: XCTestCase {
+    private func item(_ text: String, _ kind: ClipSyncItem.Kind = .snippet, title: String = "", at: Double = 100, origin: String? = nil) -> ClipSyncItem {
+        ClipSyncItem(key: ClipSync.key(kind: kind, title: title, text: text), kind: kind, title: title, text: text, updatedAt: at, origin: origin)
+    }
+    private func file(_ items: [ClipSyncItem], _ tombs: [ClipSyncTombstone] = [], mac: String = "Other") -> ClipSyncFile {
+        ClipSyncFile(mac: mac, macID: UUID().uuidString, written: 0, items: items, tombstones: tombs)
+    }
+
+    func testSecretsImagesAndHugeTextAreNeverShared() {
+        XCTAssertTrue(ClipSync.isShareable(isText: true, sensitive: false, text: "hello"))
+        XCTAssertFalse(ClipSync.isShareable(isText: true, sensitive: true, text: "hunter2"))
+        XCTAssertFalse(ClipSync.isShareable(isText: false, sensitive: false, text: "x"))
+        XCTAssertFalse(ClipSync.isShareable(isText: true, sensitive: false, text: "   \n"))
+        XCTAssertFalse(ClipSync.isShareable(isText: true, sensitive: false, text: String(repeating: "a", count: ClipSync.maxTextLength + 1)))
+    }
+
+    func testNewThingsFromOtherMacsAreAddedOnce() {
+        let mine = [item("a")]
+        let theirs = file([item("a"), item("b"), item("b", at: 200)])
+        let plan = ClipSync.merge(local: mine, localTombstones: [], remote: [theirs, file([item("b", at: 300)])], includeHistory: false)
+        XCTAssertEqual(plan.add.map(\.text), ["b"], "already-held and duplicate items are not added twice")
+        XCTAssertEqual(plan.add.first?.updatedAt, 300, "the newest copy wins")
+        XCTAssertTrue(plan.remove.isEmpty)
+    }
+
+    func testHistoryIsOnlyTakenWhenAskedFor() {
+        let theirs = file([item("h", .history), item("p", .pinned)])
+        XCTAssertEqual(ClipSync.merge(local: [], localTombstones: [], remote: [theirs], includeHistory: false).add.map(\.text), ["p"])
+        XCTAssertEqual(Set(ClipSync.merge(local: [], localTombstones: [], remote: [theirs], includeHistory: true).add.map(\.text)), ["p", "h"])
+    }
+
+    func testARemovalTravelsButOnlyIfItIsNewerThanTheItem() {
+        let old = item("gone", at: 100)
+        let theirs = file([], [ClipSyncTombstone(key: old.key, at: 150)])
+        XCTAssertEqual(ClipSync.merge(local: [old], localTombstones: [], remote: [theirs], includeHistory: false).remove, [old.key])
+        let readded = item("gone", at: 200)
+        XCTAssertTrue(ClipSync.merge(local: [readded], localTombstones: [], remote: [theirs], includeHistory: false).remove.isEmpty, "added again after it was removed")
+        XCTAssertTrue(ClipSync.merge(local: [], localTombstones: [], remote: [file([old]), theirs], includeHistory: false).add.isEmpty, "a removed item is not brought back")
+        let hist = item("h", .history, at: 100)
+        XCTAssertTrue(ClipSync.merge(local: [hist], localTombstones: [], remote: [file([], [ClipSyncTombstone(key: hist.key, at: 500)])], includeHistory: true).remove.isEmpty, "history ages out by itself")
+    }
+
+    func testTwoSnippetsWithTheSameNameAreBothKept() {
+        let mine = [item("my text", title: "Sig")]
+        let plan = ClipSync.merge(local: mine, localTombstones: [], remote: [file([item("their text", title: "Sig", origin: "Studio")])], includeHistory: false)
+        XCTAssertEqual(plan.add.first?.title, "Sig (from Studio)")
+    }
+
+    func testTombstonesComeFromWhatWentMissingAndAreForgottenAfterAWhile() {
+        let t = ClipSync.newTombstones(previous: ["a", "b"], current: ["b", "c"], now: 1000)
+        XCTAssertEqual(t, [ClipSyncTombstone(key: "a", at: 1000)])
+        let old = ClipSyncTombstone(key: "x", at: 0)
+        XCTAssertTrue(ClipSync.pruned([old], now: 100 * 86_400).isEmpty)
+        XCTAssertEqual(ClipSync.pruned([ClipSyncTombstone(key: "y", at: 5), ClipSyncTombstone(key: "y", at: 9)], now: 10).map(\.at), [9])
+    }
+
+    func testFilesAreEncryptedAndOnlyOpenWithThePassphrase() throws {
+        let f = file([item("secret-ish snippet")])
+        let data = try ClipSync.encode(f, passphrase: "correct horse")
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("secret-ish"), "the text is not readable in the file")
+        XCTAssertEqual(try ClipSync.decode(data, passphrase: "correct horse").items, f.items)
+        XCTAssertThrowsError(try ClipSync.decode(data, passphrase: "wrong passphrase")) { XCTAssertEqual($0 as? BackupCryptoError, .wrongPassphrase) }
+        XCTAssertTrue(ClipSync.isSyncFileName(ClipSync.fileName(macID: UUID().uuidString)))
+        XCTAssertFalse(ClipSync.isSyncFileName("clipboard-../x.kriyasync"))
+    }
+}
