@@ -41,9 +41,12 @@ struct CapturePane: View {
                     Spacer()
                 }
                 .disabled(capture.isCapturing)
+                RecordingControls(capture: capture)
             } header: { Text("Capture now") } footer: {
                 Text("Region and window captures use the system's own selection: drag, or click a window, and press Escape to cancel. “Copy Text” reads the words in the region you pick and copies only the text. “Whole Page” scrolls the window in front by itself and joins the pages, so keep the mouse still; pages with a bar fixed at the top may repeat it. “Record” and “Record GIF” use the system recorder: choose the area, then click its stop button in the menu bar. “Read QR Code” copies what the code says. “Pixel Ruler” freezes the screen: move for a magnifier and the colour under the pointer, drag to measure a box, click to measure the box of one colour, hold ⌥ for distances to the edges, C copies the colour and Return copies the size.")
             }
+
+            RecordingSection(store: store)
 
             CaptureHistorySection()
 
@@ -166,4 +169,61 @@ struct CaptureHistorySection: View {
     }
 
     private func reload() { entries = CaptureHistory.read(folder: capture.settings.settings.folder, limit: 12) }
+}
+
+/// Buttons for Kriya's own recorder, which turn into Pause and Stop while it runs.
+private struct RecordingControls: View {
+    @ObservedObject var capture: ScreenCaptureService
+    @ObservedObject private var recorder: ScreenRecorder
+
+    init(capture: ScreenCaptureService) {
+        self.capture = capture
+        _recorder = ObservedObject(wrappedValue: capture.recording.recorder)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if recorder.state == .recording || recorder.state == .paused {
+                Button { capture.capture(.screen, action: .pauseRecording) } label: {
+                    Label(recorder.state == .paused ? "Resume" : "Pause", systemImage: recorder.state == .paused ? "play.fill" : "pause.fill")
+                }
+                Button { capture.capture(.screen, action: .stopRecording) } label: { Label("Stop and Save", systemImage: "stop.fill") }
+            } else {
+                Button { capture.capture(.screen, action: .recordScreen) } label: { Label("Record Screen", systemImage: "record.circle.fill") }
+                Button { capture.capture(.window, action: .recordWindow) } label: { Label("Record Window", systemImage: "macwindow") }
+                Button { capture.capture(.window, action: .recordApp) } label: { Label("Record App", systemImage: "app.dashed") }
+                Button { capture.capture(.window, action: .mirror) } label: { Label("Float a Window", systemImage: "rectangle.on.rectangle") }
+                    .help("A live, view-only copy of the window in front that stays on top")
+            }
+            Spacer()
+        }
+        .disabled(recorder.state == .starting || recorder.state == .stopping)
+    }
+}
+
+/// How Kriya's own recorder records.
+private struct RecordingSection: View {
+    @ObservedObject var store: CaptureSettingsStore
+
+    private var options: RecordingOptions { store.settings.recording }
+
+    private func bind<T>(_ path: WritableKeyPath<RecordingOptions, T>) -> Binding<T> {
+        Binding(get: { store.settings.recording[keyPath: path] }, set: { value in store.update { $0.recording[keyPath: path] = value } })
+    }
+
+    var body: some View {
+        Section {
+            Toggle("Record the Mac's sound", isOn: bind(\.systemAudio))
+            Toggle("Record the microphone", isOn: bind(\.microphone))
+            Toggle("Show the keys I press", isOn: bind(\.showKeystrokes))
+            Toggle("Show the camera in a small window", isOn: bind(\.webcam))
+            Toggle("Show the pointer", isOn: bind(\.showCursor))
+            Toggle("Record in HDR", isOn: bind(\.hdr)).disabled(!ScreenRecorder.hdrAvailable)
+            Picker("Frame rate", selection: bind(\.framesPerSecond)) {
+                ForEach(RecordingOptions.allowedFrameRates, id: \.self) { Text("\($0) per second").tag($0) }
+            }
+        } header: { Text("Recording") } footer: {
+            Text("Record Screen, Record Window and Record App use Kriya's own recorder, which saves a movie in the capture folder. The Mac's sound and the microphone go on separate audio tracks. Pause cuts the paused time out, so the movie has no gap. The keys and the camera are shown in windows on screen, so they are in a screen or app recording but not a window recording. A password field never shows its keys. HDR needs macOS 15 and a screen that supports it, and is untested on some displays. The first time Screen Recording is allowed, quit and open Kriya again.")
+        }
+    }
 }

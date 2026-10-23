@@ -40,6 +40,13 @@ enum CaptureAction: String, CaseIterable, Identifiable, Codable {
     case ruler
     /// Keep the picture on top of everything.
     case pin
+    /// Record with Kriya's own recorder: sound, microphone, pause, keys and camera. The source is the screen, the window in
+    /// front or the front app.
+    case recordScreen, recordWindow, recordApp
+    /// Pause or resume, and stop, the recording in progress.
+    case pauseRecording, stopRecording
+    /// A floating live copy of the window in front.
+    case mirror
     var id: String { rawValue }
 }
 
@@ -62,6 +69,12 @@ struct CaptureSettings: Codable, Equatable {
     /// Names or words to hide wherever they appear when private text is hidden, on top of emails, numbers and keys.
     var redactWords: [String] = []
     var shortcuts: [CaptureShortcut] = []
+    /// How Kriya's own recorder records. Optional so settings saved before it existed still load.
+    var recordingOptions: RecordingOptions?
+    var recording: RecordingOptions {
+        get { recordingOptions ?? RecordingOptions() }
+        set { recordingOptions = newValue }
+    }
 
     /// The commands that start a capture, by name. The same names work from mouse rules, workflows and the launcher.
     static let commands: [(command: String, title: String, mode: CaptureMode, action: CaptureAction)] = [
@@ -76,6 +89,12 @@ struct CaptureSettings: Codable, Equatable {
         ("capture.scroll", "Capture the whole page of the front window (scrolling)", .window, .scroll),
         ("capture.ruler", "Measure pixels on the screen (ruler)", .screen, .ruler),
         ("capture.pin", "Pin the clipboard picture or the latest capture on screen", .screen, .pin),
+        ("capture.rec.screen", "Record the whole screen (sound, camera, keys)", .screen, .recordScreen),
+        ("capture.rec.window", "Record the window in front", .window, .recordWindow),
+        ("capture.rec.app", "Record the front app", .window, .recordApp),
+        ("capture.rec.pause", "Pause or resume the recording", .screen, .pauseRecording),
+        ("capture.rec.stop", "Stop and save the recording", .screen, .stopRecording),
+        ("capture.mirror", "Float a live copy of the window in front", .window, .mirror),
     ]
 
     static var defaultFolder: URL {

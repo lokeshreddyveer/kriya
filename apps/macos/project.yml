@@ -63,7 +63,8 @@ targets:
         NSPrincipalClass: NSApplication
         NSHumanReadableCopyright: "Copyright © 2026 Kriya. All rights reserved."
         NSAppleEventsUsageDescription: "Kriya runs the AppleScripts you create, which may control other apps."
-        NSMicrophoneUsageDescription: "Kriya listens only while you dictate, turns your speech into text on this Mac, and keeps nothing."
+        NSMicrophoneUsageDescription: "Kriya listens while you dictate (it turns your speech into text on this Mac and keeps nothing), and while you record the screen with the microphone on (the recording is saved on this Mac)."
+        NSCameraUsageDescription: "Kriya shows your camera in a small window while you record the screen with the camera on. Nothing is saved except the recording you make, on this Mac."
         NSSpeechRecognitionUsageDescription: "Kriya turns what you say into text, on this Mac, when you use dictation."
         NSAudioCaptureUsageDescription: Kriya listens to one app's sound only to change its volume, equaliser or output, and plays it straight back. Nothing is recorded or stored.
         NSContactsUsageDescription: "Kriya looks people up in your contacts when you search for them in the launcher. It stays on this Mac."

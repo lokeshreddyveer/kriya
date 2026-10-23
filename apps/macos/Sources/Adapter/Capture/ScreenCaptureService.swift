@@ -8,6 +8,8 @@ final class ScreenCaptureService: ObservableObject {
     let settings: CaptureSettingsStore
 
     @Published private(set) var isCapturing = false
+    /// Kriya's own screen recorder, with its control strip, keys and camera.
+    let recording = RecordingController()
 
     private let toast = Toast()
     private let recognizer = TextRecognizer()
@@ -34,6 +36,7 @@ final class ScreenCaptureService: ObservableObject {
 
     init(settings: CaptureSettingsStore) {
         self.settings = settings
+        recording.onEnd = { [weak self] in self?.isCapturing = false }
     }
 
     // MARK: Starting and shortcuts
@@ -67,6 +70,13 @@ final class ScreenCaptureService: ObservableObject {
     // MARK: Capturing
 
     func capture(_ mode: CaptureMode, action: CaptureAction = .normal) {
+        // These act on a recording already running (or need no capture permission), so they come before the checks below.
+        switch action {
+        case .pauseRecording: recording.togglePause(); return
+        case .stopRecording: recording.stop(); return
+        case .mirror: recording.showMirror(); return
+        default: break
+        }
         guard !isCapturing else { return }
         guard hasPermission() else {
             requestPermission()
@@ -75,6 +85,12 @@ final class ScreenCaptureService: ObservableObject {
         }
         isCapturing = true
         let current = settings.settings
+        if action == .recordScreen || action == .recordWindow || action == .recordApp {
+            var options = current.recording
+            options.source = action == .recordWindow ? .window : action == .recordApp ? .app : .screen
+            recording.start(options, into: current.folder)
+            return
+        }
         if action == .record || action == .recordGIF { return record(asGIF: action == .recordGIF, settings: current) }
         if action == .scroll { return scrollingCapture(settings: current) }
         if action == .ruler { isCapturing = false; DispatchQueue.main.async { self.ruler.show() }; return }
@@ -168,7 +184,7 @@ final class ScreenCaptureService: ObservableObject {
                 self.pasteboard.setString(first, forType: .string)
                 self.toast.show(found.count > 1 ? "Copied the first of \(found.count) codes: \(String(first.prefix(60)))" : "Copied: \(String(first.prefix(60)))")
             }
-        case .record, .recordGIF, .scroll, .ruler, .pin:
+        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror:
             DispatchQueue.main.async { self.isCapturing = false }
         case .normal, .redacted:
             var picture = image
