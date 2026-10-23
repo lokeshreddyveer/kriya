@@ -1336,3 +1336,31 @@ final class EncryptedSnippetExportTests: XCTestCase {
         XCTAssertTrue(ClipboardStore.needsPassphrase(sealed))
     }
 }
+
+final class LaunchItemTests: XCTestCase {
+    func testAnAgentIsReadFromItsPlist() throws {
+        let plist: [String: Any] = ["Label": "com.zoom.helper", "ProgramArguments": ["/Applications/zoom.us.app/Contents/Helper", "--daemon"], "RunAtLoad": true, "KeepAlive": ["SuccessfulExit": false]]
+        let item = try XCTUnwrap(LaunchItems.parse(plist, path: "/Users/me/Library/LaunchAgents/com.zoom.helper.plist", scope: .user) { _ in true })
+        XCTAssertEqual(item.label, "com.zoom.helper")
+        XCTAssertEqual(item.arguments, ["--daemon"])
+        XCTAssertTrue(item.runAtLoad && item.keepAlive)
+        XCTAssertEqual(item.ownerApp, "zoom.us")
+        XCTAssertEqual(item.programExists, true)
+        XCTAssertTrue(item.when.contains("log in"))
+    }
+
+    func testAMissingProgramMakesItOrphanedAndSortsFirst() throws {
+        let gone = try XCTUnwrap(LaunchItems.parse(["Label": "z.gone", "Program": "/opt/removed/tool"], path: "/a.plist", scope: .user) { _ in false })
+        let fine = try XCTUnwrap(LaunchItems.parse(["Label": "a.fine", "Program": "/usr/bin/true"], path: "/b.plist", scope: .user) { _ in true })
+        XCTAssertTrue(gone.isOrphaned)
+        XCTAssertEqual(LaunchItems.sorted([fine, gone]).map(\.label), ["z.gone", "a.fine"])
+    }
+
+    func testBareCommandsAndMissingLabelsAreHandled() throws {
+        let bare = try XCTUnwrap(LaunchItems.parse(["Label": "x", "ProgramArguments": ["sh", "-c", "echo"]], path: "/c.plist", scope: .everyone) { _ in false })
+        XCTAssertNil(bare.programExists, "a command looked up on the path cannot be called missing")
+        XCTAssertFalse(bare.isOrphaned)
+        XCTAssertNil(LaunchItems.parse(["Program": "/x"], path: "/d.plist", scope: .user) { _ in true })
+        XCTAssertEqual(bare.when, "starts on demand")
+    }
+}

@@ -28,7 +28,7 @@ struct AppsPane: View {
     @State private var message: String?
 
     enum Tab: String, CaseIterable, Identifiable {
-        case installed = "Installed", install = "Install", leftovers = "Leftovers", updates = "Updates"
+        case installed = "Installed", install = "Install", leftovers = "Leftovers", updates = "Updates", background = "Background"
         var id: String { rawValue }
     }
 
@@ -48,6 +48,7 @@ struct AppsPane: View {
                 case .install: InstallTab()
                 case .leftovers: leftoversTab
                 case .updates: updatesTab
+                case .background: BackgroundItemsTab(message: $message)
                 }
             }
             .id(tab)
@@ -544,6 +545,94 @@ private struct InstallTab: View {
             message = missing.isEmpty ? "Everything in that list is already installed." : nil
         } catch {
             message = error.localizedDescription
+        }
+    }
+}
+
+
+/// The launch agents and daemons on this Mac, read-only, with the ones whose program is gone listed first.
+private struct BackgroundItemsTab: View {
+    @Binding var message: String?
+    @State private var items: [LaunchItem.Scope: [LaunchItem]] = [:]
+    @State private var query = ""
+    @State private var loading = false
+    @State private var confirming: LaunchItem?
+
+    var body: some View {
+        Form {
+            Section {
+                HStack {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search background items", text: $query).textFieldStyle(.plain)
+                    if loading { ProgressView().controlSize(.small) }
+                    Button("Refresh") { load() }.controlSize(.small)
+                }
+            } footer: {
+                Text("These are the helpers macOS starts for apps and for the system, read from their property lists. Kriya only lists them. An item whose program is missing can only fail each time it starts; for those in your own folder you can move the file to the Trash. Login items you turned on in System Settings are not shown here.")
+            }
+            ForEach(LaunchItem.Scope.allCases) { scope in
+                let list = (items[scope] ?? []).filter { query.isEmpty || $0.label.localizedCaseInsensitiveContains(query) || ($0.program ?? "").localizedCaseInsensitiveContains(query) }
+                Section {
+                    if list.isEmpty { Text(loading ? "Looking…" : "None.").font(.callout).foregroundStyle(.secondary) }
+                    ForEach(list) { item in row(item) }
+                } header: {
+                    Text("\(scope.title) (\(list.count))")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { load() }
+        .confirmationDialog("Move “\(confirming?.fileName ?? "")” to the Trash?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), titleVisibility: .visible) {
+            Button("Move to Trash", role: .destructive) {
+                if let item = confirming { trash(item) }
+                confirming = nil
+            }
+            Button("Cancel", role: .cancel) { confirming = nil }
+        } message: {
+            Text("Its program is missing, so it cannot run. You can get it back from the Trash.")
+        }
+    }
+
+    private func row(_ item: LaunchItem) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: item.isOrphaned ? "exclamationmark.triangle.fill" : "gearshape.2").foregroundStyle(item.isOrphaned ? Theme.warn : .secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.label).lineLimit(1).truncationMode(.middle)
+                Text([item.ownerApp, item.when, item.disabled ? "switched off" : nil].compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                if let program = item.program {
+                    Text(item.isOrphaned ? "Missing: \(program)" : program).font(.caption.monospaced()).foregroundStyle(item.isOrphaned ? Theme.warn : .secondary).lineLimit(1).truncationMode(.middle)
+                }
+            }
+            Spacer()
+            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder")
+            if item.isOrphaned, item.scope == .user {
+                Button { confirming = item } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Move to Trash")
+            }
+        }
+    }
+
+    private func load() {
+        loading = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            var found: [LaunchItem.Scope: [LaunchItem]] = [:]
+            for scope in LaunchItem.Scope.allCases { found[scope] = LaunchItems.scan(scope) }
+            DispatchQueue.main.async {
+                items = found
+                loading = false
+            }
+        }
+    }
+
+    private func trash(_ item: LaunchItem) {
+        // Only a file in the person's own LaunchAgents folder is ever touched.
+        guard item.scope == .user, item.path.hasPrefix(LaunchItem.Scope.user.folder + "/") else { return }
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: item.path), resultingItemURL: nil)
+            AuditLog.shared.record(.files, "Moved launch agent \(item.fileName) to the Trash")
+            message = "Moved “\(item.fileName)” to the Trash. It stops being started at the next login."
+            load()
+        } catch {
+            message = "“\(item.fileName)” could not be moved to the Trash."
         }
     }
 }
