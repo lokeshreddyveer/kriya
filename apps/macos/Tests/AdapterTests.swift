@@ -1364,3 +1364,39 @@ final class LaunchItemTests: XCTestCase {
         XCTAssertEqual(bare.when, "starts on demand")
     }
 }
+
+final class SoundModeTests: XCTestCase {
+    func testASnapshotRestoresDevicesBeforeVolumeAndMutes() {
+        let snapshot = SoundSnapshot(outputName: "MacBook Speakers", inputName: "MacBook Microphone", volumePercent: 42, soundMuted: false, micMuted: true)
+        XCTAssertEqual(snapshot.restoreActions, [
+            .useOutput(nameContains: "MacBook Speakers"), .useInput(nameContains: "MacBook Microphone"),
+            .setVolume(percent: 42), .muteSound(false), .muteMic(true),
+        ])
+        XCTAssertTrue(SoundSnapshot().restoreActions.isEmpty, "nothing known, nothing to do")
+        XCTAssertEqual(SoundSnapshot(volumePercent: 500).restoreActions, [.setVolume(percent: 100)])
+    }
+
+    func testTheDeviceHistoryKeepsTheNewestAndSpotsAFlakyDevice() {
+        var history = DeviceHistory()
+        for i in 0..<4 {
+            history.record("AirPods", connected: true, at: Date(timeIntervalSince1970: Double(i * 10)))
+            history.record("AirPods", connected: false, at: Date(timeIntervalSince1970: Double(i * 10 + 5)))
+        }
+        XCTAssertEqual(history.reconnects(of: "AirPods"), 3)
+        XCTAssertEqual(history.reconnects(of: "Unknown"), 0)
+        for i in 0..<(DeviceHistory.capacity + 10) { history.record("D\(i)", connected: true) }
+        XCTAssertEqual(history.events.count, DeviceHistory.capacity)
+        XCTAssertEqual(history.events.first?.name, "D\(DeviceHistory.capacity + 9)")
+    }
+
+    func testStartingModesAndNewActionsSurviveSaving() throws {
+        XCTAssertEqual(SoundMode.starters.map(\.name), ["Meeting", "Presentation"])
+        let rule = SoundRule(trigger: .deviceConnected(contains: "Dock"), action: .connectBluetooth(nameContains: "AirPods"))
+        let decoded = try JSONDecoder().decode(SoundRule.self, from: JSONEncoder().encode(rule))
+        XCTAssertEqual(decoded, rule)
+        XCTAssertEqual(rule.action.title, "connect AirPods")
+        let peers = [BluetoothPeer(address: "aa", name: "AirPods Pro", isConnected: false), BluetoothPeer(address: "bb", name: "Soundbar", isConnected: true)]
+        XCTAssertEqual(BluetoothAudio.peer(named: "airpods", in: peers)?.address, "aa")
+        XCTAssertNil(BluetoothAudio.peer(named: "  ", in: peers))
+    }
+}

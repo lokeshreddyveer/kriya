@@ -35,9 +35,24 @@ struct SoundPane: View {
                 Text("A profile is a saved volume, output and equaliser you can give to any app, or to all sound. Save one from the ••• menu of an app.")
             }
             Section {
+                SoundModesSection()
+            } header: { Text("Sound modes") } footer: {
+                Text("A mode is several sound changes turned on together, such as headset, microphone and volume for a meeting. Turn it off to put the sound back how it was. The starting two only set the volume; edit them to add your own headset and microphone. Modes can also be run from shortcuts and workflows with the commands sound.mode.<name>.")
+            }
+            Section {
+                BluetoothSection()
+            } header: { Text("Bluetooth audio") } footer: {
+                Text("Connect or disconnect headphones and speakers that are already paired in System Settings. macOS asks Kriya for Bluetooth access the first time. Kriya cannot pair new devices.")
+            }
+            Section {
                 SoundRulesSection()
             } header: { Text("Sound rules") } footer: {
-                Text("Do something when headphones connect or an app opens or quits: switch the output, mute the microphone, or set the volume.")
+                Text("Do something when headphones connect or an app opens or quits: switch the output, mute the microphone, set the volume, or connect a Bluetooth device.")
+            }
+            Section {
+                SoundHistorySection()
+            } header: { Text("Device history") } footer: {
+                Text("When sound devices connected and disconnected. A device that keeps coming back is a flaky connection.")
             }
         }
         .formStyle(.grouped)
@@ -294,7 +309,7 @@ private struct SoundRulesSection: View {
 
 private struct RuleEditor: View {
     enum TriggerKind: String, CaseIterable { case deviceConnected = "A sound device connects", deviceDisconnected = "A sound device disconnects", appLaunched = "An app opens", appQuit = "An app quits" }
-    enum ActionKind: String, CaseIterable { case useOutput = "Play sound on…", useInput = "Use the microphone…", muteMic = "Mute the microphone", unmuteMic = "Unmute the microphone", muteSound = "Mute the sound", unmuteSound = "Unmute the sound", volume = "Set the volume" }
+    enum ActionKind: String, CaseIterable { case useOutput = "Play sound on…", useInput = "Use the microphone…", muteMic = "Mute the microphone", unmuteMic = "Unmute the microphone", muteSound = "Mute the sound", unmuteSound = "Unmute the sound", volume = "Set the volume", connectBT = "Connect Bluetooth device…", disconnectBT = "Disconnect Bluetooth device…" }
 
     let onSave: (SoundRule) -> Void
     let onCancel: () -> Void
@@ -315,7 +330,7 @@ private struct RuleEditor: View {
                 HStack { Text(appID.isEmpty ? "No app chosen" : AppChoice.name(for: appID)).foregroundStyle(.secondary); Spacer(); Button("Choose App…") { if let id = AppChoice.choose() { appID = id } } }
             }
             Picker("Then", selection: $action) { ForEach(ActionKind.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-            if action == .useOutput || action == .useInput { TextField("Part of the device's name", text: $actionText) }
+            if action == .useOutput || action == .useInput || action == .connectBT || action == .disconnectBT { TextField("Part of the device's name", text: $actionText) }
             if action == .volume { HStack { Slider(value: $percent, in: 0...100, step: 1); Text("\(Int(percent))%").monospacedDigit() } }
             HStack {
                 Spacer()
@@ -345,6 +360,8 @@ private struct RuleEditor: View {
         case .muteSound: a = .muteSound(true)
         case .unmuteSound: a = .muteSound(false)
         case .volume: a = .setVolume(percent: Int(percent))
+        case .connectBT: guard !name.isEmpty else { return nil }; a = .connectBluetooth(nameContains: name)
+        case .disconnectBT: guard !name.isEmpty else { return nil }; a = .disconnectBluetooth(nameContains: name)
         }
         return SoundRule(trigger: t, action: a)
     }
@@ -377,5 +394,160 @@ private struct DictationSection: View {
             ForEach(DictationService.languages(), id: \.identifier) { Text($0.localizedString(forIdentifier: $0.identifier) ?? $0.identifier).tag($0.identifier) }
         }
         Toggle("Allow Apple's servers when the language is not available on this Mac", isOn: $dictation.allowServer)
+    }
+}
+
+
+private struct SoundModesSection: View {
+    @EnvironmentObject private var runner: SoundRuleRunner
+    @State private var editing: SoundMode?
+
+    var body: some View {
+        ForEach(runner.modes) { mode in
+            HStack {
+                Image(systemName: mode.symbol).frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mode.name)
+                    Text(mode.actions.map(\.title).joined(separator: ", ")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Spacer()
+                Button(runner.activeModeID == mode.id ? "Turn Off" : "Turn On") { runner.toggle(mode) }.controlSize(.small)
+                    .buttonStyle(.borderedProminent).tint(runner.activeModeID == mode.id ? .orange : Theme.accent)
+                Button("Edit") { editing = mode }.controlSize(.small)
+            }
+        }
+        HStack {
+            Button("New Mode…") { editing = SoundMode(name: "", actions: []) }
+            Spacer()
+            Button("Put the Sound Back") { runner.putSoundBack() }.disabled(runner.snapshot == nil)
+                .help("Restores the output, microphone, volume and mutes from before Kriya changed them")
+        }
+        EmptyView().sheet(item: $editing) { mode in
+            ModeEditor(mode: mode, canDelete: runner.modes.contains { $0.id == mode.id }) { saved in
+                if let saved {
+                    if let index = runner.modes.firstIndex(where: { $0.id == saved.id }) { runner.modes[index] = saved } else { runner.modes.append(saved) }
+                }
+                editing = nil
+            } onDelete: {
+                runner.modes.removeAll { $0.id == mode.id }
+                editing = nil
+            }
+        }
+    }
+}
+
+private struct ModeEditor: View {
+    @State var mode: SoundMode
+    let canDelete: Bool
+    let onClose: (SoundMode?) -> Void
+    let onDelete: () -> Void
+    @State private var kind = Kind.useOutput
+    @State private var text = ""
+    @State private var percent = 60.0
+
+    enum Kind: String, CaseIterable, Identifiable {
+        case useOutput = "Play sound on…", useInput = "Use the microphone…", muteMic = "Mute the microphone", unmuteMic = "Unmute the microphone", muteSound = "Mute the sound", unmuteSound = "Unmute the sound", volume = "Set the volume", connectBT = "Connect Bluetooth device…", disconnectBT = "Disconnect Bluetooth device…"
+        var id: String { rawValue }
+        var needsName: Bool { [.useOutput, .useInput, .connectBT, .disconnectBT].contains(self) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sound mode").font(.headline)
+            TextField("Name", text: $mode.name)
+            if mode.actions.isEmpty { Text("No changes yet. Add some below.").font(.callout).foregroundStyle(.secondary) }
+            ForEach(Array(mode.actions.enumerated()), id: \.offset) { index, action in
+                HStack {
+                    Text(action.title.prefix(1).uppercased() + action.title.dropFirst())
+                    Spacer()
+                    Button { mode.actions.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                }
+            }
+            Divider()
+            HStack {
+                Picker("Add", selection: $kind) { ForEach(Kind.allCases) { Text($0.rawValue).tag($0) } }
+                if kind.needsName { TextField("Part of its name", text: $text) }
+                if kind == .volume { Slider(value: $percent, in: 0...100, step: 1); Text("\(Int(percent))%").monospacedDigit() }
+                Button("Add") { if let action = make() { mode.actions.append(action); text = "" } }.disabled(make() == nil)
+            }
+            HStack {
+                if canDelete { Button("Delete", role: .destructive, action: onDelete) }
+                Spacer()
+                Button("Cancel") { onClose(nil) }.keyboardShortcut(.cancelAction)
+                Button("Save") { onClose(mode) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .disabled(mode.name.trimmingCharacters(in: .whitespaces).isEmpty || mode.actions.isEmpty)
+            }
+        }
+        .padding(18).frame(width: 520)
+    }
+
+    private func make() -> SoundAction? {
+        let name = text.trimmingCharacters(in: .whitespaces)
+        if kind.needsName, name.isEmpty { return nil }
+        switch kind {
+        case .useOutput: return .useOutput(nameContains: name)
+        case .useInput: return .useInput(nameContains: name)
+        case .muteMic: return .muteMic(true)
+        case .unmuteMic: return .muteMic(false)
+        case .muteSound: return .muteSound(true)
+        case .unmuteSound: return .muteSound(false)
+        case .volume: return .setVolume(percent: Int(percent))
+        case .connectBT: return .connectBluetooth(nameContains: name)
+        case .disconnectBT: return .disconnectBluetooth(nameContains: name)
+        }
+    }
+}
+
+private struct BluetoothSection: View {
+    @State private var peers: [BluetoothPeer] = []
+    @State private var busy: String?
+
+    var body: some View {
+        if peers.isEmpty { Text("No paired Bluetooth audio devices found.").font(.callout).foregroundStyle(.secondary) }
+        ForEach(peers) { peer in
+            HStack {
+                Image(systemName: peer.isConnected ? "headphones" : "headphones").foregroundStyle(peer.isConnected ? Theme.ok : .secondary)
+                Text(peer.name)
+                Spacer()
+                if busy == peer.address { ProgressView().controlSize(.small) }
+                Button(peer.isConnected ? "Disconnect" : "Connect") { toggle(peer) }.controlSize(.small).disabled(busy != nil)
+            }
+        }
+        Button("Refresh") { load() }.controlSize(.small)
+            .onAppear { load() }
+    }
+
+    private func load() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = BluetoothAudio.paired()
+            DispatchQueue.main.async { peers = found }
+        }
+    }
+
+    private func toggle(_ peer: BluetoothPeer) {
+        busy = peer.address
+        DispatchQueue.global(qos: .userInitiated).async {
+            BluetoothAudio.set(connected: !peer.isConnected, address: peer.address)
+            let found = BluetoothAudio.paired()
+            DispatchQueue.main.async { peers = found; busy = nil }
+        }
+    }
+}
+
+private struct SoundHistorySection: View {
+    @EnvironmentObject private var runner: SoundRuleRunner
+
+    var body: some View {
+        if runner.history.events.isEmpty { Text("Nothing yet.").font(.callout).foregroundStyle(.secondary) }
+        ForEach(runner.history.events.prefix(30)) { event in
+            HStack {
+                Image(systemName: event.connected ? "plus.circle" : "minus.circle").foregroundStyle(event.connected ? Theme.ok : .secondary)
+                Text(event.name)
+                if event.connected, runner.history.reconnects(of: event.name) >= 3 { Text("keeps reconnecting").font(.caption).foregroundStyle(Theme.warn) }
+                Spacer()
+                Text(event.at.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        if !runner.history.events.isEmpty { Button("Clear the History", role: .destructive) { runner.clearHistory() }.controlSize(.small) }
     }
 }
