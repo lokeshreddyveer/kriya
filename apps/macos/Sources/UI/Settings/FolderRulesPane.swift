@@ -84,7 +84,7 @@ struct FolderRulesPane: View {
             Spacer()
             Button("Preview") { previewing = rule }.controlSize(.small)
             Button("Edit") { editing = rule }.controlSize(.small)
-            Button(role: .destructive) { store.delete(rule.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+            Button(role: .destructive) { store.delete(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
         }
         .padding(.vertical, 3)
     }
@@ -160,7 +160,7 @@ private struct FolderRuleEditor: View {
                                 .foregroundStyle(.secondary).frame(width: 80, alignment: .leading)
                             ConditionEditor(condition: Binding(get: { rule.conditions[index] }, set: { rule.conditions[index] = $0 }))
                             Spacer(minLength: 0)
-                            Button(role: .destructive) { rule.conditions.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                            Button(role: .destructive) { rule.conditions.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
                         }
                     }
                     Menu {

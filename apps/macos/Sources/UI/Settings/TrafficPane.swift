@@ -177,7 +177,7 @@ struct TrafficBindingsEditor: View {
             Image(systemName: "arrow.right").foregroundStyle(.secondary)
             TrafficActionMenu(action: Binding(get: { bindings[index].action }, set: { bindings[index].action = $0 }), allowNative: allowNative)
             Spacer()
-            Button(role: .destructive) { withAnimation(.smooth) { _ = bindings.remove(at: index) } } label: { Image(systemName: "trash") }
+            Button(role: .destructive) { withAnimation(.smooth) { _ = bindings.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
                 .buttonStyle(.borderless)
         }
     }
@@ -258,7 +258,7 @@ private struct TrafficAppsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { traffic.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }
+                        Button(role: .destructive) { traffic.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
                             .buttonStyle(.borderless)
                     }
                 }
@@ -315,7 +315,7 @@ private struct HoverTab: View {
                             HStack {
                                 Label(action.title, systemImage: action.symbol)
                                 Spacer()
-                                Button(role: .destructive) { edit(button) { $0.remove(at: index) } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                                Button(role: .destructive) { edit(button) { $0.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                             }
                         }
                     } header: {

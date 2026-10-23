@@ -41,7 +41,7 @@ struct ShelfPane: View {
                         HStack {
                             Text(AppChoice.name(for: id))
                             Spacer()
-                            Button(role: .destructive) { store.update { $0.shelfExcludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                            Button(role: .destructive) { store.update { $0.shelfExcludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                         }
                     }
                     Button {

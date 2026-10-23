@@ -87,7 +87,7 @@ private struct ShortcutsListTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = shortcut }.controlSize(.small)
-                        Button(role: .destructive) { store.deleteShortcut(shortcut.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.deleteShortcut(shortcut.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                     .padding(.vertical, 3)
                 }
@@ -196,7 +196,7 @@ private struct ShortcutEditor: View {
                 Picker("Active", selection: $scopeKind) { ForEach(ScopeKind.allCases) { Text($0.rawValue).tag($0) } }
                 if scopeKind != .global {
                     ForEach(apps, id: \.self) { id in
-                        HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { apps.removeAll { $0 == id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless) }
+                        HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { apps.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless) }
                     }
                     Button { if let id = AppChoice.choose(prompt: "Add"), !apps.contains(id) { apps.append(id) } } label: { Label("Add App", systemImage: "plus") }.controlSize(.small)
                 }
@@ -370,7 +370,7 @@ private struct SnippetEditorSheet: View {
                     Section("Only in these apps") {
                         if snippet.appIds.isEmpty { Text("Every app").font(.caption).foregroundStyle(.secondary) }
                         ForEach(snippet.appIds, id: \.self) { id in
-                            HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { snippet.appIds.removeAll { $0 == id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless) }
+                            HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { snippet.appIds.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless) }
                         }
                         Button { if let id = AppChoice.choose(prompt: "Add"), !snippet.appIds.contains(id) { snippet.appIds.append(id) } } label: { Label("Add App", systemImage: "plus") }.controlSize(.small)
                     }
@@ -420,7 +420,7 @@ private struct ExpansionTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { store.updateConfig { $0.expansionExcludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.updateConfig { $0.expansionExcludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 Button { if let id = AppChoice.choose(prompt: "Exclude"), !config.expansionExcludedAppIds.contains(id) { store.updateConfig { $0.expansionExcludedAppIds.append(id) } } } label: { Label("Exclude an App", systemImage: "plus") }.controlSize(.small)

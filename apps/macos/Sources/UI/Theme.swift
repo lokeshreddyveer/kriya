@@ -17,7 +17,8 @@ enum Theme {
     private static func dynamic(dark: (CGFloat, CGFloat, CGFloat), light: (CGFloat, CGFloat, CGFloat)) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            let c = isDark ? dark : light
+            var c = isDark ? dark : light
+            if NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast { c = ContrastBoost.adjust(c, dark: isDark) }
             return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
         })
     }

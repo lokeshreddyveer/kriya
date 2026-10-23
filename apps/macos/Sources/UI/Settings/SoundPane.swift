@@ -151,7 +151,7 @@ struct AppMixerRow: View {
                     }
                     Divider()
                     Button("Reset", role: .destructive) { engine.reset(key) }.disabled(settings.isDefault)
-                } label: { Image(systemName: "ellipsis.circle") }
+                } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("More")
                 .menuStyle(.borderlessButton).frame(width: 28)
             }
             HStack(spacing: 10) {
@@ -284,7 +284,7 @@ private struct ProfilesSection: View {
                     Button("All sound") { engine.apply(profile: profile, to: AppAudioEngine.systemKey) }
                     ForEach(engine.apps) { app in Button(app.name) { engine.apply(profile: profile, to: app.id) } }
                 }.menuStyle(.borderlessButton).fixedSize()
-                Button(role: .destructive) { engine.profiles.removeAll { $0.id == profile.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                Button(role: .destructive) { engine.profiles.removeAll { $0.id == profile.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
             }
         }
     }
@@ -310,7 +310,7 @@ private struct SoundRulesSection: View {
                 Toggle("", isOn: $rule.enabled).labelsHidden()
                 Text(rule.summary).lineLimit(2)
                 Spacer()
-                Button(role: .destructive) { runner.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                Button(role: .destructive) { runner.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
             }
         }
         Button("Add a Rule…") { adding = true }
@@ -471,7 +471,7 @@ private struct ModeEditor: View {
                 HStack {
                     Text(action.title.prefix(1).uppercased() + action.title.dropFirst())
                     Spacer()
-                    Button { mode.actions.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                    Button { mode.actions.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
                 }
             }
             Divider()

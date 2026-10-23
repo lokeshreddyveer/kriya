@@ -24,7 +24,7 @@ struct FocusPane: View {
 
             Section {
                 ForEach(focus.config.quitAppIDs, id: \.self) { id in
-                    HStack { Text(AppChoice.name(for: id)); Spacer(); Button { focus.config.quitAppIDs.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless) }
+                    HStack { Text(AppChoice.name(for: id)); Spacer(); Button { focus.config.quitAppIDs.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless) }
                 }
                 Button("Add an App…") { if let id = AppChoice.choose(), !focus.config.quitAppIDs.contains(id) { focus.config.quitAppIDs.append(id) } }
             } header: { Text("Ask these apps to quit when it starts") }

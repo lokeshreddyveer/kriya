@@ -22,7 +22,7 @@ struct WorkspacesPane: View {
                         }
                         Spacer()
                         Button("Edit") { editing = workspace }.controlSize(.small)
-                        Button { store.delete(workspace.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button { store.delete(workspace.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 .onMove { store.move(from: $0, to: $1) }
@@ -71,7 +71,7 @@ struct WorkspacesPane: View {
                             Text(AppChoice.name(for: favorite.appId)).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button { store.update { $0.favorites.removeAll { $0.slot == favorite.slot } } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                        Button { store.update { $0.favorites.removeAll { $0.slot == favorite.slot } } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
                     }
                 }
             } header: { Text("Favorite windows") }
@@ -115,7 +115,7 @@ private struct AppList: View {
                 HStack {
                     Text(AppChoice.name(for: id))
                     Spacer()
-                    Button { ids.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                    Button { ids.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
                 }
             }
             Button("Add App…") {

@@ -180,7 +180,7 @@ struct PointerPane: View {
                     }
                     Spacer()
                     Button("Edit") { editing = position }.controlSize(.small)
-                    Button { store.delete(position.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    Button { store.delete(position.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                 }
             }
         } header: {
@@ -203,7 +203,7 @@ struct PointerPane: View {
                 HStack {
                     Text(AppChoice.name(for: id))
                     Spacer()
-                    Button(role: .destructive) { store.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    Button(role: .destructive) { store.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                 }
             }
             Button { if let id = AppChoice.choose(prompt: "Hide effects in"), !config.excludedAppIds.contains(id) { store.update { $0.excludedAppIds.append(id) } } } label: { Label("Hide Effects in an App", systemImage: "plus") }

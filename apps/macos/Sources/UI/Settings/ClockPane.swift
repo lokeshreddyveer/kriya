@@ -18,7 +18,7 @@ struct ClockPane: View {
                         TextField("Label", text: $place.label).frame(width: 70)
                         Text(place.zoneID.replacingOccurrences(of: "_", with: " ")).foregroundStyle(.secondary)
                         Spacer()
-                        Button(role: .destructive) { clock.places.removeAll { $0.id == place.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { clock.places.removeAll { $0.id == place.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 HStack {

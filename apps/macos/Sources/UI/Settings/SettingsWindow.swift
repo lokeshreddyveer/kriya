@@ -219,12 +219,17 @@ struct SettingsRootView: View {
 
     /// Larger controls and text in a wide window. Only the environment changes; the layout is left to the window.
     private var scale: (control: ControlSize, font: Font?) {
-        switch windowWidth {
-        case ..<1300: return (.regular, nil)
-        case ..<1800: return (.large, .system(size: 15))
-        default: return (.extraLarge, .system(size: 17))
+        let size = TextSize.larger(of: TextSize.forWidth(Double(windowWidth)), textSize)
+        switch size {
+        case .standard: return (.regular, nil)
+        case .large: return (.large, .system(size: 15))
+        case .larger: return (.extraLarge, .system(size: 17))
+        case .largest: return (.extraLarge, .system(size: 20))
         }
     }
+
+    @AppStorage("ui.textSize") private var textSizeRaw = TextSize.standard.rawValue
+    private var textSize: TextSize { TextSize(rawValue: textSizeRaw) ?? .standard }
 
     private var selection: Binding<SettingsPane?> {
         Binding(

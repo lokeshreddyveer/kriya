@@ -92,8 +92,8 @@ struct LauncherPane: View {
                         }
                         Spacer()
                         if row.on {
-                            Button { moveFallback(row.id, -1) } label: { Image(systemName: "arrow.up") }.buttonStyle(.borderless)
-                            Button { moveFallback(row.id, 1) } label: { Image(systemName: "arrow.down") }.buttonStyle(.borderless)
+                            Button { moveFallback(row.id, -1) } label: { Image(systemName: "arrow.up") }.accessibilityLabel("Move up").buttonStyle(.borderless)
+                            Button { moveFallback(row.id, 1) } label: { Image(systemName: "arrow.down") }.accessibilityLabel("Move down").buttonStyle(.borderless)
                         }
                     }
                 }
@@ -139,7 +139,7 @@ struct LauncherPane: View {
                         }
                         Spacer()
                         Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) }.controlSize(.small)
-                        Button(role: .destructive) { extras.removeScriptFolder(folder) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { extras.removeScriptFolder(folder) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 if let folderMessage { Text(folderMessage).font(.caption).foregroundStyle(Theme.warn) }
@@ -175,7 +175,7 @@ struct LauncherPane: View {
                         Button("Test") { if let url = link.testURL { NSWorkspace.shared.open(url) } }.controlSize(.small).disabled(link.testURL == nil)
                             .help("Opens this link in your browser with the words “kriya test”")
                         Button("Edit") { editingLink = link }.controlSize(.small)
-                        Button(role: .destructive) { extras.deleteQuicklink(link.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { extras.deleteQuicklink(link.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -198,7 +198,7 @@ struct LauncherPane: View {
                         }
                         Spacer()
                         Button("Edit") { editingScript = script }.controlSize(.small)
-                        Button(role: .destructive) { extras.deleteScript(script.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { extras.deleteScript(script.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -221,7 +221,7 @@ struct LauncherPane: View {
                         }
                         Spacer()
                         Button("Edit") { editingAPI = command }.controlSize(.small)
-                        Button(role: .destructive) { extras.deleteAPICommand(command.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { extras.deleteAPICommand(command.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -248,7 +248,7 @@ struct LauncherPane: View {
                     HStack {
                         Text((folder as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle)
                         Spacer()
-                        Button(role: .destructive) { prefs.setFileSearchExcluded((prefs.data.fileSearchExcluded ?? []).filter { $0 != folder }) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { prefs.setFileSearchExcluded((prefs.data.fileSearchExcluded ?? []).filter { $0 != folder }) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 Button {
@@ -347,8 +347,8 @@ struct LauncherPane: View {
                     HStack {
                         Text(prefs.data.titles[id] ?? id)
                         Spacer()
-                        Button { prefs.movePinned(id, by: -1) } label: { Image(systemName: "arrow.up") }.buttonStyle(.borderless)
-                        Button { prefs.movePinned(id, by: 1) } label: { Image(systemName: "arrow.down") }.buttonStyle(.borderless)
+                        Button { prefs.movePinned(id, by: -1) } label: { Image(systemName: "arrow.up") }.accessibilityLabel("Move up").buttonStyle(.borderless)
+                        Button { prefs.movePinned(id, by: 1) } label: { Image(systemName: "arrow.down") }.accessibilityLabel("Move down").buttonStyle(.borderless)
                         Button(role: .destructive) { prefs.unpin(id) } label: { Image(systemName: "pin.slash") }.buttonStyle(.borderless)
                     }
                 }
@@ -362,7 +362,7 @@ struct LauncherPane: View {
                         Image(systemName: "arrow.right").foregroundStyle(.tertiary)
                         Text(prefs.data.titles[id] ?? id)
                         Spacer()
-                        Button(role: .destructive) { prefs.setAlias("", for: id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { prefs.setAlias("", for: id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             } header: { Text("Short names") }
@@ -581,7 +581,7 @@ private struct APICommandEditor: View {
                             } else {
                                 TextField("Value", text: binding(for: name))
                             }
-                            Button(role: .destructive) { command.headerNames.removeAll { $0 == name }; headerValues[name] = nil } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                            Button(role: .destructive) { command.headerNames.removeAll { $0 == name }; headerValues[name] = nil } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
                         }
                     }
                     HStack {

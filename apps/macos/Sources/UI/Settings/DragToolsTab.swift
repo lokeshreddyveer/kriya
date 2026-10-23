@@ -78,7 +78,7 @@ struct DragToolsTab: View {
                         Picker("", selection: Binding(get: { binding.actionId }, set: { v in store.update { $0.doubleClicks[index].actionId = v } })) {
                             ForEach(library.actions, id: \.id) { Text($0.name).tag($0.id) }
                         }.labelsHidden()
-                        Button(role: .destructive) { store.update { $0.doubleClicks.remove(at: index) } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.update { $0.doubleClicks.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 Button {
@@ -96,7 +96,7 @@ struct DragToolsTab: View {
                             Picker("Hold", selection: Binding(get: { binding.button }, set: { v in store.update { $0.buttonScrolls[index].button = v } })) {
                                 ForEach(Self.extraButtons, id: \.number) { Text($0.title).tag($0.number) }
                             }
-                            Button(role: .destructive) { store.update { $0.buttonScrolls.remove(at: index) } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                            Button(role: .destructive) { store.update { $0.buttonScrolls.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                         }
                         Picker("Wheel up", selection: Binding(get: { binding.upActionId ?? "" }, set: { v in store.update { $0.buttonScrolls[index].upActionId = v.isEmpty ? nil : v } })) {
                             Text("Nothing").tag("")

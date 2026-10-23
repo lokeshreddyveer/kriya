@@ -48,8 +48,8 @@ struct ProfilesPane: View {
             }
             Divider()
             HStack(spacing: 4) {
-                Button { addApp() } label: { Image(systemName: "plus") }
-                Button { removeSelected() } label: { Image(systemName: "minus") }
+                Button { addApp() } label: { Image(systemName: "plus") }.accessibilityLabel("Add")
+                Button { removeSelected() } label: { Image(systemName: "minus") }.accessibilityLabel("Remove")
                     .disabled(selected?.isDefault ?? true)
                 Spacer()
             }

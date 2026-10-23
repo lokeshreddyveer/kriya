@@ -58,7 +58,7 @@ struct PointerMenuTab: View {
             }
             Spacer()
             Button("Edit") { editing = item }.controlSize(.small)
-            Button { menu.delete(item.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+            Button { menu.delete(item.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
         }
     }
 
@@ -122,7 +122,7 @@ private struct PointerMenuItemEditor: View {
                         HStack {
                             Text(AppChoice.name(for: id))
                             Spacer()
-                            Button { item.appIds.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                            Button { item.appIds.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
                         }
                     }
                     Button("Add App…") {
@@ -163,7 +163,7 @@ struct DefaultAppsSection: View {
                     Text(".\(entry.extension)").font(.system(.body, design: .monospaced))
                     Spacer()
                     Text(AppChoice.name(for: entry.appId)).foregroundStyle(.secondary)
-                    Button { store.updateConfig { $0.defaultApps.removeAll { $0 == entry } } } label: { Image(systemName: "minus.circle") }
+                    Button { store.updateConfig { $0.defaultApps.removeAll { $0 == entry } } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove")
                         .buttonStyle(.borderless)
                 }
             }

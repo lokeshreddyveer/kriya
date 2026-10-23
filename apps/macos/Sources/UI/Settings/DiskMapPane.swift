@@ -20,7 +20,7 @@ struct DiskMapPane: View {
                     Button("Applications") { scanner.reset(to: URL(fileURLWithPath: "/Applications")) }
                     Button("Choose Folder…") { choose() }
                 }.fixedSize()
-                Button { scanner.scan() } label: { Image(systemName: "arrow.clockwise") }.disabled(scanner.scanning)
+                Button { scanner.scan() } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Refresh").disabled(scanner.scanning)
             }
             .controlSize(.small)
 

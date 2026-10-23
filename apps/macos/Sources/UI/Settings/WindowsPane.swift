@@ -144,7 +144,7 @@ private struct ShortcutsTab: View {
                     set: { new in store.setShortcut(command, keyCode: new?.keyCode, modifiers: new?.modifiers ?? 0) }
                 ))
                 .frame(width: 170, height: 26)
-                Button { store.setShortcut(command, keyCode: nil, modifiers: 0) } label: { Image(systemName: "xmark.circle.fill") }
+                Button { store.setShortcut(command, keyCode: nil, modifiers: 0) } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Close")
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
                     .opacity(store.shortcut(for: command) == nil ? 0 : 1)
                     .help("Clear")
@@ -336,7 +336,7 @@ private struct SizesTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = size }.controlSize(.small)
-                        Button(role: .destructive) { store.deleteSize(size.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.deleteSize(size.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -529,7 +529,7 @@ private struct LayoutsTab: View {
             .help(bindings.isBound(layout: layout.id, to: layout.displayKey) ? "Comes back by itself whenever the displays it was made for are connected. Click to stop." : "Bring this layout back by itself whenever the displays it was made for are connected")
             Button("Edit") { designing = DesignerTarget(layout: layout) }.controlSize(.small)
             Button("Restore") { restore(layout) }.controlSize(.small)
-            Button(role: .destructive) { store.deleteLayout(layout.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+            Button(role: .destructive) { store.deleteLayout(layout.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
         }
     }
 
@@ -558,7 +558,7 @@ private struct LayoutsTab: View {
                 }
             }
             .menuStyle(.button).controlSize(.small).fixedSize()
-            Button(role: .destructive) { store.deleteLayout(group.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+            Button(role: .destructive) { store.deleteLayout(group.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
         }
     }
 
@@ -801,7 +801,7 @@ private struct AppsTab: View {
                                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
                             Text(AppChoice.name(for: rule.appId)).font(.headline)
                             Spacer()
-                            Button(role: .destructive) { store.deleteRule(rule.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                            Button(role: .destructive) { store.deleteRule(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                         }
                         HStack(spacing: 12) {
                             Picker("Place", selection: Binding(get: { placementTag(rule) }, set: { setPlacement(rule, $0) })) {
@@ -836,7 +836,7 @@ private struct AppsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { store.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }
+                        Button(role: .destructive) { store.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
                             .buttonStyle(.borderless)
                     }
                 }

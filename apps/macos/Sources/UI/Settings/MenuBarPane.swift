@@ -45,8 +45,8 @@ struct MenuBarPane: View {
                         })).labelsHidden()
                         Text(PopoverCatalog.sections.first { $0.id == id }?.title ?? id)
                         Spacer()
-                        Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }.buttonStyle(.borderless).disabled(index == 0)
-                        Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }.buttonStyle(.borderless).disabled(index == prefs.sectionOrder.count - 1)
+                        Button { move(index, by: -1) } label: { Image(systemName: "chevron.up") }.accessibilityLabel("Move up").buttonStyle(.borderless).disabled(index == 0)
+                        Button { move(index, by: 1) } label: { Image(systemName: "chevron.down") }.accessibilityLabel("Move down").buttonStyle(.borderless).disabled(index == prefs.sectionOrder.count - 1)
                     }
                 }
             } header: { Text("Sections") } footer: {
@@ -61,9 +61,9 @@ struct MenuBarPane: View {
                             Image(systemName: tile.symbol).frame(width: 22).foregroundStyle(.secondary)
                             Text(tile.title)
                             Spacer()
-                            Button { moveTile(index, by: -1) } label: { Image(systemName: "chevron.up") }.buttonStyle(.borderless).disabled(index == 0)
-                            Button { moveTile(index, by: 1) } label: { Image(systemName: "chevron.down") }.buttonStyle(.borderless).disabled(index == prefs.tiles.count - 1)
-                            Button(role: .destructive) { prefs.tiles.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                            Button { moveTile(index, by: -1) } label: { Image(systemName: "chevron.up") }.accessibilityLabel("Move up").buttonStyle(.borderless).disabled(index == 0)
+                            Button { moveTile(index, by: 1) } label: { Image(systemName: "chevron.down") }.accessibilityLabel("Move down").buttonStyle(.borderless).disabled(index == prefs.tiles.count - 1)
+                            Button(role: .destructive) { prefs.tiles.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
                         }
                     }
                 }
@@ -77,7 +77,7 @@ struct MenuBarPane: View {
                         Image(systemName: tile.symbol).frame(width: 22).foregroundStyle(.secondary)
                         Text(tile.title)
                         Spacer()
-                        Button { prefs.tiles.append(tile.id) } label: { Image(systemName: "plus.circle") }.buttonStyle(.borderless)
+                        Button { prefs.tiles.append(tile.id) } label: { Image(systemName: "plus.circle") }.accessibilityLabel("Add").buttonStyle(.borderless)
                     }
                 }
             } header: { Text("Add a quick action") }

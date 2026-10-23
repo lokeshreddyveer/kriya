@@ -691,3 +691,27 @@ final class FinderDrawerListTests: XCTestCase {
         XCTAssertTrue(list.paths.isEmpty)
     }
 }
+
+final class TextSizeTests: XCTestCase {
+    func testTheLargerOfTheChoiceAndTheWindowIsUsed() {
+        XCTAssertEqual(TextSize.larger(of: .standard, .large), .large)
+        XCTAssertEqual(TextSize.larger(of: .larger, .large), .larger)
+        XCTAssertEqual(TextSize.forWidth(900), .standard)
+        XCTAssertEqual(TextSize.forWidth(1500), .large)
+        XCTAssertEqual(TextSize.forWidth(2400), .larger)
+        XCTAssertNil(TextSize.standard.points, "standard leaves the system size alone")
+        XCTAssertEqual(TextSize.allCases.map(\.level), [0, 1, 2, 3])
+    }
+
+    func testHigherContrastReallyIsHigherContrast() {
+        let lightBackground: (CGFloat, CGFloat, CGFloat) = (1, 1, 1)
+        let darkBackground: (CGFloat, CGFloat, CGFloat) = (0.1, 0.1, 0.1)
+        let warnLight: (CGFloat, CGFloat, CGFloat) = (0.60, 0.44, 0.12)
+        let warnDark: (CGFloat, CGFloat, CGFloat) = (0.83, 0.66, 0.37)
+        XCTAssertGreaterThan(ContrastBoost.ratio(ContrastBoost.adjust(warnLight, dark: false), lightBackground), ContrastBoost.ratio(warnLight, lightBackground))
+        XCTAssertGreaterThan(ContrastBoost.ratio(ContrastBoost.adjust(warnDark, dark: true), darkBackground), ContrastBoost.ratio(warnDark, darkBackground))
+        XCTAssertEqual(ContrastBoost.ratio(lightBackground, (0, 0, 0)), 21, accuracy: 0.01)
+        let boosted = ContrastBoost.adjust((1, 1, 1), dark: true)
+        XCTAssertLessThanOrEqual(max(boosted.0, boosted.1, boosted.2), 1)
+    }
+}

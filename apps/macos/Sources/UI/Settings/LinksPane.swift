@@ -281,7 +281,7 @@ private struct RulesTab: View {
             }
             Spacer()
             Button("Edit") { editing = rule }.controlSize(.small)
-            Button { store.delete(rule.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+            Button { store.delete(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
         }
     }
 
@@ -358,7 +358,7 @@ private struct LinkRuleEditor: View {
                         HStack {
                             Text(AppChoice.name(for: id))
                             Spacer()
-                            Button { rule.sourceAppIds.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                            Button { rule.sourceAppIds.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
                         }
                     }
                     Button("Add App…") {

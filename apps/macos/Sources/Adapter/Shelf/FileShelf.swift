@@ -309,7 +309,7 @@ private struct ShelfView: View {
             Spacer()
             Button { searching.toggle(); if !searching { model.query = "" } } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Search every shelf and the history").accessibilityLabel("Search every shelf and the history")
             Button("Add Clipboard") { add(NSPasteboard.general) }.controlSize(.small)
-            Button { store.change { $0.clear() } } label: { Image(systemName: "trash") }
+            Button { store.change { $0.clear() } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
                 .buttonStyle(.borderless).help("Clear this shelf (it goes to the history)").disabled(library.current.items.isEmpty)
             Button(action: onClose) { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary)
         }
@@ -320,7 +320,7 @@ private struct ShelfView: View {
         HStack {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("Search the shelves", text: $model.query).textFieldStyle(.plain)
-            if !model.query.isEmpty { Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.tertiary) }
+            if !model.query.isEmpty { Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Close").buttonStyle(.borderless).foregroundStyle(.tertiary) }
         }
         .padding(.horizontal, 12).padding(.bottom, 8)
     }

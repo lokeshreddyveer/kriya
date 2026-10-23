@@ -99,7 +99,7 @@ private struct SelectionActionsTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = action }.controlSize(.small)
-                        Button(role: .destructive) { withAnimation(.smooth) { store.delete(action.id) } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { withAnimation(.smooth) { store.delete(action.id) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                     .padding(.vertical, 3)
                 }
@@ -177,7 +177,7 @@ private struct SelectionActionEditor: View {
                     Section("Only in these apps") {
                         if action.appIds.isEmpty { Text("Every app").font(.caption).foregroundStyle(.secondary) }
                         ForEach(action.appIds, id: \.self) { id in
-                            HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { action.appIds.removeAll { $0 == id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless) }
+                            HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { action.appIds.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless) }
                         }
                         Button { if let id = AppChoice.choose(prompt: "Add"), !action.appIds.contains(id) { action.appIds.append(id) } } label: { Label("Add App", systemImage: "plus") }.controlSize(.small)
                     }
@@ -276,9 +276,9 @@ struct TextPipelineEditor: View {
                         HStack {
                             Text("\(index + 1). \(ops[index].title)").font(.headline)
                             Spacer()
-                            Button { if index > 0 { ops.swapAt(index, index - 1) } } label: { Image(systemName: "arrow.up") }.buttonStyle(.borderless).disabled(index == 0)
-                            Button { if index < ops.count - 1 { ops.swapAt(index, index + 1) } } label: { Image(systemName: "arrow.down") }.buttonStyle(.borderless).disabled(index == ops.count - 1)
-                            Button(role: .destructive) { withAnimation(.smooth) { _ = ops.remove(at: index) } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                            Button { if index > 0 { ops.swapAt(index, index - 1) } } label: { Image(systemName: "arrow.up") }.accessibilityLabel("Move up").buttonStyle(.borderless).disabled(index == 0)
+                            Button { if index < ops.count - 1 { ops.swapAt(index, index + 1) } } label: { Image(systemName: "arrow.down") }.accessibilityLabel("Move down").buttonStyle(.borderless).disabled(index == ops.count - 1)
+                            Button(role: .destructive) { withAnimation(.smooth) { _ = ops.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                         }
                         TextOpFields(op: Binding(get: { ops[min(index, ops.count - 1)] }, set: { if index < ops.count { ops[index] = $0 } }))
                     }
@@ -393,7 +393,7 @@ private struct SelectionAppsTab: View {
                         HStack {
                             Text(AppChoice.name(for: behavior.appId)).font(.headline)
                             Spacer()
-                            Button(role: .destructive) { store.updateConfig { $0.appBehaviors.removeAll { $0.appId == behavior.appId } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                            Button(role: .destructive) { store.updateConfig { $0.appBehaviors.removeAll { $0.appId == behavior.appId } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                         }
                         Picker("Bar", selection: modeBinding(behavior)) {
                             Text("Appears by itself").tag(SelectionMode.automatic); Text("Only with the shortcut").tag(SelectionMode.manualOnly); Text("Never").tag(SelectionMode.off)
@@ -424,7 +424,7 @@ private struct SelectionAppsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { store.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 Button { if let id = AppChoice.choose(prompt: "Exclude"), !config.excludedAppIds.contains(id) { store.updateConfig { $0.excludedAppIds.append(id) } } } label: { Label("Exclude an App", systemImage: "plus") }.controlSize(.small)

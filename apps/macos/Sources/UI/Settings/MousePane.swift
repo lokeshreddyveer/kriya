@@ -193,9 +193,9 @@ private struct MousePresetsTab: View {
             }
             Divider()
             HStack(spacing: 4) {
-                Button { newName = ""; naming = true } label: { Image(systemName: "plus") }
+                Button { newName = ""; naming = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add")
                 Button { duplicate() } label: { Image(systemName: "plus.square.on.square") }.help("Duplicate").accessibilityLabel("Duplicate")
-                Button { delete() } label: { Image(systemName: "minus") }
+                Button { delete() } label: { Image(systemName: "minus") }.accessibilityLabel("Remove")
                     .disabled(selected?.isBuiltin ?? true)
                 Spacer()
                 Menu {
@@ -497,7 +497,7 @@ private struct ButtonsEditor: View {
                 set: { if let id = $0 { edit(index) { $0.actionId = id } } }
             ), allowNone: false)
             Spacer()
-            Button(role: .destructive) { remove(index) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+            Button(role: .destructive) { remove(index) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
         }
     }
 
@@ -618,7 +618,7 @@ private struct MouseAppsTab: View {
                             ForEach(mouse.presets) { Text($0.name).tag($0.id) }
                         }
                         .labelsHidden().frame(width: 200)
-                        Button(role: .destructive) { mouse.deleteAssignment(assignment.id) } label: { Image(systemName: "trash") }
+                        Button(role: .destructive) { mouse.deleteAssignment(assignment.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
                             .buttonStyle(.borderless)
                     }
                 }
@@ -640,7 +640,7 @@ private struct MouseAppsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { mouse.setExcludedApps(mouse.config.excludedAppIds.filter { $0 != id }) } label: { Image(systemName: "trash") }
+                        Button(role: .destructive) { mouse.setExcludedApps(mouse.config.excludedAppIds.filter { $0 != id }) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
                             .buttonStyle(.borderless)
                     }
                 }

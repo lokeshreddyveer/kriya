@@ -101,7 +101,7 @@ struct DisplaysPane: View {
                         }
                         Spacer()
                         Button("Apply") { tools.apply(profile) }.controlSize(.small)
-                        Button(role: .destructive) { store.update { $0.displayProfiles.removeAll { $0.id == profile.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.update { $0.displayProfiles.removeAll { $0.id == profile.id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             }

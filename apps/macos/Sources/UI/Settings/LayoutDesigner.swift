@@ -220,7 +220,7 @@ struct LayoutDesignerView: View {
             ))
             .textFieldStyle(.roundedBorder)
             Text("\(Int((region.rect.width * 100).rounded()))% × \(Int((region.rect.height * 100).rounded()))%").font(.caption).foregroundStyle(.secondary)
-            Button(role: .destructive) { remove(region.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+            Button(role: .destructive) { remove(region.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? Theme.accent.opacity(0.14) : Color.primary.opacity(0.04)))

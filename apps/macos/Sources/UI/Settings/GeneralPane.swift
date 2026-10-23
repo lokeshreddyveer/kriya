@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct GeneralPane: View {
+    @AppStorage("ui.textSize") private var textSizeRaw = TextSize.standard.rawValue
     @EnvironmentObject private var config: ConfigStore
     @EnvironmentObject private var updates: UpdateManager
     @EnvironmentObject private var menuBar: MenuBarHider
@@ -47,6 +48,11 @@ struct GeneralPane: View {
             }
 
             Section("Appearance") {
+                Picker("Text size in settings", selection: $textSizeRaw) {
+                    ForEach(TextSize.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                Text("Makes the text and controls in this window larger. The window already grows them when it is made very wide. Colours follow System Settings › Accessibility › Display › Increase contrast.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Appearance", selection: $config.settings.appearance) {
                     ForEach([AppearanceMode.system, .light, .dark], id: \.self) { mode in
                         Text(mode.title).tag(mode)

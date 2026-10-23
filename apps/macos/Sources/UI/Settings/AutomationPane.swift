@@ -795,8 +795,8 @@ private struct StepCard: View {
                 Text(workflowStepSummary(step: step)).font(.callout.weight(.medium)).lineLimit(1)
                 if step.kind.risk == .needsAuthorization { Image(systemName: "exclamationmark.shield").foregroundStyle(Theme.warn).help("Needs authorization").accessibilityLabel("Needs authorization") }
                 Spacer()
-                Button { move(-1) } label: { Image(systemName: "arrow.up") }.buttonStyle(.borderless).disabled(index == 0)
-                Button { move(1) } label: { Image(systemName: "arrow.down") }.buttonStyle(.borderless).disabled(index == count - 1)
+                Button { move(-1) } label: { Image(systemName: "arrow.up") }.accessibilityLabel("Move up").buttonStyle(.borderless).disabled(index == 0)
+                Button { move(1) } label: { Image(systemName: "arrow.down") }.accessibilityLabel("Move down").buttonStyle(.borderless).disabled(index == count - 1)
                 Button(role: .destructive, action: delete) { Image(systemName: "trash") }.buttonStyle(.borderless)
             }
             StepFields(kind: $step.kind, workflowID: workflowID)

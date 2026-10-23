@@ -85,7 +85,7 @@ struct CapturePane: View {
                     HStack {
                         Text(word)
                         Spacer()
-                        Button(role: .destructive) { store.update { $0.redactWords.removeAll { $0 == word } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.update { $0.redactWords.removeAll { $0 == word } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 HStack {
@@ -161,7 +161,7 @@ struct CaptureHistorySection: View {
                 }
             }
         } header: {
-            HStack { Text("Recent captures"); Spacer(); Button { reload() } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless) }
+            HStack { Text("Recent captures"); Spacer(); Button { reload() } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Refresh").buttonStyle(.borderless) }
         } footer: {
             Text("Pin keeps a picture on top of everything: drag it, scroll to resize it, ⌥-scroll to make it see-through, double-click to close.")
         }

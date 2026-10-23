@@ -92,7 +92,7 @@ private struct ActionsTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = item }.controlSize(.small)
-                        Button(role: .destructive) { withAnimation(.smooth) { store.delete(item.id) } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { withAnimation(.smooth) { store.delete(item.id) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                     .padding(.vertical, 3)
                 }
@@ -147,7 +147,7 @@ private struct RecentOperationsSection: View {
                                 Image(systemName: "chevron.right").rotationEffect(.degrees(open == operation.id ? 90 : 0))
                             }.buttonStyle(.borderless).help("Details")
                         }
-                        Button { withAnimation(.smooth) { history.remove(operation.id) } } label: { Image(systemName: "xmark") }
+                        Button { withAnimation(.smooth) { history.remove(operation.id) } } label: { Image(systemName: "xmark") }.accessibilityLabel("Close")
                             .buttonStyle(.borderless).foregroundStyle(.tertiary).help("Remove from this list")
                     }
                     if open == operation.id {
@@ -349,7 +349,7 @@ private struct TemplatesTab: View {
                         VStack(alignment: .leading, spacing: 2) { Text(t.name).font(.headline); Text(t.fileName).font(.caption).foregroundStyle(.secondary) }
                         Spacer()
                         Button("Edit") { editingFile = t }.controlSize(.small)
-                        Button(role: .destructive) { store.deleteTemplate(t.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.deleteTemplate(t.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -366,7 +366,7 @@ private struct TemplatesTab: View {
                         VStack(alignment: .leading, spacing: 2) { Text(t.name).font(.headline); Text("\(t.entries.count) entries").font(.caption).foregroundStyle(.secondary) }
                         Spacer()
                         Button("Edit") { editingFolder = t }.controlSize(.small)
-                        Button(role: .destructive) { store.deleteFolderTemplate(t.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.deleteFolderTemplate(t.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -468,7 +468,7 @@ private struct AppsSettingsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { store.updateConfig { $0.favoriteApps.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { store.updateConfig { $0.favoriteApps.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -571,7 +571,7 @@ private struct SetupTab: View {
                             Text((path as NSString).abbreviatingWithTildeInPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         }
                         Spacer()
-                        Button(role: .destructive) { dialogFolders.set(nil, for: id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { dialogFolders.set(nil, for: id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }
                 Button {
