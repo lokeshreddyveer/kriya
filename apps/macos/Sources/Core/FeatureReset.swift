@@ -13,7 +13,7 @@ enum FeatureReset {
     static let areas: [ResettableArea] = [
         ResettableArea(id: "launcher", title: "Launcher", detail: "Search sources, quicklinks, scripts, API commands, approvals, history and rates.",
                        keys: ["launcherPrefs.v1", "launcherQuicklinks.v1", "launcherScripts.v1", "launcherScriptFolders.v1", "launcherAPICommands.v1", "launcherApprovals.v1",
-                              "launcherSearchHistory.v1", "launcherRates.v1", "recentApps.v1"]),
+                              "launcherSearchHistory.v1", "launcherRates.v1", "recentApps.v1", "launcherAskBeforeRunning"]),
         ResettableArea(id: "sound", title: "Sound", detail: "Sound rules, modes, remembered volumes, device history, places and per-app sound settings.",
                        keys: ["soundRules.v1", "soundModes.v1", "soundDeviceVolumes.v1", "soundDeviceHistory.v1", "soundSnapshot.v1", "soundSnapshotTime.v1",
                               "soundRemembersVolumes", "soundNotifiesDevices", "placeRules.v1", "placeRules.enabled", "appAudio.profiles.v1", "appAudio.settings.v1"]),

@@ -27,10 +27,28 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
 
     func start() {
         guard enabled, !started else { return }
+        guard CLLocationManager.locationServicesEnabled() else {
+            problem = "Location Services are off on this Mac. Turn them on in System Settings › Privacy & Security › Location Services."
+            return
+        }
         started = true
         manager.requestWhenInUseAuthorization()
         manager.startMonitoringSignificantLocationChanges()
-        manager.requestLocation()
+        if authorized { manager.requestLocation() }
+    }
+
+    private var authorized: Bool { manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorized }
+
+    /// Asked once the person answers the macOS prompt, or changes it later in System Settings.
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .denied, .restricted:
+            problem = "Location is off for Kriya. Turn it on in System Settings › Privacy & Security › Location Services."
+        case .authorizedAlways, .authorized:
+            problem = nil
+            if enabled || pending != nil { manager.requestLocation() }
+        default: break
+        }
     }
 
     func stop() {
@@ -47,7 +65,10 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
     private var pending: (String, String)?
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let here = locations.last else { return }
+        guard let here = locations.last(where: { PlaceRules.isUsable(accuracy: $0.horizontalAccuracy, age: Date().timeIntervalSince($0.timestamp)) }) else {
+            problem = "The position is too old or too rough to use yet. It will be tried again when the Mac moves."
+            return
+        }
         problem = nil
         if let (name, output) = pending {
             pending = nil
@@ -56,7 +77,8 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
             }
         }
         guard enabled else { return }
-        let place = PlaceRules.place(at: here.coordinate.latitude, here.coordinate.longitude, in: places)
+        let current = places.first { $0.id == currentPlaceID }
+        let place = PlaceRules.place(at: here.coordinate.latitude, here.coordinate.longitude, in: places, current: current)
         guard place?.id != currentPlaceID else { return }
         currentPlaceID = place?.id
         currentPlace = place?.name

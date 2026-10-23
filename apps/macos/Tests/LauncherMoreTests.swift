@@ -342,3 +342,23 @@ final class FeatureResetTests: XCTestCase {
         XCTAssertEqual(FeatureReset.areas.count, Set(FeatureReset.areas.map(\.id)).count)
     }
 }
+
+final class PlaceStabilityTests: XCTestCase {
+    func testOldOrRoughReadingsAreNotUsed() {
+        XCTAssertTrue(PlaceRules.isUsable(accuracy: 50, age: 10))
+        XCTAssertFalse(PlaceRules.isUsable(accuracy: 50, age: 600), "stale")
+        XCTAssertFalse(PlaceRules.isUsable(accuracy: 5000, age: 1), "too rough")
+        XCTAssertFalse(PlaceRules.isUsable(accuracy: -1, age: 1), "invalid")
+    }
+
+    func testThePlaceIsKeptWhileTheEdgeWobbles() {
+        let home = PlaceRule(name: "Home", latitude: 0, longitude: 0, radius: 200, outputContains: "Speakers")
+        // About 230 m east: outside the 200 m radius, inside the 1.3 × margin (260 m).
+        let wobble = 230.0 / 111_320.0
+        XCTAssertNil(PlaceRules.place(at: 0, wobble, in: [home]))
+        XCTAssertEqual(PlaceRules.place(at: 0, wobble, in: [home], current: home)?.name, "Home")
+        XCTAssertNil(PlaceRules.place(at: 0, 400.0 / 111_320.0, in: [home], current: home), "clearly gone")
+        var off = home; off.enabled = false
+        XCTAssertNil(PlaceRules.place(at: 0, 0, in: [off], current: home), "a place switched off is left")
+    }
+}
