@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import ImageIO
+import UniformTypeIdentifiers
 
 /// Taking screenshots with the Mac's own screenshot tool, reading text in them, hiding private text, marking them up, and
 /// putting the result on the clipboard or in a folder. Everything happens on this Mac; nothing is uploaded.
@@ -77,6 +78,7 @@ final class ScreenCaptureService: ObservableObject {
         case .pauseRecording: recording.togglePause(); return
         case .stopRecording: recording.stop(); return
         case .mirror: recording.showMirror(); return
+        case .trimRecording: DispatchQueue.main.async { self.trimRecording() }; return
         default: break
         }
         guard !isCapturing else { return }
@@ -171,6 +173,39 @@ final class ScreenCaptureService: ObservableObject {
         }
     }
 
+    /// Asks for a recording and the part to keep, then writes the trimmed copy beside it. The original is left as it is.
+    func trimRecording() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie]
+        panel.directoryURL = settings.settings.folder
+        panel.prompt = "Trim"
+        panel.message = "Choose the recording to trim. The original is kept."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let alert = NSAlert()
+        alert.messageText = "Keep which part?"
+        alert.informativeText = "Times as seconds or minutes:seconds, for example 12 or 1:05."
+        let row = NSStackView(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        let from = NSTextField(string: "0:00"), to = NSTextField(string: "")
+        to.placeholderString = "end"
+        row.addArrangedSubview(from); row.addArrangedSubview(NSTextField(labelWithString: "to")); row.addArrangedSubview(to)
+        alert.accessoryView = row
+        alert.addButton(withTitle: "Trim"); alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let start = RecordingTrim.seconds(from: from.stringValue) else { toast.show("The start time is not a time.", isError: true); return }
+        let end = to.stringValue.trimmingCharacters(in: .whitespaces).isEmpty ? Double.greatestFiniteMagnitude : RecordingTrim.seconds(from: to.stringValue)
+        guard let end else { toast.show("The end time is not a time.", isError: true); return }
+        toast.show("Trimming…")
+        RecordingTrimmer.trim(url, start: start, end: end) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let out): self.toast.show("Saved \(out.lastPathComponent)"); NSWorkspace.shared.activateFileViewerSelecting([out])
+                case .failure(let error): self.toast.show(error.localizedDescription, isError: true)
+                }
+            }
+        }
+    }
+
     /// Reads the text in a picture and copies it. For a picture that is already on this Mac.
     func copyText(from image: CGImage) {
         queue.async { [self] in
@@ -196,7 +231,18 @@ final class ScreenCaptureService: ObservableObject {
                 self.pasteboard.setString(first, forType: .string)
                 self.toast.show(found.count > 1 ? "Copied the first of \(found.count) codes: \(String(first.prefix(60)))" : "Copied: \(String(first.prefix(60)))")
             }
-        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror, .menu:
+        case .cutout:
+            let cut = SubjectCutout.cut(image)
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                guard let cut, let data = cut.pngData else { self.toast.show("No subject found in that picture.", isError: true); return }
+                self.pasteboard.clearContents()
+                self.pasteboard.setData(data, forType: .png)
+                var done = "copied"
+                if settings.saveToFolder, let name = self.save(cut, to: settings.folder) { done += ", saved as \(name)" }
+                self.toast.show("Subject cut out: " + done)
+            }
+        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror, .menu, .trimRecording:
             DispatchQueue.main.async { self.isCapturing = false }
         case .normal, .redacted:
             var picture = image

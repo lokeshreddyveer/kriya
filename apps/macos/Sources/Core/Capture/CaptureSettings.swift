@@ -32,6 +32,10 @@ enum CaptureAction: String, CaseIterable, Identifiable, Codable {
     case redacted
     /// Read a QR code in it and copy what it holds.
     case qr
+    /// Lift the main subject off its background and copy it as a picture with a clear background.
+    case cutout
+    /// Cut a saved recording down to part of it.
+    case trimRecording
     /// Record the screen as a movie, or as a GIF.
     case record, recordGIF
     /// Scroll the window in front and join the pages into one tall picture.
@@ -88,6 +92,8 @@ struct CaptureSettings: Codable, Equatable {
         ("capture.text", "Copy text from a region (OCR)", .region, .text),
         ("capture.redacted", "Capture a region and hide private text", .region, .redacted),
         ("capture.qr", "Read a QR code from a region", .region, .qr),
+        ("capture.trim", "Trim a recording to part of it", .screen, .trimRecording),
+        ("capture.cutout", "Cut out the subject of a region (clear background)", .region, .cutout),
         ("capture.record", "Record the screen", .region, .record),
         ("capture.gif", "Record the screen as a GIF", .region, .recordGIF),
         ("capture.scroll", "Capture the whole page of the front window (scrolling)", .window, .scroll),

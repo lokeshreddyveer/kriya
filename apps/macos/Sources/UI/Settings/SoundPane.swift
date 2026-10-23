@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The sound mixer: the Mac's output and input, and each app that is making sound with its own volume, mute, output and equaliser.
 struct SoundPane: View {
@@ -38,6 +39,11 @@ struct SoundPane: View {
                 SoundModesSection()
             } header: { Text("Sound modes") } footer: {
                 Text("A mode is several sound changes turned on together, such as headset, microphone and volume for a meeting. Turn it off to put the sound back how it was. The starting two only set the volume; edit them to add your own headset and microphone. Modes can also be run from shortcuts and workflows with the commands sound.mode.<id> (they are listed under Keyboard › Shortcuts).")
+            }
+            Section {
+                DeviceExtrasSection()
+            } header: { Text("Devices, test tone and profile file") } footer: {
+                Text("Remembering volumes gives each output the level you last left it at when it reconnects. The test tone is a quiet beep from the left, right or both speakers. A profile file holds your rules, modes and remembered volumes so they can be moved to another Mac.")
             }
             Section {
                 BluetoothSection()
@@ -549,5 +555,40 @@ private struct SoundHistorySection: View {
             }
         }
         if !runner.history.events.isEmpty { Button("Clear the History", role: .destructive) { runner.clearHistory() }.controlSize(.small) }
+    }
+}
+
+
+private struct DeviceExtrasSection: View {
+    @EnvironmentObject private var runner: SoundRuleRunner
+    @State private var side = ToneRunner.Side.both
+    @State private var frequency = 440.0
+    @State private var message: String?
+
+    var body: some View {
+        Toggle("Remember each device's volume", isOn: $runner.remembersVolumes)
+        Toggle("Tell me when a sound device connects or disconnects", isOn: $runner.notifiesDevices)
+        HStack {
+            Picker("Test tone", selection: $side) { ForEach(ToneRunner.Side.allCases) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).frame(maxWidth: 240)
+            Stepper("\(Int(frequency)) Hz", value: $frequency, in: 100...4000, step: 110)
+            Button("Play") { ToneRunner.shared.play(frequency: frequency, seconds: 1, side: side) }
+        }
+        HStack {
+            Button("Export Profile…") {
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = "Kriya sound profile.json"
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                do { try runner.exportProfile().write(to: url, options: .atomic); message = "Saved \(url.lastPathComponent)" } catch { message = error.localizedDescription }
+            }
+            Button("Import Profile…") {
+                let panel = NSOpenPanel()
+                panel.allowedContentTypes = [.json]
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                do { try runner.importProfile(Data(contentsOf: url)); message = "Imported \(url.lastPathComponent)" } catch { message = error.localizedDescription }
+            }
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+            Spacer()
+            Button("Forget Remembered Volumes", role: .destructive) { runner.forgetVolumes() }.controlSize(.small)
+        }
     }
 }

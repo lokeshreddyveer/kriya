@@ -184,3 +184,62 @@ final class FinderWindowTests: XCTestCase {
         XCTAssertFalse(FolderSets.isExcluded("/tmp/kriya-ab", folders: ["/tmp/kriya-a"]))
     }
 }
+
+final class AudioProfileTests: XCTestCase {
+    func testAProfileSurvivesAFileAndKeepsVolumesInRange() throws {
+        var volumes = DeviceVolumes()
+        volumes.remember("Desk Speakers", percent: 40)
+        volumes.remember("Loud", percent: 900)
+        let profile = AudioProfile(
+            rules: [SoundRule(trigger: .deviceConnected(contains: "Pods"), action: .setVolume(percent: 300))],
+            modes: SoundMode.starters, deviceVolumes: volumes)
+        let back = try AudioProfile.decode(try profile.encoded())
+        XCTAssertEqual(back.modes, SoundMode.starters)
+        XCTAssertEqual(back.rules.first?.action, .setVolume(percent: 100), "a volume past 100 is brought back to 100")
+        XCTAssertEqual(back.deviceVolumes.level(for: "Desk Speakers"), 40)
+        XCTAssertEqual(back.deviceVolumes.level(for: "Loud"), 100)
+    }
+
+    func testAFileThatIsNotAProfileOrIsTooNewIsRefused() throws {
+        XCTAssertThrowsError(try AudioProfile.decode(Data("nope".utf8))) { XCTAssertEqual($0 as? AudioProfile.Problem, .unreadable) }
+        var newer = AudioProfile()
+        newer.version = AudioProfile.currentVersion + 1
+        XCTAssertThrowsError(try AudioProfile.decode(try newer.encoded())) { XCTAssertEqual($0 as? AudioProfile.Problem, .newer(2)) }
+        let crowded = AudioProfile(rules: Array(repeating: SoundRule(trigger: .appQuit(bundleID: "a"), action: .muteMic(true)), count: AudioProfile.limit + 1))
+        XCTAssertThrowsError(try AudioProfile.decode(try crowded.encoded())) { XCTAssertEqual($0 as? AudioProfile.Problem, .tooLarge) }
+    }
+
+    func testRememberedVolumesAreBoundedAndForgettable() {
+        var volumes = DeviceVolumes()
+        for i in 0..<(DeviceVolumes.capacity + 10) { volumes.remember("dev\(i)", percent: i) }
+        XCTAssertEqual(volumes.levels.count, DeviceVolumes.capacity)
+        volumes.remember("", percent: 5)
+        XCTAssertNil(volumes.level(for: ""))
+        volumes.clear()
+        XCTAssertTrue(volumes.levels.isEmpty)
+    }
+
+    func testTheTestToneIsQuietBoundedAndFadesAtTheEnds() {
+        let tone = ToneGenerator.samples(frequency: 440, seconds: 1)
+        XCTAssertEqual(tone.count, 44_100)
+        XCTAssertLessThanOrEqual(tone.map { abs($0) }.max() ?? 1, 0.25 + 0.001)
+        XCTAssertEqual(tone.first ?? 1, 0, accuracy: 0.001)
+        XCTAssertEqual(tone.last ?? 1, 0, accuracy: 0.01)
+        XCTAssertEqual(ToneGenerator.samples(frequency: .nan, seconds: 100).count, 5 * 44_100, "a long time is cut to 5 seconds")
+        XCTAssertLessThanOrEqual(ToneGenerator.samples(frequency: 440, seconds: 1, amplitude: 9).map { abs($0) }.max() ?? 1, 0.5 + 0.001)
+    }
+
+    func testTrimTimesAreReadAndRangesChecked() {
+        XCTAssertEqual(RecordingTrim.seconds(from: "75"), 75)
+        XCTAssertEqual(RecordingTrim.seconds(from: "1:15.5"), 75.5)
+        XCTAssertEqual(RecordingTrim.seconds(from: "1:00:00"), 3600)
+        XCTAssertNil(RecordingTrim.seconds(from: "a:b"))
+        XCTAssertNil(RecordingTrim.seconds(from: "-5"))
+        XCTAssertNil(RecordingTrim.seconds(from: ""))
+        XCTAssertEqual(RecordingTrim.range(start: 2, end: 99, duration: 10)?.end, 10)
+        XCTAssertEqual(RecordingTrim.range(start: -3, end: 4, duration: 10)?.start, 0)
+        XCTAssertNil(RecordingTrim.range(start: 5, end: 5.05, duration: 10))
+        XCTAssertNil(RecordingTrim.range(start: 11, end: 20, duration: 10))
+        XCTAssertNil(RecordingTrim.range(start: 0, end: 5, duration: 0))
+    }
+}

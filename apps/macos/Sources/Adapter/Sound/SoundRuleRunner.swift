@@ -15,6 +15,13 @@ final class SoundRuleRunner: ObservableObject {
     /// Meeting, presentation and any the person made: turned on together, and turned off to put the sound back.
     @Published var modes: [SoundMode] { didSet { if let data = try? JSONEncoder().encode(modes) { defaults.set(data, forKey: Self.modesKey) } } }
     @Published private(set) var activeModeID: String?
+    /// Give each device back the volume it was left at when it reconnects.
+    @Published var remembersVolumes: Bool { didSet { defaults.set(remembersVolumes, forKey: "soundRemembersVolumes") } }
+    /// Say so when a sound device connects or disconnects.
+    @Published var notifiesDevices: Bool { didSet { defaults.set(notifiesDevices, forKey: "soundNotifiesDevices") } }
+    @Published private(set) var deviceVolumes: DeviceVolumes { didSet { if let data = try? JSONEncoder().encode(deviceVolumes) { defaults.set(data, forKey: "soundDeviceVolumes.v1") } } }
+    /// Until this time the output volume is not remembered, so a device that has just connected is not given the old device's level.
+    private var settleUntil = Date.distantPast
     @Published private(set) var history: DeviceHistory { didSet { if let data = try? JSONEncoder().encode(history) { defaults.set(data, forKey: Self.historyKey) } } }
     /// How the sound was before Kriya first changed it; kept so "Put the sound back" has something to put back.
     @Published private(set) var snapshot: SoundSnapshot? {
@@ -48,6 +55,9 @@ final class SoundRuleRunner: ObservableObject {
         modes = defaults.data(forKey: Self.modesKey).flatMap { try? JSONDecoder().decode([SoundMode].self, from: $0) } ?? SoundMode.starters
         history = defaults.data(forKey: Self.historyKey).flatMap { try? JSONDecoder().decode(DeviceHistory.self, from: $0) } ?? DeviceHistory()
         snapshot = defaults.data(forKey: Self.snapshotKey).flatMap { try? JSONDecoder().decode(SoundSnapshot.self, from: $0) }
+        remembersVolumes = defaults.bool(forKey: "soundRemembersVolumes")
+        notifiesDevices = defaults.bool(forKey: "soundNotifiesDevices")
+        deviceVolumes = defaults.data(forKey: "soundDeviceVolumes.v1").flatMap { try? JSONDecoder().decode(DeviceVolumes.self, from: $0) } ?? DeviceVolumes()
     }
 
     func start() {
@@ -80,12 +90,51 @@ final class SoundRuleRunner: ObservableObject {
         // The history is kept whether or not there are rules, so a flaky device shows its pattern.
         for name in change.added { history.record(name, connected: true) }
         for name in change.removed { history.record(name, connected: false) }
+        if notifiesDevices {
+            for name in change.added { toast.show("\(name) connected") }
+            for name in change.removed { toast.show("\(name) disconnected") }
+        }
+        if remembersVolumes { keepVolumes(added: change.added) }
         guard rules.contains(where: { $0.enabled }) else { return }
         for name in change.added { handle(.deviceConnected(name: name)) }
         for name in change.removed { handle(.deviceDisconnected(name: name)) }
     }
 
     func clearHistory() { history.clear() }
+    func forgetVolumes() { deviceVolumes.clear() }
+
+    /// Gives a device that just connected the volume it was left at, and notes the volume of the output in use.
+    private func keepVolumes(added: [String]) {
+        let devices = audio.devices()
+        if !added.isEmpty {
+            settleUntil = Date().addingTimeInterval(4)
+            for name in added {
+                guard let level = deviceVolumes.level(for: name), let device = devices.first(where: { $0.name == name && $0.isOutput }) else { continue }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [self] in _ = audio.setVolume(Double(level) / 100, of: device.id) }
+            }
+        }
+        guard Date() >= settleUntil, let id = audio.defaultDevice(input: false), let name = devices.first(where: { $0.id == id })?.name,
+              let volume = audio.volume(of: id) else { return }
+        let percent = Int((volume * 100).rounded())
+        if deviceVolumes.level(for: name) != percent { deviceVolumes.remember(name, percent: percent) }
+    }
+
+    // MARK: Profile
+
+    func exportProfile() throws -> Data {
+        try AudioProfile(rules: rules, modes: modes, deviceVolumes: deviceVolumes).encoded()
+    }
+
+    /// Replaces the rules and modes with those in the file, and merges the remembered volumes.
+    func importProfile(_ data: Data) throws {
+        let profile = try AudioProfile.decode(data)
+        rules = profile.rules
+        modes = profile.modes
+        var merged = deviceVolumes
+        for (name, percent) in profile.deviceVolumes.levels { merged.remember(name, percent: percent) }
+        deviceVolumes = merged
+        AuditLog.shared.record(.setting, "Sound profile imported (\(rules.count) rules, \(modes.count) modes)")
+    }
 
     // MARK: Modes
 
