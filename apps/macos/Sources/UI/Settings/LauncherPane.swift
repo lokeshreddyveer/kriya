@@ -562,6 +562,7 @@ private struct APICommandEditor: View {
     }
 
     private func test() {
+        guard !LocalOnly.isOn else { testResult = LocalOnly.blockedMessage; return }
         guard let request = command.request(for: "test", headerValues: headerValues) else { testResult = "The address could not be built."; return }
         testing = true
         testResult = nil

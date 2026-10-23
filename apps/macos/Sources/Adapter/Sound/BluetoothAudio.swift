@@ -1,5 +1,6 @@
 import Foundation
 import IOBluetooth
+import IOKit
 
 /// A paired Bluetooth audio device (headphones, a speaker, a headset).
 struct BluetoothPeer: Identifiable, Equatable {

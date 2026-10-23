@@ -93,7 +93,11 @@ final class SoundRuleRunner: ObservableObject {
     func currentSnapshot() -> SoundSnapshot {
         let output = audio.defaultDevice(input: false)
         let input = audio.defaultDevice(input: true)
-        let name: (AudioDeviceID?) -> String? = { id in id.flatMap { id in audio.devices().first { $0.id == id }?.name } }
+        let devices = audio.devices()
+        func name(_ id: AudioDeviceID?) -> String? {
+            guard let id else { return nil }
+            return devices.first { $0.id == id }?.name
+        }
         return SoundSnapshot(
             outputName: name(output), inputName: name(input),
             volumePercent: output.flatMap { audio.volume(of: $0) }.map { Int(($0 * 100).rounded()) },

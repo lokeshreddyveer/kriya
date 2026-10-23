@@ -69,10 +69,10 @@ enum LaunchItems {
         default: keepAlive = false
         }
         // A bare command name ("sh", "open") is looked up on the path, so only a full path can be called missing.
-        let exists: Bool? = program.flatMap { $0.hasPrefix("/") ? exists($0) : nil }
+        let present: Bool? = program.flatMap { $0.hasPrefix("/") ? exists($0) : nil }
         return LaunchItem(
             path: path, scope: scope, label: label, program: program, arguments: Array(arguments.dropFirst()),
-            runAtLoad: plist["RunAtLoad"] as? Bool ?? false, keepAlive: keepAlive, disabled: plist["Disabled"] as? Bool ?? false, programExists: exists
+            runAtLoad: plist["RunAtLoad"] as? Bool ?? false, keepAlive: keepAlive, disabled: plist["Disabled"] as? Bool ?? false, programExists: present
         )
     }
 

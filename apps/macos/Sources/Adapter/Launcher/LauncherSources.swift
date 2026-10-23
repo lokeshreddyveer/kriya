@@ -686,7 +686,7 @@ final class LauncherSources {
         let history = SearchHistoryStore.shared
         if history.isEnabled {
             for item in history.history.recent(6) {
-                list.append((PaletteEntry(id: "history:\(item.id)", title: item.text, subtitle: "Search again", symbol: "clock.arrow.circlepath", rememberable: false), "Recent searches"))
+                list.append((PaletteEntry(id: "history:\(item.id)", title: item.text, subtitle: "Search again", symbol: "clock.arrow.circlepath", rememberable: false, run: {}), "Recent searches"))
             }
         }
         return list

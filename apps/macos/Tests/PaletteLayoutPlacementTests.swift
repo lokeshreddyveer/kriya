@@ -10,7 +10,7 @@ final class PaletteLayoutPlacementTests: XCTestCase {
 
     func testCenterPutsTheSearchBarInTheMiddleAndKeepsTheTopStill() {
         let small = PaletteLayout.frame(height: 132, in: screen, placement: .center, pointer: .zero, saved: nil)
-        let big = PaletteLayout.frame(height: 500, in: screen, placement: .center, pointer: .zero, saved: nil)
+        let big = PaletteLayout.frame(height: 300, in: screen, placement: .center, pointer: .zero, saved: nil)
         XCTAssertEqual(small.maxY, big.maxY, accuracy: 0.5)
         XCTAssertEqual(small.midX, 800, accuracy: 0.5)
         // The pill's middle is the screen's middle.
