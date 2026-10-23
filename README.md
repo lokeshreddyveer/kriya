@@ -62,6 +62,8 @@ apart, so a mouse and a trackpad can scroll in opposite directions.
   *auto-scroll* (click a chosen button, then move the pointer: the further from where you clicked, the faster it scrolls; Escape,
   a click or the wheel stops it), and *window follows the pointer* (hold chosen keys and the window under the pointer follows it).
 - **Presets menu:** import, export or restore defaults.
+- **Rule simulator:** pick a button, keys and an app and see which rule would run, and why, without pressing anything.
+- **Devices:** a timeline of connections and a simple health score for each device.
 
 **Not available:** Logitech-specific features such as ratchet control, which need the maker's own protocol.
 
@@ -84,7 +86,8 @@ apart, so a mouse and a trackpad can scroll in opposite directions.
   display the pointer can jump to).
 - **Advanced:** apps where the highlight and rings are never drawn.
 
-Each effect is also a command, so it can go on a shortcut, a mouse button, a gesture or a hot corner.
+Each effect is also a command, so it can go on a shortcut, a mouse button, a gesture or a hot corner. **Quick profiles** switch a whole set of
+effects at once.
 
 # Keyboard
 
@@ -98,8 +101,11 @@ Each effect is also a command, so it can go on a shortcut, a mouse button, a ges
   or while macOS secure input is on.
 - **Keys (remapping):** a key can do one thing when tapped and another when held, or two keys together can act as one. Quick
   setups: Caps Lock as Hyper (Escape when tapped), Caps Lock as Control, Right ⌘ as Control. Off until you turn it on.
+- **Import and export:** save your shortcuts to a file or add them from one. They arrive off, and any that clash or point at something that is
+  missing are left out, with the reason.
 - **Shortcut Map** (sidebar): every shortcut, remapped key, mouse button, gesture, window button, hot corner and automation trigger
-  in one list, with any that want the same thing flagged and explained.
+  in one list, with any that want the same thing flagged and explained. **Fix This…** walks you through it: keep one, turn the others off, or
+  free the shortcuts, and it can be undone.
 
 # Windows
 
@@ -128,6 +134,10 @@ Each effect is also a command, so it can go on a shortcut, a mouse button, a ges
   - *Window groups:* pick a few open windows, name the group (“Development setup”), and restore them together, bringing them
     forward and opening closed apps. **Move To** fits the whole group, keeping its shape, into a display or half of one. A group
     can have a shortcut: look for “Group: …” in Shortcuts.
+- **Layout history and tools:** each saved layout keeps its earlier versions (name, compare, go back, delete). A layout can be previewed (what
+  would move where) and exported or imported (checked first). **Windows that stay put** are left alone by a restore, and windows a restore could
+  not find are retried. With **Arrange when the Space changes**, the windows on a new Space are arranged by your layout (Kriya does not move
+  windows between Spaces).
 - **Apps tab:** placement rules for apps (“Safari always goes on the left half of display 2”), applied when the app opens or
   every time it comes to the front.
 - **Window switcher (⌥Tab):** hold ⌥ and tap Tab to step through your windows as cards with large previews, then let go to switch.
@@ -141,9 +151,19 @@ Each effect is also a command, so it can go on a shortcut, a mouse button, a ges
 arranging windows in a saved layout. *Focus mode* keeps chosen apps visible and hides the rest. Commands: previous app, hide all
 apps, quit all apps (asks first), relaunch the front app, and favorite windows 1–5.
 
-**Window Buttons** (sidebar): give the red, yellow and green buttons different actions per modifier key and per app (close, quit,
+**Workspaces** also have **Import and Export** (with their layouts, checked first), a preview of what opening one would do, a launch log, **Undo
+the last workspace**, and a sound mode for each.
+
+**Window Buttons** (sidebar): *what your rules change compared with macOS* is listed beside each rule; a hover explainer describes how the
+hover menu opens (rest the pointer on the green button for a moment). Give the red, yellow and green buttons different actions per modifier key and per app (close, quit,
 hide, minimize, maximize, full screen, center, snap, a saved action, or nothing). A button that cannot be read, or an action that
 fails, performs the normal click. Optional hover menu on the green button; a double-click on the title bar can run an action too.
+
+**Monitor Controls** (a tab in Displays & Corners): brightness and input of external monitors over DDC, for monitors that allow it. Kriya first
+checks what each monitor supports and shows it. *Presets* keep each monitor's brightness and input; applying one shows what it will change, and
+the settings before it are kept so it can be undone. If nothing is connected to the chosen input the monitor may show nothing; **Switch Back**, or
+the monitor's own buttons, return it. Brightness is put back after the Mac wakes. This depends on the monitor and the cable, so it may not
+work on every one. The Displays tab also shows **HDR status** and a **history of displays connecting and disconnecting**.
 
 **Displays & Corners** (sidebar): resolution and refresh rate per display, software dimming, saved display profiles that apply
 again when the same displays reconnect, and hot corners that run a saved action.
@@ -166,6 +186,12 @@ again when the same displays reconnect, and hot corners that run a saved action.
   documents, audio, video), copy file info, make an alias, copy a checksum, remove the download warning, show hidden files, open
   the parent folder, and your own shell scripts, AppleScripts, Shortcuts and workflows. Add Common Actions adds folder tools: new
   folders from a list, find large files, and tidy up a folder (with Undo).
+- **Tags, comments and sharing:** add or remove Finder tags, edit a file's comment, and use the Share menu from the right-click menu. **Old
+  files** are found by when they were last opened. A **drawer** next to the Finder window keeps a list of files you set aside (reorder, drag out).
+  Closed Finder windows are remembered so you can reopen one, and you can save a **set of folders** and open them together.
+- **Job queue:** file jobs that take a while are listed; ones that have not started can be paused or cancelled.
+- **Paste into a folder:** a command (give it a shortcut) that pastes text, a picture or files from the clipboard into the front Finder folder
+  as real files.
 - **Recent file operations** (top of the Actions tab): every move, copy, rename, archive, extraction, alias and new file is listed
   with **Undo** (an item goes back only if its old place is free, and things an action made go to the Trash), **Show**, and the
   reason for anything that failed. A move or copy that fails for one item still does the rest. Kept for two weeks.
@@ -194,7 +220,7 @@ again when the same displays reconnect, and hot corners that run a saved action.
 Rules check their folder every minute. They only touch files that have been still for a minute (so downloads in progress are left
 alone), never folders or hidden files, never your home folder or system folders, and never overwrite. Everything a rule does is in
 Finder Actions › Recent file operations, with Undo. Changing a rule's conditions switches it off again until you preview it.
-**Pause all** stops every rule at once without switching each off. **Export** saves your rules to a file and **Import** adds rules from one;
+Rules can use a name pattern, and Kriya warns when two rules overlap. A condition can also find files that are a copy of an older file. **Pause all** stops every rule at once without switching each off. **Export** saves your rules to a file and **Import** adds rules from one;
 imported rules come in switched off, and any whose folder is missing or not allowed here is skipped.
 
 # Clipboard
@@ -216,6 +242,9 @@ imported rules come in switched off, and any whose folder is missing or not allo
   (`utm_`, `fbclid`, `gclid` and more), trim, keep plain text only, change case, join into one line, remove tags. What you paste and
   what the history keeps is the tidy version. Files and pictures are never touched.
 - **Paste stack:** turn it on, copy several things, then paste them one after another in the order you copied them.
+- **Sync through iCloud Drive:** with iCloud Drive on, Kriya can keep your snippets and pinned text, and optionally recent copies, the same
+  on your Macs. Each Mac writes its own encrypted file; removals travel too, and when two Macs change the same thing a copy is kept instead of
+  one being lost. Snippets can also be exported and imported as an encrypted file.
 - **Snippets:** saved text you can insert from the history or by abbreviation. Import and export are supported. They can hold dates
   (`{date+3d}`), the clipboard, prompts, `{snippet:other}` (another snippet, nested), `{workday+3}` (working days), `{random:1-100}`,
   `{counter:invoice}` (counts up each time) and `{clipboard:upper}` (the clipboard changed by a filter). Per-app snippets are set on the snippet.
@@ -235,6 +264,9 @@ imported rules come in switched off, and any whose folder is missing or not allo
   and unescape strings, and more. Group actions under one button, or build your own text pipelines (including regular
   expressions), shell scripts, AppleScripts or Shortcuts (each must be approved by its exact text).
 - **Apple Intelligence** actions appear when it is available (see below).
+- **Keyboard mode:** move through the actions with the arrow keys or Tab, press Return or a digit to run one, Escape to leave; its position is spoken for VoiceOver.
+- **Most used and recent actions** are listed first (their names only are kept).
+- **Nothing selected?** Give “Show paste actions here” a shortcut under Keyboard › Shortcuts (or run it from the launcher). A small bar with only paste actions appears beside the pointer, for blank space in a document or a place where nothing can be selected.
 - Per-app behavior, appearance and delay are settings. The bar never appears in password fields.
 
 # Launcher
@@ -247,6 +279,20 @@ kind, size, date and folder. The letters you typed are bold in each title. It ri
   plus a highlight colour for the row you are on (Neutral, Blue, Purple, Pink, Orange, Green).
 - **Quicklinks with variables:** besides `{query}`, an address can use `{clipboard}` and `{selection}` (the text selected when the launcher
   opened). A quicklink that uses only those opens from its keyword alone.
+- **More places to open it:** near the top, in the middle, at the pointer, in a corner (top left or right, bottom left or right), at the
+  bottom, or where you left it. From the bottom it grows upward.
+- **What else it finds** (switch each on or off in Settings › Launcher): category filters on the results, recent apps, music controls
+  for the player that is open, 1Password logins (when 1Password is installed), open browser tabs (asks running browsers by AppleScript, off
+  until you allow it), and a history of what you searched for (off until you allow it; ⌥↑ and ⌥↓ step through it, and there is a Clear button).
+  Results can show **Get Info** and **Share**. Folders you do not want searched can be left out.
+- **API commands:** a request you define (address, method, headers with values kept in the Keychain). Run it from the launcher and the answer
+  is shown, copied or partly opened. A command or script asks before it runs for the first time. Retries are limited, and a preview shows
+  the answer first if you choose.
+- **Why was this shown?** Settings › Launcher can list the last results with the score behind each (match, pins, use) and how long each
+  source took to answer. Quicklinks can be tested and checked.
+- **Web search is always offered:** a “Search with …” row stays in the list even when other things match, showing which engine it uses.
+- **Extensions:** signed bundles (with file hashes and trusted publishers) can be installed, switched on and off and removed, and add
+  launcher commands.
 - **Where it opens** (Settings › Launcher › Position): near the top, in the middle, at the pointer, or where you left it. **Drag it**
   by its search bar or its panel background and it opens there next time, on whichever display that was.
 
@@ -303,17 +349,36 @@ grows as results appear. With nothing typed it shows, in sections: your **Favori
 - **Short names, favorites and matching:** under *How it behaves*, choose how strictly letters must match (loose: `msg` finds Messages;
   strict: starts of words), and whether recent files and today's events show on the opening list.
 
-# Apple Intelligence
+# Apple Intelligence and AI
 
-**Settings › Apple Intelligence.** Uses the on-device model (macOS 26 or later, with Apple Intelligence turned on), never a cloud
-model, so nothing leaves your Mac and what you select is not logged or kept.
+**Settings › Apple Intelligence.** By default Kriya uses the on-device model (macOS 26 or later, with Apple Intelligence turned on),
+so nothing leaves your Mac and what you select is not logged or kept. That model is offline: it cannot look things up, so do not ask it
+for facts about films, news or anything current. For that, turn on web research or use your own provider (below).
 
-- On the selection bar: summarize, key points, explain, fix grammar, make professional or friendly, shorten, expand, translate,
+- **On the selection bar:** summarize, key points, explain, fix grammar, make professional or friendly, shorten, expand, translate,
   or your own instruction. The result appears in a small window with **Replace Selection** (where the text can be replaced) and **Copy**.
-- In the launcher: `ask …`, and actions on the clipboard text. In the clipboard history: a right-click submenu for text items
-  (never for sensitive ones).
-- The pane shows whether it is ready and how to fix it, where it is used, and the language of results. About 6000 characters go to
-  the model; a longer text is cut and the result says so. Summarize on very short text tells you there is nothing to summarize.
+- **In the launcher:** `ask …`, actions on the clipboard text, and `?` followed by words to search your own notes, files and other
+  sources by meaning (see *Search by meaning*). In the clipboard history: a right-click submenu for text items (never for sensitive ones).
+- **AI providers (bring your own key):** add an OpenAI, Anthropic or Gemini account, a model running on this Mac (Ollama, LM Studio),
+  or your company's endpoint. Keys live in the Keychain only (showing one asks for Touch ID or your password) and are never written to
+  settings, backups, exports, logs or reports. A provider does nothing until you switch it on for the parts of Kriya that may use it,
+  and you choose which provider each part uses. **Local-only mode** (Diagnostics) allows only providers on this Mac.
+  - *Protection:* secrets (keys, tokens, passwords, card numbers) are hidden before any text goes to a provider that is not on this
+    Mac. Daily limits stop sending when reached, and the **Activity** list shows which part asked, which provider answered, how much
+    was sent and whether secrets were hidden. What you sent and what came back is never written down.
+- **Search by meaning:** Kriya can build a private index of the sources you allow (notes, bookmarks, files you choose and more), kept on
+  this Mac. It finds things by meaning as well as words. Embeddings go to a provider only if you allow that, so they are off by default.
+  You can see how many items are indexed, update it, and stop an update.
+- **Tools an AI may use:** a list of Kriya actions (list windows, run a script, install an app, change a shortcut, export the
+  clipboard, Finder, capture, sound, browser page and note actions). Each has a risk level, and anything that changes things asks you
+  first. You choose which tools each part of Kriya may offer. Kriya can also act as a local **MCP server**, and connect to **MCP
+  servers** you add: each is off until you allow it, only the tools you tick are shown to an AI, and one cannot read Kriya's files,
+  clipboard or Keychain.
+- **Web research (optional, off by default):** lets Apple Intelligence answer from Wikipedia, with the source linked. Only the words of
+  your question are sent, and only when you ask.
+- **Drafts:** an AI can propose a workflow for you to read; it is never switched on by itself.
+- The pane shows whether the on-device model is ready and how to fix it, where it is used, and the language of results. About 6000
+  characters go to the on-device model; a longer text is cut and the result says so.
 
 # Screen capture
 
@@ -331,8 +396,12 @@ an optional delay, and copy or save the result.
   around the pointer. C copies the colour, Return copies the size, Esc leaves. Nothing is saved.
 - **Whole page:** scrolls the window in front by itself, takes each page and joins them into one tall picture. Keep the mouse still; a bar
   fixed at the top of the page may repeat. Needs Accessibility.
-- **Record and Record GIF:** choose an area, record, and click the stop button in the menu bar. The movie (or an animated GIF made from it)
-  is saved in the capture folder.
+- **Recording:** *Record Screen*, *Record Window* and *Record App* (commands, tiles and buttons in Screen Capture), with **Pause** and **Stop**.
+  Choose whether to include the Mac's sound, the microphone, HDR, the pointer, pressed keys and a camera window. The recording can be **trimmed**,
+  and **Record GIF** makes an animated GIF. Pausing cuts the paused time out. A **live mirror** shows a window in a floating, view-only copy.
+  Files are named by the pattern you set. Needs Screen Recording; the camera and microphone ask the first time.
+- **More capture:** *Menu capture* (capture an open menu), *capture an area* and *capture the previous area again* (forgotten when the displays
+  change), **OCR languages** (automatic, or up to five), **subject cutout**, and **profiles** (a named set of capture choices).
 - **Read QR Code:** choose a region and Kriya copies what the code says.
 - Nothing is uploaded.
 
@@ -349,12 +418,19 @@ an optional delay, and copy or save the result.
 - **Browsers tab:** extensions for Chromium browsers and Firefox (and a Safari Web Extension) that send a link, page or selected text to
   Kriya, or save the page you are on as Markdown or PDF. They ask for four permissions: to talk to Kriya, a right-click menu, the tab you
   are using, and reading that one page, which they do only when you ask for such an action. They use no network. Chromium needs “Load
-  unpacked”; Firefox loads it temporarily; Safari's is switched on in Safari's settings.
+  unpacked”; Firefox loads it temporarily; Safari's is switched on in Safari's settings. A page can be saved as **Markdown** or **PDF**, copied, or put on the
+  shelf. The Safari extension passes requests to Kriya through a private inbox folder and is checked the same way as the others.
 
 # File shelf
 
 **Settings › File Shelf.** A small panel that holds files, text and images while you move between windows. Shake the pointer while
 dragging files to open it, or use its shortcut. Drag items back out into any app, preview with Quick Look, or zip them.
+
+- **Several shelves:** make named shelves that stay until you remove them, switch between them with chips, and drag items from one to another.
+  Inside a shelf, items can be put in groups (filter by group, rename or delete a group).
+- **Search and history:** search every shelf and a history of what you removed.
+- **Expiry:** items can expire after some days and move to the history; a notification warns before they do. Kriya also lists files on a shelf
+  that are missing and items held on more than one shelf.
 
 # Automation
 
@@ -371,6 +447,13 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   - Safety: any step that runs code, presses keys or controls the system needs your authorization for that exact content. Imported
     workflows come in off and unauthorized. Runs have a time limit and a stop button, runaway loops are refused, and nothing starts
     by itself in safe mode.
+- **Workflow steps and tools:** *variables* (named values you can use in later steps, including in addresses to open), *loops*, *retries*, *parallel
+  steps*, a *time limit* for each step, prompts that ask you to confirm, type or choose, *JavaScript* steps and a *macro menu* of your workflows.
+  *Templates* start you off; a *dependency list* shows what a workflow needs; importing shows a preview first. A **step debugger** with
+  breakpoints and a variable inspector runs a workflow one step at a time, and the last 20 saves of each workflow are kept so you can go back.
+  **Pause all automation** and an **emergency stop** stop everything, and both can be put on a shortcut.
+- **MIDI triggers:** a MIDI controller button can start a workflow or a sound mode. Kriya shows the device name and a preview while you teach it
+  a button, and warns when a trigger clashes.
 - **App Profiles** (sidebar): settings that switch on automatically for chosen apps.
 
 # Apps
@@ -383,8 +466,14 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   command and confirm first. With nothing typed it lists popular apps. *Save My Apps as a List* and *Reinstall from a List* move
   your Homebrew apps to another Mac. Needs Homebrew; Kriya never installs Homebrew itself.
 - **Leftovers:** files left by apps that are already gone.
+- **Checking:** the app's signature and notarization can be checked, and a problem with the Homebrew location is explained. The list of **launch
+  agents and daemons** is read-only, with ones whose app is gone shown first. Before an app is removed its support files are zipped, so you can
+  undo it.
+- **Installing:** an install has a time limit and detects when it has stalled, ends the whole process (not only the first part), and offers
+  **Run in Terminal** if it needs a password or gets stuck. The log is kept on disk.
 - **Updates:** apps with their own update feed and Homebrew apps. Kriya can upgrade outdated Homebrew apps one at a time by itself
-  (switch it off here); apps that update themselves are only listed.
+  (switch it off here); apps that update themselves are only listed. **Check Now** and **Stop** control a check, each source shows its own progress,
+  failed upgrades are retried with a growing wait, and an update history is kept.
 
 # System and general
 
@@ -431,13 +520,18 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   quits: switch the output, switch the microphone, mute or unmute, set the volume. A **speaker in the menu bar** (turn it on in Settings › Sound)
   opens this mixer; right-click it for outputs and mutes. The **volume keys work on outputs without a volume of their own** (many HDMI and
   DisplayPort monitors) by changing the “All sound” level. **Shortcuts** has actions to set an app's volume, mute an app, switch the output
-  and set the Mac's volume. Needs macOS 14.2 for per-app control; macOS asks
+  and set the Mac's volume. **Sound modes** (named sets of settings such as “Meeting”) can be switched by a command, a rule, a workspace or a
+  MIDI button, and **Put the sound back** returns everything to how it was. A **device history**, notifications when a device connects, a **test
+  tone**, remembered volume for each device, **Bluetooth connect and disconnect** for paired audio devices, and sound profile files you can save and load.
+  **Places** (needs Location Services) switch the output when you arrive somewhere you saved, with ordered fallbacks, a short dwell and a cooldown
+  so it does not flap, and a manual override. Needs macOS 14.2 for per-app control; macOS asks
   once to allow it, and nothing is recorded. If Kriya quits, every app's sound goes back to normal at once.
 - **Menu-bar icons in the launcher:** type `mb wifi`, `menu bar battery` or `status bluetooth` to find another app's menu-bar icon by name
   and open it, even when it is hidden behind the arrow or squeezed out by the notch. Needs Accessibility; it reads icon names only.
 - **Open and Save dialogs:** the *Go to a folder in the Open or Save dialog* command (give it a shortcut, or use the Dialog Folders tile)
   shows a list while a dialog is in front: the folder Finder is in, Finder's other windows, your favourite folders and recent ones. Click one and
-  the dialog goes there (Kriya types the path into the dialog's own “Go to the folder” sheet). Needs Accessibility.
+  the dialog goes there (Kriya types the path into the dialog's own “Go to the folder” sheet). The list has a **search box** and a button for
+  **hidden files**, and a folder can be set to open automatically for each app. Needs Accessibility.
 - **Launcher system jobs:** `kill chrome` (force quit), `port 3000` (what is using it, with a button to end it), `wifi off` / `wifi on`,
   `quit all` (asks every other app to close), `eject` (all removable disks), `hidden files` (show or hide them in Finder), `pick color`
   (click any pixel to copy its hex code), and `note clipboard` (save the clipboard as a note). The quick panel also has tiles for Notes,
@@ -446,12 +540,24 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
 - **Sleep & Power:** *Keep Awake* in timed sessions, until turned off, only while chosen apps run, or until a battery level.
 - **Backup & Restore:** back up all your settings to a file or to iCloud Drive, restore one, and protect backups with a passphrase
   (kept in your Keychain; another Mac asks for it). Clipboard history is never included. A restore saves your current settings
-  first so you can undo it. With iCloud Drive on, if another Mac saved settings after this one, the pane offers them with
+  first so you can undo it; a restore first shows a preview of what would change compared with now, and backups show their sizes and can be checked
+  for readability. With iCloud Drive on, if another Mac saved settings after this one, the pane offers them with
   **Review** and **Not Now**; nothing is applied by itself.
-- **Permissions:** the state of each permission and a button to fix it.
+- **Permissions:** the state of each permission and a button to fix it, shown by feature and with a history of changes (Kriya tells you when one
+  changes).
+- **Status on the Overview:** every feature shows whether it is on and working. Settings search finds items inside panes.
+- **Local-only mode, audit log:** one switch keeps everything on this Mac (no provider or network feature leaves it). The audit log lists what Kriya
+  did, AI requests (sizes only) and changes to settings; nothing you typed or copied is in it, and it can be exported with names and paths removed.
+- **Reset one part:** clear only one feature's saved settings and restart Kriya; its last settings are kept for a day so the reset can be undone.
+- **Accessibility:** a text-size choice for settings, colours that follow Increase Contrast, more VoiceOver labels, and reduced motion in the launcher.
+- **Power:** the status of Low Power Mode, a button to open Battery settings, what is keeping the Mac awake, and Kriya's own power-saving mode
+  (less frequent background work). The System Monitor can warn when the Mac is struggling (sustained processor, memory, free disk, heat, battery
+  health), once each, with a cooldown.
+- **Competing programs:** Kriya says when another utility is running that does the same job and may clash with it.
 - **Diagnostics:** *Health* (permissions, what each feature needs, secure-input status), *Trace* (what Kriya did for each shortcut,
   off until you start it and limited to five minutes, never recording text), *Timeline* (event speed), and support reports with
-  your name, paths and keys removed.
+  your name, paths and keys removed. **Copy Report** puts a short report on the clipboard. An *Audit* tab lists what Kriya did, and an
+  *Evidence* list shows which features are known to work in this build. **About** shows build details and the licences of what Kriya uses.
 
 ## Command line, URL commands and the Shortcuts app
 
@@ -478,6 +584,10 @@ Kriya has no check or scan buttons. These happen without you asking, and each ca
 - **Kriya's own updates:** looks for a signed update at start and about every hour, and installs it (Settings › General › Updates).
 - **Homebrew apps:** upgrades outdated ones one at a time, listed under Apps › Updates (turn off there).
 - **Folder Rules:** only rules you switched on, and only on the folders you chose.
+- **Failed Homebrew upgrades** are retried with a growing wait, and **shelf items** that reach their expiry move to the shelf history (a
+  notification warns first).
+- **Warnings:** a nearly flat mouse, keyboard or trackpad, and (if you leave it on) a Mac that is struggling, said once each with a cooldown.
+- **If you turned them on:** iCloud backups and clipboard sync, the search index update, sound rules and places, and the focus and clock items in the menu bar.
 - **The apps list and leftovers:** follow your Applications folders. These only read.
 
 Nothing else changes your files or apps by itself: removing an app, installing from the Install tab and every Finder action wait for you.
@@ -486,7 +596,10 @@ Nothing else changes your files or apps by itself: removing an app, installing f
 
 - No analytics and no account. Settings, clipboard history and everything else stay on this Mac.
 - Network use is limited to: update checks (the app's version only), Homebrew searches you run, optional currency rates (currency
-  codes only), and a web search or address when you press Return on it.
+  codes only), a web search or address when you press Return on it, and what you set up yourself: an AI provider you added (only when a
+  part of Kriya you allowed asks it something, with secrets hidden first), optional Wikipedia research, an API command you defined, iCloud
+  Drive for backups and clipboard sync (encrypted), and a link check you run on a quicklink. **Local-only mode** switches off every one of these
+  that leaves your Mac.
 - What you type, copy or select is never written to the log. Passwords and secret copies are never recorded by the clipboard.
 
 # Not available
