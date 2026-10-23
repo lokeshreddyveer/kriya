@@ -5,17 +5,27 @@ import SwiftUI
 /// The floating bar of actions that appears next to selected text.
 final class SelectionToolbar {
     private final class Panel: NSPanel {
-        override var canBecomeKey: Bool { false }
+        /// Off by default: the bar never takes the keyboard from the app with the selection. Turned on for keyboard mode.
+        var keyboardMode = false
+        var onKey: (NSEvent) -> Bool = { _ in false }
+        override var canBecomeKey: Bool { keyboardMode }
         override var canBecomeMain: Bool { false }
+        override func keyDown(with event: NSEvent) { if !onKey(event) { super.keyDown(with: event) } }
     }
 
     private var panel: Panel?
+    private let keys = ToolbarKeyModel()
+    private var flat: [SelectionAction] = []
+    private var chooseHandler: ((SelectionAction) -> Void)?
     private var hideWork: DispatchWorkItem?
     private(set) var isVisible = false
 
     func show(actions: [SelectionAction], config: SelectionConfig, anchor: CGRect?, pointer: CGPoint, onChoose: @escaping (SelectionAction) -> Void) {
         hideWork?.cancel()
-        let view = ToolbarView(actions: actions, config: config, onChoose: { [weak self] action in
+        flat = actions
+        chooseHandler = onChoose
+        keys.reset()
+        let view = ToolbarView(actions: actions, config: config, keys: keys, onChoose: { [weak self] action in
             self?.hide()
             onChoose(action)
         })
@@ -41,8 +51,42 @@ final class SelectionToolbar {
         }
     }
 
+    /// Takes the keyboard so the bar can be driven without the mouse. Arrow keys or Tab move, Return runs, 1 to 9 run one, Escape leaves.
+    /// The bar stays open until one is run or Escape is pressed.
+    func beginKeyboard() {
+        guard isVisible, let panel, !flat.isEmpty else { return }
+        hideWork?.cancel()
+        panel.keyboardMode = true
+        panel.onKey = { [weak self] event in self?.handleKey(event) ?? false }
+        keys.begin(count: flat.count, titles: flat.map(\.title))
+        panel.makeKeyAndOrderFront(nil)
+        announce()
+    }
+
+    var isKeyboardMode: Bool { keys.active }
+
+    private func announce() {
+        let text = keys.announcement
+        guard !text.isEmpty else { return }
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    }
+
+    private func handleKey(_ event: NSEvent) -> Bool {
+        guard let key = ToolbarNavigator.key(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, shift: event.modifierFlags.contains(.shift)) else { return false }
+        switch keys.press(key) {
+        case .moved: announce(); return true
+        case .choose(let i):
+            if flat.indices.contains(i), let handler = chooseHandler { let action = flat[i]; hide(); handler(action) }
+            return true
+        case .close: hide(); return true
+        case .ignored: return true
+        }
+    }
+
     func hide() {
         hideWork?.cancel()
+        if let panel, panel.keyboardMode { panel.keyboardMode = false; panel.resignKey() }
+        keys.end()
         guard isVisible, let panel else { return }
         isVisible = false
         NSAnimationContext.runAnimationGroup({ context in
@@ -91,9 +135,29 @@ final class SelectionToolbar {
     }
 }
 
+/// Which button the keyboard is on.
+final class ToolbarKeyModel: ObservableObject {
+    @Published private(set) var index = 0
+    @Published private(set) var active = false
+    private var navigator = ToolbarNavigator(count: 0)
+    private var titles: [String] = []
+
+    func reset() { active = false; index = 0 }
+    func begin(count: Int, titles: [String]) { navigator = ToolbarNavigator(count: count); self.titles = titles; index = 0; active = true }
+    func end() { active = false }
+    func press(_ key: ToolbarNavigator.Key) -> ToolbarNavigator.Outcome {
+        let outcome = navigator.handle(key)
+        index = navigator.index
+        return outcome
+    }
+    var announcement: String { navigator.announcement(titles: titles) }
+    var highlightedTitle: String? { active && titles.indices.contains(index) ? titles[index] : nil }
+}
+
 private struct ToolbarView: View {
     let actions: [SelectionAction]
     let config: SelectionConfig
+    @ObservedObject var keys: ToolbarKeyModel
     let onChoose: (SelectionAction) -> Void
 
     /// One button in the bar: an action, or a group of actions that opens a small menu.
@@ -163,6 +227,7 @@ private struct ToolbarView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(ToolbarButtonStyle(accent: config.theme == .accent))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.accent, lineWidth: keys.active && keys.highlightedTitle == action.title ? 2 : 0))
                     .help(action.title)
                 case .group(let name, let members):
                     Menu {
@@ -205,6 +270,9 @@ private struct ToolbarView: View {
             }
         }
         .padding(5)
+        .overlay(alignment: .bottom) {
+            if let title = keys.highlightedTitle { Text("\(title) · Return").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(.thinMaterial, in: Capsule()).offset(y: 18) }
+        }
         .foregroundStyle(config.theme == .accent ? Color.white : Color.primary)
         .background(background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         // A thin edge that is brighter at the top, like light catching a glass pill.
@@ -378,6 +446,8 @@ final class SelectionService: ObservableObject {
     }
 
     func showManually() {
+        // Pressing the shortcut again while the bar is up hands the keyboard to it.
+        if toolbar.isVisible, !toolbar.isKeyboardMode { toolbar.beginKeyboard(); return }
         pointer = DisplayManager.mouseLocation()
         check(manual: true)
     }

@@ -1044,3 +1044,39 @@ final class NetworkCareTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(APICommand.self, from: Data(json.utf8)).previewFirst)
     }
 }
+
+final class ToolbarNavigationTests: XCTestCase {
+    func testArrowsAndTabWrapAndReturnRunsTheOneHighlighted() {
+        var nav = ToolbarNavigator(count: 3)
+        XCTAssertEqual(nav.handle(.right), .moved); XCTAssertEqual(nav.index, 1)
+        XCTAssertEqual(nav.handle(.tab), .moved); XCTAssertEqual(nav.index, 2)
+        XCTAssertEqual(nav.handle(.tab), .moved); XCTAssertEqual(nav.index, 0)
+        XCTAssertEqual(nav.handle(.left), .moved); XCTAssertEqual(nav.index, 2)
+        XCTAssertEqual(nav.handle(.backTab), .moved); XCTAssertEqual(nav.index, 1)
+        XCTAssertEqual(nav.handle(.enter), .choose(1))
+        XCTAssertEqual(nav.handle(.home), .moved); XCTAssertEqual(nav.index, 0)
+        XCTAssertEqual(nav.handle(.end), .moved); XCTAssertEqual(nav.index, 2)
+        XCTAssertEqual(nav.handle(.escape), .close)
+    }
+
+    func testDigitsRunTheFirstNineAndNothingBreaksWithNoButtons() {
+        var nav = ToolbarNavigator(count: 4)
+        XCTAssertEqual(nav.handle(.digit(3)), .choose(2))
+        XCTAssertEqual(nav.handle(.digit(5)), .ignored)
+        XCTAssertEqual(nav.handle(.digit(0)), .ignored)
+        var empty = ToolbarNavigator(count: 0)
+        XCTAssertEqual(empty.handle(.right), .ignored)
+        XCTAssertEqual(empty.handle(.escape), .close)
+    }
+
+    func testKeyCodesMapAndOtherKeysAreLeftAlone() {
+        XCTAssertEqual(ToolbarNavigator.key(keyCode: 124, characters: nil, shift: false), .right)
+        XCTAssertEqual(ToolbarNavigator.key(keyCode: 48, characters: "\t", shift: true), .backTab)
+        XCTAssertEqual(ToolbarNavigator.key(keyCode: 36, characters: "\r", shift: false), .enter)
+        XCTAssertEqual(ToolbarNavigator.key(keyCode: 53, characters: nil, shift: false), .escape)
+        XCTAssertEqual(ToolbarNavigator.key(keyCode: 20, characters: "3", shift: false), .digit(3))
+        XCTAssertNil(ToolbarNavigator.key(keyCode: 0, characters: "a", shift: false))
+        XCTAssertEqual(ToolbarNavigator(count: 3).announcement(titles: ["Copy", "Search", "Share"]), "Copy, 1 of 3")
+        XCTAssertEqual(ToolbarNavigator(count: 0).announcement(titles: []), "")
+    }
+}
