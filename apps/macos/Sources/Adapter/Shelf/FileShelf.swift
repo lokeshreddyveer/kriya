@@ -51,14 +51,21 @@ final class ShelfModel: ObservableObject {
     let store = ShelfLibraryStore.shared
     @Published var targeted = false
     @Published var query = ""
+    /// Show only this group. New items dropped meanwhile go into it.
+    @Published var groupFilter: String?
+    /// The item being dragged inside the panel, so dropping it on a group chip moves it there.
+    var draggingItemID: String?
 
-    var items: [ShelfItem] { store.library.current.items.compactMap { ShelfItem(record: $0, store: store) } }
+    var items: [ShelfItem] {
+        store.library.current.items.filter { groupFilter == nil || $0.group == groupFilter }.compactMap { ShelfItem(record: $0, store: store) }
+    }
 
-    func addFile(_ url: URL) { store.change { _ = $0.add(ShelfRecord(kind: .file, value: url.path, added: Date())) } }
-    func addText(_ text: String) { store.change { _ = $0.add(ShelfRecord(kind: .text, value: text, added: Date())) } }
-    func addImage(_ image: NSImage) {
+    func addFile(_ url: URL, group: String? = nil) { let g = group ?? groupFilter; store.change { _ = $0.add(ShelfRecord(kind: .file, value: url.path, added: Date(), group: g)) } }
+    func addText(_ text: String, group: String? = nil) { let g = group ?? groupFilter; store.change { _ = $0.add(ShelfRecord(kind: .text, value: text, added: Date(), group: g)) } }
+    func addImage(_ image: NSImage, group: String? = nil) {
         guard let name = store.storeImage(image) else { return }
-        store.change { _ = $0.add(ShelfRecord(kind: .image, value: name, added: Date())) }
+        let g = group ?? groupFilter
+        store.change { _ = $0.add(ShelfRecord(kind: .image, value: name, added: Date(), group: g)) }
     }
 }
 
@@ -250,6 +257,8 @@ private struct ShelfView: View {
     @State private var showingHistory = false
     @State private var newName = ""
     @State private var naming: Naming?
+    @State private var renamingGroup: String?
+    @State private var groupingItem: String?
 
     private enum Naming { case new, rename }
 
@@ -259,6 +268,7 @@ private struct ShelfView: View {
         VStack(spacing: 0) {
             header
             if searching { searchField }
+            groupBar
             Divider()
             content
             Divider()
@@ -276,6 +286,23 @@ private struct ShelfView: View {
             if searching { searching = false; model.query = ""; return .handled }
             onClose()
             return .handled
+        }
+        .alert("New Group", isPresented: Binding(get: { groupingItem != nil }, set: { if !$0 { groupingItem = nil } })) {
+            TextField("Name", text: $newName)
+            Button("OK") { if let id = groupingItem { let name = newName; store.change { $0.setGroup(name, for: id) } }; groupingItem = nil }
+            Button("Cancel", role: .cancel) { groupingItem = nil }
+        }
+        .alert("Rename Group", isPresented: Binding(get: { renamingGroup != nil }, set: { if !$0 { renamingGroup = nil } })) {
+            TextField("Name", text: $newName)
+            Button("OK") {
+                if let old = renamingGroup {
+                    let name = newName
+                    store.change { $0.renameGroup(old, to: name) }
+                    if model.groupFilter == old { model.groupFilter = name.trimmingCharacters(in: .whitespacesAndNewlines) }
+                }
+                renamingGroup = nil
+            }
+            Button("Cancel", role: .cancel) { renamingGroup = nil }
         }
         .alert(naming == .new ? "New Shelf" : "Rename Shelf", isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
             TextField("Name", text: $newName)
@@ -316,6 +343,47 @@ private struct ShelfView: View {
         .padding(.horizontal, 12).padding(.vertical, 9)
     }
 
+    /// Chips for the groups on every shelf. Click to show only one; drop something on a chip to put it in that group.
+    @ViewBuilder
+    private var groupBar: some View {
+        let names = library.groupNames
+        if !names.isEmpty || model.groupFilter != nil {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    chip("All", selected: model.groupFilter == nil, drop: nil)
+                    ForEach(names, id: \.self) { name in
+                        chip(name, selected: model.groupFilter == name, drop: name)
+                            .contextMenu {
+                                Button("Rename Group…") { renamingGroup = name; newName = name }
+                                Button("Delete Group (keeps the items)", role: .destructive) {
+                                    store.change { $0.deleteGroup(name) }
+                                    if model.groupFilter == name { model.groupFilter = nil }
+                                }
+                            }
+                    }
+                }
+                .padding(.horizontal, 12).padding(.bottom, 6)
+            }
+        }
+    }
+
+    private func chip(_ title: String, selected: Bool, drop group: String?) -> some View {
+        Button { model.groupFilter = group } label: {
+            Text(title).font(.caption).padding(.horizontal, 9).padding(.vertical, 3)
+                .background(selected ? Theme.accent.opacity(0.25) : Color.primary.opacity(0.07), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .onDrop(of: [.fileURL, .url, .image, .plainText], isTargeted: nil) { providers in
+            if let id = model.draggingItemID {
+                model.draggingItemID = nil
+                store.change { $0.setGroup(group, for: id) }
+            } else if let group {
+                load(providers, group: group)
+            }
+            return true
+        }
+    }
+
     private var searchField: some View {
         HStack {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -328,6 +396,7 @@ private struct ShelfView: View {
     private var footer: some View {
         HStack {
             Text("\(library.current.items.count) item\(library.current.items.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+            if store.expiringCount > 0 { Label("\(store.expiringCount) expiring", systemImage: "clock.badge.exclamationmark").font(.caption).foregroundStyle(Theme.warn) }
             Button(showingHistory ? "Hide History" : "History (\(library.history.count))") { showingHistory.toggle() }.controlSize(.small).disabled(library.history.isEmpty && !showingHistory)
             Spacer()
             Button("Zip All") { zipAll() }.controlSize(.small).disabled(!hasFiles)
@@ -402,7 +471,7 @@ private struct ShelfView: View {
         .background(hovered == item.id ? Color.primary.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
         .onHover { hovered = $0 ? item.id : nil }
-        .onDrag { item.provider }
+        .onDrag { model.draggingItemID = item.id; return item.provider }
         .contextMenu {
             if case .file(let url) = item.kind {
                 Button("Quick Look") { quickLook(url) }
@@ -410,6 +479,14 @@ private struct ShelfView: View {
                 Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([url as NSURL]) }
             } else if case .text(let text) = item.kind {
                 Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+            }
+            Menu("Group") {
+                ForEach(library.groupNames, id: \.self) { name in Button(name) { store.change { $0.setGroup(name, for: item.id) } } }
+                Button("New Group…") { groupingItem = item.id; newName = "" }
+                if item.id.isEmpty == false, library.current.items.first(where: { $0.id == item.id })?.group != nil {
+                    Divider()
+                    Button("Take Out of Its Group") { store.change { $0.setGroup(nil, for: item.id) } }
+                }
             }
             Divider()
             Button("AirDrop…") { NSSharingService(named: .sendViaAirDrop)?.perform(withItems: shareable(item)) }
@@ -463,20 +540,20 @@ private struct ShelfView: View {
         }
     }
 
-    private func load(_ providers: [NSItemProvider]) {
+    private func load(_ providers: [NSItemProvider], group: String? = nil) {
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                     let url = (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) } ?? (item as? URL)
-                    if let url { DispatchQueue.main.async { model.addFile(url) } }
+                    if let url { DispatchQueue.main.async { model.addFile(url, group: group) } }
                 }
             } else if provider.canLoadObject(ofClass: NSImage.self) {
                 _ = provider.loadObject(ofClass: NSImage.self) { object, _ in
-                    if let image = object as? NSImage { DispatchQueue.main.async { model.addImage(image) } }
+                    if let image = object as? NSImage { DispatchQueue.main.async { model.addImage(image, group: group) } }
                 }
             } else if provider.canLoadObject(ofClass: NSString.self) {
                 _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-                    if let text = object as? String { DispatchQueue.main.async { model.addText(text) } }
+                    if let text = object as? String { DispatchQueue.main.async { model.addText(text, group: group) } }
                 }
             }
         }

@@ -201,6 +201,18 @@ struct ShelfLibrary: Codable, Equatable {
         return out.sorted { $0.hoursLeft < $1.hoursLeft }
     }
 
+    /// Items to remind about now: expiring within `leadHours` and not reminded about yet.
+    func dueReminders(leadHours: Int, notified: Set<String>, now: Date = Date()) -> [Expiring] {
+        expiring(within: leadHours, now: now).filter { !notified.contains($0.record.id) }
+    }
+
+    /// The text of a reminder for these items.
+    static func reminderText(_ items: [Expiring]) -> String {
+        guard let first = items.first else { return "" }
+        if items.count == 1 { return "“\(first.record.title)” on \(first.shelf) will be let go in about \(first.hoursLeft) hour\(first.hoursLeft == 1 ? "" : "s"). It stays in the history for 30 days." }
+        return "\(items.count) items on your shelves will be let go within \(items.map(\.hoursLeft).max() ?? 0) hours. They stay in the history for 30 days."
+    }
+
     /// Files on a shelf that are no longer where they were.
     func missingFiles(exists: (String) -> Bool) -> [ShelfRecord] {
         shelves.flatMap(\.items).filter { $0.kind == .file && !exists($0.value) }
@@ -217,6 +229,21 @@ struct ShelfLibrary: Codable, Equatable {
 
     /// Takes the given items off their shelves and into the history.
     mutating func remove(_ itemIDs: [String], now: Date = Date()) { for id in itemIDs { remove(id, now: now) } }
+
+    /// Every group name in use on any shelf, sorted.
+    var groupNames: [String] { Array(Set(shelves.flatMap(\.items).compactMap(\.group))).sorted() }
+
+    /// Renames a group everywhere. A name already in use merges the two.
+    mutating func renameGroup(_ old: String, to new: String) {
+        let clean = String(new.trimmingCharacters(in: .whitespacesAndNewlines).prefix(30))
+        guard !clean.isEmpty else { return }
+        for i in shelves.indices { for j in shelves[i].items.indices where shelves[i].items[j].group == old { shelves[i].items[j].group = clean } }
+    }
+
+    /// Takes a group away; its items stay on the shelf, ungrouped.
+    mutating func deleteGroup(_ name: String) {
+        for i in shelves.indices { for j in shelves[i].items.indices where shelves[i].items[j].group == name { shelves[i].items[j].group = nil } }
+    }
 
     mutating func setGroup(_ name: String?, for itemID: String) {
         let clean = name.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(30)) }.flatMap { $0.isEmpty ? nil : $0 }

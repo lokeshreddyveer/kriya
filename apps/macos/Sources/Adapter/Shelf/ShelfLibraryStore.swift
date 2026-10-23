@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 
 /// Keeps the shelves on disk: a small file for the shelves and one picture file for each image. Shared by the shelf panel and
 /// Settings. Everything stays on this Mac.
@@ -18,7 +19,8 @@ final class ShelfLibraryStore: ObservableObject {
         let released = library.expire()
         removeImages(released)
         // Let go of old items now and then while the app runs.
-        timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.change { _ = $0.expire() } }
+        timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.change { _ = $0.expire() }; self?.remindAboutExpiry() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in self?.remindAboutExpiry() }
     }
 
     static var defaultFolder: URL {
@@ -35,6 +37,37 @@ final class ShelfLibraryStore: ObservableObject {
         library = next
         save()
         removeImages(Array(gone))
+    }
+
+    // MARK: Expiry reminders
+
+    static let reminderKey = "shelf.reminderLeadHours"
+    private static let notifiedKey = "shelf.notifiedIDs"
+
+    /// 0 turns reminders off; otherwise how many hours before an item is let go to say so.
+    static var reminderLeadHours: Int {
+        get { UserDefaults.standard.object(forKey: reminderKey) as? Int ?? 0 }
+        set { UserDefaults.standard.set(newValue, forKey: reminderKey) }
+    }
+
+    /// Items about to be let go, for a badge.
+    var expiringCount: Int { library.expiring(within: max(Self.reminderLeadHours, 24)).count }
+
+    func remindAboutExpiry() {
+        let lead = Self.reminderLeadHours
+        guard lead > 0 else { return }
+        let notified = Set(UserDefaults.standard.stringArray(forKey: Self.notifiedKey) ?? [])
+        let due = library.dueReminders(leadHours: lead, notified: notified)
+        guard !due.isEmpty else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Shelf items expiring"
+            content.body = ShelfLibrary.reminderText(due)
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "kriya.shelf.expiry", content: content, trigger: nil))
+        }
+        let still = Set(library.shelves.flatMap(\.items).map(\.id))
+        UserDefaults.standard.set(Array(notified.intersection(still).union(due.map(\.record.id))), forKey: Self.notifiedKey)
     }
 
     // MARK: Pictures

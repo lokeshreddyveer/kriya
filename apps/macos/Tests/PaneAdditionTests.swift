@@ -841,3 +841,36 @@ final class DiagnosticReportTests: XCTestCase {
         XCTAssertTrue(text.hasPrefix("Kriya report, 19"))
     }
 }
+
+final class ShelfGroupAndReminderTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_760_000_000)
+
+    func testGroupsCanBeRenamedMergedAndDeletedWithoutLosingItems() {
+        var lib = ShelfLibrary()
+        let a = ShelfRecord(kind: .file, value: "/a", added: now, group: "Taxes"), b = ShelfRecord(kind: .file, value: "/b", added: now, group: "Bills")
+        lib.shelves[0].items = [a, b]
+        XCTAssertEqual(lib.groupNames, ["Bills", "Taxes"])
+        lib.renameGroup("Bills", to: "Taxes")
+        XCTAssertEqual(lib.groupNames, ["Taxes"])
+        lib.renameGroup("Taxes", to: "   ")
+        XCTAssertEqual(lib.groupNames, ["Taxes"], "an empty name changes nothing")
+        lib.deleteGroup("Taxes")
+        XCTAssertEqual(lib.shelves[0].items.count, 2)
+        XCTAssertTrue(lib.groupNames.isEmpty)
+    }
+
+    func testRemindersAreDueOncePerItemAndWordedForOneOrMany() {
+        var lib = ShelfLibrary()
+        lib.expiryDays = 1
+        let a = ShelfRecord(kind: .file, value: "/a.pdf", added: now.addingTimeInterval(-23.5 * 3600))
+        let b = ShelfRecord(kind: .file, value: "/b.pdf", added: now.addingTimeInterval(-23 * 3600))
+        lib.shelves[0].items = [a, b]
+        let due = lib.dueReminders(leadHours: 1, notified: [], now: now)
+        XCTAssertEqual(due.count, 1, "only the one inside the last hour")
+        XCTAssertTrue(ShelfLibrary.reminderText(due).contains("“a.pdf”"))
+        XCTAssertTrue(lib.dueReminders(leadHours: 1, notified: [a.id], now: now).isEmpty)
+        let both = lib.dueReminders(leadHours: 24, notified: [], now: now)
+        XCTAssertTrue(ShelfLibrary.reminderText(both).hasPrefix("2 items"))
+        XCTAssertEqual(ShelfLibrary.reminderText([]), "")
+    }
+}

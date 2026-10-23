@@ -61,6 +61,9 @@ struct ShelfPane: View {
                         Button("Clear the History") { shelves.change { $0.clearHistory() } }.disabled(shelves.library.history.isEmpty)
                         Button("Empty Every Shelf", role: .destructive) { shelves.change { library in for shelf in library.shelves { library.clear(shelf.id) } } }
                     }
+                    Picker("Remind me before items are let go", selection: Binding(get: { ShelfLibraryStore.reminderLeadHours }, set: { ShelfLibraryStore.reminderLeadHours = $0; shelves.objectWillChange.send() })) {
+                        Text("Never").tag(0); Text("1 hour before").tag(1); Text("1 day before").tag(24)
+                    }
                     let expiring = shelves.library.expiring(within: 24)
                     if !expiring.isEmpty { Label("\(expiring.count) item\(expiring.count == 1 ? "" : "s") will be let go within a day.", systemImage: "clock.badge.exclamationmark").font(.callout).foregroundStyle(Theme.warn) }
                     let missing = shelves.library.missingFiles(exists: { FileManager.default.fileExists(atPath: $0) })
