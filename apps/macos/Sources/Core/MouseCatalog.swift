@@ -143,6 +143,8 @@ enum WindowCommands {
         list += WorkspaceController.commands.map { (command: $0.command, title: $0.title) }
         list += PointerEffects.commands.map { (command: $0.command, title: $0.title) }
         list.append((command: "notes.open", title: "Open Notes"))
+        list.append((command: "automation.pause_toggle", title: "Pause or resume all automation"))
+        list.append((command: "automation.emergency_stop", title: "Emergency stop: cancel running workflows and pause automation"))
         list.append((command: "dialog.folders", title: "Go to a folder in the Open or Save dialog"))
         list.append((command: "dictation.toggle", title: "Start or stop dictation"))
         list.append((command: "clipboard.send_other", title: "Send the clipboard to my other Macs"))

@@ -27,6 +27,12 @@ struct AutomationPane: View {
                 }
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             }
+            if engine.pausedAll {
+                Banner(symbol: "pause.circle", tint: Theme.warn, title: "All automation is paused", message: "No trigger starts a workflow until you resume. Test runs here still work.") {
+                    Button("Resume") { engine.setPausedAll(false) }.controlSize(.small)
+                }
+                .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
+            }
             Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
                 .paneTabBar(maxWidth: 360).paneHeader()
             Group {
@@ -110,6 +116,10 @@ private struct WorkflowsTab: View {
                     Button("Duplicate") { selected.forEach(store.duplicate) }.disabled(selected.isEmpty)
                     Button("Draft with AI…") { drafting = true }
                     Button("Version History…") { historyOf = selected.first }.disabled(selected.count != 1)
+                    Divider()
+                    Button(engine.pausedAll ? "Resume All Automation" : "Pause All Automation") { engine.setPausedAll(!engine.pausedAll) }
+                    Button("Emergency Stop") { engine.emergencyStop() }
+                    Divider()
                     Button("Import Workflows…") { importWorkflows() }
                     Button("Export Selected…") { export() }.disabled(selected.isEmpty)
                     Divider()

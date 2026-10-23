@@ -29,6 +29,8 @@ final class AutomationEngine: ObservableObject {
     let store: WorkflowStore
     @Published private(set) var running: [String: String] = [:]   // run id → workflow name
     @Published private(set) var isActive = false
+    /// While true no trigger starts a workflow (test runs from the editor still work). Kept across launches, and shown in the pane.
+    @Published private(set) var pausedAll = UserDefaults.standard.bool(forKey: "automation.pausedAll")
 
     var context: ServiceContext?
     var setFeature: (FeatureId, Bool) -> Void = { _, _ in }
@@ -89,6 +91,10 @@ final class AutomationEngine: ObservableObject {
         unregisterCommands()
         executor.registerCommand("automation.macros") { [weak self] in self?.showMacroMenu() }
         registered.insert("automation.macros")
+        executor.registerCommand("automation.pause_toggle") { [weak self] in DispatchQueue.main.async { guard let self else { return }; self.setPausedAll(!self.pausedAll) } }
+        executor.registerCommand("automation.emergency_stop") { [weak self] in DispatchQueue.main.async { self?.emergencyStop() } }
+        registered.insert("automation.pause_toggle")
+        registered.insert("automation.emergency_stop")
         for workflow in list where workflow.enabled {
             let id = workflow.id
             let command = workflowCommand(workflow: workflow)
@@ -146,11 +152,30 @@ final class AutomationEngine: ObservableObject {
     ) {
         guard let workflow = store.workflow(workflowID) else { return }
         if !workflow.enabled && !test { return }
+        if pausedAll && !test {
+            Log.info("Automation", "Skipped a run: automation is paused")
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
             let run = await execute(workflow, source: source, input: input ?? "", depth: 0, test: test, dryRun: dryRun, approvedForTest: approvedForTest, progress: progress, debugger: debugger)
             await MainActor.run { completion?(run) }
         }
+    }
+
+    func setPausedAll(_ paused: Bool) {
+        pausedAll = paused
+        UserDefaults.standard.set(paused, forKey: "automation.pausedAll")
+        AuditLog.shared.record(.setting, paused ? "All automation paused" : "Automation resumed")
+        toast.show(paused ? "All automation paused" : "Automation resumed")
+    }
+
+    /// Pauses everything and stops what is running now.
+    func emergencyStop() {
+        let count = running.count
+        cancelAll()
+        setPausedAll(true)
+        toast.show(count > 0 ? "Stopped \(count) running workflow\(count == 1 ? "" : "s") and paused automation" : "Automation paused")
     }
 
     func cancel(runID: String) {
