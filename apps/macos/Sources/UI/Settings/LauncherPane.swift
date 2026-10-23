@@ -8,6 +8,8 @@ struct LauncherPane: View {
     @EnvironmentObject private var tools: LauncherToolSources
     @State private var confirmReset = false
     @State private var why: (query: String, rows: [LauncherEngine.Explanation])?
+    @State private var speed = LauncherLatencyStore.shared.snapshot
+    @ObservedObject private var linkChecker = LinkChecker.shared
     @State private var editingLink: Quicklink?
     @State private var editingScript: ScriptCommand?
     @State private var editingAPI: APICommand?
@@ -40,6 +42,18 @@ struct LauncherPane: View {
                     }
                 }
             } header: { Text("Why was this shown?") }
+            Section {
+                if speed.stats.isEmpty { Text("Search in the launcher first, then press Refresh.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(speed.stats.sorted { $0.value.average > $1.value.average }, id: \.key) { name, stat in
+                    HStack {
+                        Text(name)
+                        if speed.isSlow(name) { Text("slow").font(.caption).foregroundStyle(Theme.warn) }
+                        Spacer()
+                        Text("\(Int(stat.average.rounded())) ms average · worst \(stat.worst) ms").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    }
+                }
+                Button("Refresh") { speed = LauncherLatencyStore.shared.snapshot }.controlSize(.small)
+            } header: { Text("How fast each source answers") } footer: { Text("Measured on this Mac while you search, kept in memory only. A source that is slow slows every search.") }
             Section {
                 Picker("Theme", selection: $themeRaw) {
                     ForEach(LauncherTheme.allCases) { Text($0.title).tag($0.rawValue) }
@@ -184,6 +198,9 @@ struct LauncherPane: View {
                             Text(link.name)
                             Text(link.keyword.isEmpty ? link.template : "\(link.keyword)  ·  \(link.template)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             Text(link.example).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                            if let health = linkChecker.results[link.id] {
+                                Text(health.summary).font(.caption).foregroundStyle(health.isProblem ? Theme.warn : Theme.ok)
+                            }
                         }
                         Spacer()
                         Button("Test") { if let url = link.testURL { NSWorkspace.shared.open(url) } }.controlSize(.small).disabled(link.testURL == nil)
@@ -196,6 +213,9 @@ struct LauncherPane: View {
                 HStack {
                     Text("Quicklinks")
                     Spacer()
+                    if linkChecker.running { ProgressView().controlSize(.small) }
+                    Button("Check Links") { linkChecker.check(extras.quicklinks) }.controlSize(.small).disabled(linkChecker.running || extras.quicklinks.isEmpty)
+                        .help("Asks each link's site once whether it still answers. Nothing is opened.")
                     Button { editingLink = Quicklink(name: "", keyword: "", template: "https://") } label: { Label("Add", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: {
@@ -612,6 +632,7 @@ private struct APICommandEditor: View {
                 }
                 TextField("Use this part of the answer", text: $command.resultPath, prompt: Text("data.items.0.name  (empty: all of it)"))
                 Picker("Then", selection: $command.output) { ForEach(APICommand.Output.allCases) { Text($0.title).tag($0) } }
+                Toggle("Show the answer first and ask before using it", isOn: Binding(get: { command.previewFirst == true }, set: { command.previewFirst = $0 }))
                 if let problem { Text(problem).font(.callout).foregroundStyle(Theme.danger) }
                 if let testResult { Text(testResult).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(6) }
             }

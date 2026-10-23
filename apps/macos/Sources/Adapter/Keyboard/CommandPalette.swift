@@ -94,6 +94,8 @@ final class PaletteModel: ObservableObject {
     private var all: [PaletteEntry] = []
     /// Results that depend on what was typed: a sum, a timer, files, clipboard items.
     var queryProviders: [(String) -> [PaletteEntry]] = []
+    /// A name for each provider above, in the same order, for the speed readout in Settings.
+    var queryProviderNames: [String] = []
     /// What a keyword (followed by a space) turns into, if it names a command that takes an argument.
     var tokenProvider: (String) -> ArgumentToken? = { _ in nil }
     /// Extra rows for the opening list, with the heading each sits under: today's events, recent files.
@@ -163,7 +165,13 @@ final class PaletteModel: ObservableObject {
             return
         }
         var heldBack: [PaletteEntry] = []
-        var dynamic: [PaletteEntry] = text.isEmpty ? [] : queryProviders.flatMap { $0(text) }
+        var dynamic: [PaletteEntry] = text.isEmpty ? [] : queryProviders.enumerated().flatMap { index, provider -> [PaletteEntry] in
+            let start = DispatchTime.now()
+            let found = provider(text)
+            let ms = Int(Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
+            LauncherLatencyStore.shared.record(index < queryProviderNames.count ? queryProviderNames[index] : "Source \(index + 1)", milliseconds: ms)
+            return found
+        }
         // A chip has already chosen what the words are for, so nothing else is offered them.
         if token != nil { dynamic.removeAll { $0.isFallback } }
         if let selectionText {
@@ -306,7 +314,8 @@ final class CommandPalette: NSObject, NSWindowDelegate {
     }
 
     /// Results that depend on what was typed.
-    func addQueryProvider(_ provider: @escaping (String) -> [PaletteEntry]) {
+    func addQueryProvider(name: String? = nil, _ provider: @escaping (String) -> [PaletteEntry]) {
+        model.queryProviderNames.append(name ?? "Source \(model.queryProviders.count + 1)")
         model.queryProviders.append(provider)
     }
 
@@ -1076,5 +1085,22 @@ private enum FileDetail {
         if cache.count > 500 { cache.removeAll() }
         cache[url] = text
         return text
+    }
+}
+
+
+/// How long each launcher source took, kept in memory only.
+final class LauncherLatencyStore: ObservableObject {
+    static let shared = LauncherLatencyStore()
+    private let lock = NSLock()
+    private var latency = SourceLatency()
+
+    func record(_ source: String, milliseconds: Int) {
+        lock.lock(); latency.record(source, milliseconds: milliseconds); lock.unlock()
+    }
+
+    var snapshot: SourceLatency {
+        lock.lock(); defer { lock.unlock() }
+        return latency
     }
 }

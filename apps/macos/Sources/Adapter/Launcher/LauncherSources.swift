@@ -199,11 +199,25 @@ final class LauncherSources {
         FinderWindowTracker.shared.start()
         RecentAppsTracker.shared.start()
         palette.addProvider { [weak self] in (self?.tools?.staticEntries() ?? []) + (self?.tools?.meetingEntries() ?? []) }
-        palette.addQueryProvider { [weak self] text in self?.queryEntries(text) ?? [] }
-        palette.addQueryProvider { [weak self] text in self?.navigationEntries(text) ?? [] }
-        palette.addQueryProvider { [weak self] text in self?.argumentEntries(text) ?? [] }
-        palette.addQueryProvider { [weak self] text in (self?.soundEntries(text) ?? []) + (self?.addressEntries(text) ?? []) + (self?.noteEntries(text) ?? []) + (self?.jobEntries(text) ?? []) + (self?.focusEntries(text) ?? []) + (self?.sharedClipboardEntries(text) ?? []) + (self?.bookmarkEntries(text) ?? []) + (self?.menuBarItemEntries(text) ?? []) + (self?.passwordEntries(text) ?? []) + (self?.terminalEntries(text) ?? []) + (self?.colorPickerEntries(text) ?? []) + (self?.aiEntries(text) ?? []) + (self?.aiActionEntries(text) ?? []) }
-        palette.addQueryProvider { [weak self] text in (self?.quitEntries(text) ?? []) + (self?.menuEntries(text) ?? []) + (self?.contactEntries(text) ?? []) }
+        palette.addQueryProvider(name: "Search") { [weak self] text in self?.queryEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Files and folders") { [weak self] text in self?.navigationEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Arguments") { [weak self] text in self?.argumentEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Sound") { [weak self] text in self?.soundEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Addresses") { [weak self] text in self?.addressEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Notes") { [weak self] text in self?.noteEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Jobs") { [weak self] text in self?.jobEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Focus") { [weak self] text in self?.focusEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Shared clipboard") { [weak self] text in self?.sharedClipboardEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Bookmarks") { [weak self] text in self?.bookmarkEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Menu-bar items") { [weak self] text in self?.menuBarItemEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Passwords") { [weak self] text in self?.passwordEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Terminal") { [weak self] text in self?.terminalEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Colour picker") { [weak self] text in self?.colorPickerEntries(text) ?? [] }
+        palette.addQueryProvider(name: "AI") { [weak self] text in self?.aiEntries(text) ?? [] }
+        palette.addQueryProvider(name: "AI actions") { [weak self] text in self?.aiActionEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Quit") { [weak self] text in self?.quitEntries(text) ?? [] }
+        palette.addQueryProvider(name: "App menus") { [weak self] text in self?.menuEntries(text) ?? [] }
+        palette.addQueryProvider(name: "Contacts") { [weak self] text in self?.contactEntries(text) ?? [] }
         palette.model.tokenProvider = { [weak self] word in self?.token(for: word) }
         palette.model.startProvider = { [weak self] in self?.startEntries() ?? [] }
         palette.model.selectionProvider = { [weak self] text in self?.selectionEntries(text) ?? [] }

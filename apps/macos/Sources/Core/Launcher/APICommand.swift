@@ -35,6 +35,9 @@ struct APICommand: Codable, Identifiable, Equatable {
     /// Which part of a JSON answer to use: `data.items.0.name`. Empty uses the whole answer.
     var resultPath: String = ""
     var output: Output = .message
+    /// Show the answer in a window first, with anything that looks like a key hidden, and ask before copying or opening it.
+    /// Optional so commands saved before it existed still load.
+    var previewFirst: Bool?
 
     static let placeholder = "{query}"
     static let maxHeaders = 10

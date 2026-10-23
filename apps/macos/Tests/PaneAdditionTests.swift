@@ -983,3 +983,64 @@ final class AppUpdateTests: XCTestCase {
         XCTAssertFalse(RemovalArchive.verdict(sizes: [600_000_000, 600_000_000]).archive)
     }
 }
+
+final class NetworkCareTests: XCTestCase {
+    func testOnlyFailuresASecondTryCanFixAreRetriedAndPostIsCareful() {
+        XCTAssertEqual(RetryPolicy.delay(after: .status(503, retryAfter: nil), attempt: 1, method: "GET"), 1)
+        XCTAssertEqual(RetryPolicy.delay(after: .status(503, retryAfter: nil), attempt: 2, method: "GET"), 2)
+        XCTAssertNil(RetryPolicy.delay(after: .status(503, retryAfter: nil), attempt: 3, method: "GET"), "three tries at most")
+        XCTAssertNil(RetryPolicy.delay(after: .status(404, retryAfter: nil), attempt: 1, method: "GET"))
+        XCTAssertNil(RetryPolicy.delay(after: .status(401, retryAfter: nil), attempt: 1, method: "GET"))
+        XCTAssertEqual(RetryPolicy.delay(after: .urlError(NSURLErrorTimedOut), attempt: 1, method: "GET"), 1)
+        XCTAssertNil(RetryPolicy.delay(after: .urlError(NSURLErrorBadURL), attempt: 1, method: "GET"))
+        XCTAssertNil(RetryPolicy.delay(after: .status(500, retryAfter: nil), attempt: 1, method: "POST"), "a second POST could do the thing twice")
+        XCTAssertEqual(RetryPolicy.delay(after: .status(429, retryAfter: 5), attempt: 1, method: "POST"), 5)
+        XCTAssertEqual(RetryPolicy.delay(after: .status(429, retryAfter: 900), attempt: 1, method: "GET"), 30, "capped")
+        XCTAssertNil(RetryPolicy.delay(after: .other, attempt: 1, method: "GET"))
+    }
+
+    func testPreviewHidesKeysPrettyPrintsAndCuts() throws {
+        let data = Data(#"{"name":"a","api_key":"sk-123","nested":{"Authorization":"Bearer x","ok":1},"list":[{"token":"t"}]}"#.utf8)
+        let preview = ResponsePreview.make(data)
+        XCTAssertTrue(preview.isJSON)
+        XCTAssertEqual(preview.redactedCount, 3)
+        XCTAssertFalse(preview.text.contains("sk-123"))
+        XCTAssertFalse(preview.text.contains("Bearer"))
+        XCTAssertTrue(preview.text.contains("\n"))
+        let big = Data(String(repeating: "word ", count: 5_000).utf8)
+        let cut = ResponsePreview.make(big)
+        XCTAssertTrue(cut.truncated)
+        XCTAssertLessThanOrEqual(cut.text.count, ResponsePreview.limit)
+        XCTAssertFalse(cut.isJSON)
+    }
+
+    func testLinkChecksSkipWhatCannotBeCheckedAndReportRedirectsAndFailures() throws {
+        XCTAssertNotNil(LinkHealth.checkable(template: "https://github.com/search?q={query}").url)
+        XCTAssertNil(LinkHealth.checkable(template: "https://x.com/?q={clipboard}").url)
+        XCTAssertNil(LinkHealth.checkable(template: "ftp://x.com").url)
+        XCTAssertNil(LinkHealth.checkable(template: "javascript:alert(1)").url)
+        let url = try XCTUnwrap(URL(string: "https://a.com/x"))
+        XCTAssertEqual(LinkHealth.classify(status: 200, error: nil, finalURL: url, original: url, milliseconds: 120).state, .ok)
+        XCTAssertEqual(LinkHealth.classify(status: 200, error: nil, finalURL: URL(string: "https://b.com/y"), original: url, milliseconds: 120).state, .redirected(to: "b.com/y"))
+        XCTAssertEqual(LinkHealth.classify(status: 404, error: nil, finalURL: nil, original: url, milliseconds: 90).state, .broken(404))
+        XCTAssertEqual(LinkHealth.classify(status: nil, error: "timed out", finalURL: nil, original: url, milliseconds: 8000).state, .unreachable("timed out"))
+        XCTAssertEqual(LinkHealth.classify(status: 200, error: nil, finalURL: url, original: url, milliseconds: 6000).state, .slow)
+        XCTAssertTrue(LinkHealth.classify(status: 500, error: nil, finalURL: nil, original: url, milliseconds: 1).isProblem)
+    }
+
+    func testSourceSpeedKeepsARecentAverageAndNamesTheSlowOnes() {
+        var s = SourceLatency()
+        s.record("Files", milliseconds: 500); s.record("Files", milliseconds: 500)
+        s.record("Windows", milliseconds: 40)
+        XCTAssertTrue(s.isSlow("Files"))
+        XCTAssertFalse(s.isSlow("Windows"))
+        XCTAssertFalse(s.isSlow("Unknown"))
+        XCTAssertEqual(s.summary(), "Files 500 ms, Windows 40 ms")
+        XCTAssertEqual(s.stats["Files"]?.worst, 500)
+    }
+
+    func testOldAPICommandsWithoutThePreviewFlagStillLoad() throws {
+        let json = #"{"id":"1","name":"W","keyword":"w","method":"GET","url":"https://a.com/{query}","headerNames":[],"body":"","resultPath":"","output":"message"}"#
+        XCTAssertNil(try JSONDecoder().decode(APICommand.self, from: Data(json.utf8)).previewFirst)
+    }
+}
