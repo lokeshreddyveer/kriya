@@ -791,7 +791,7 @@ private struct StepCard: View {
             HStack(spacing: 8) {
                 Text("\(index + 1)").font(.caption.bold()).frame(width: 20, height: 20).background(Theme.accent.opacity(0.25), in: Circle())
                 Text(workflowStepSummary(step: step)).font(.callout.weight(.medium)).lineLimit(1)
-                if step.kind.risk == .needsAuthorization { Image(systemName: "exclamationmark.shield").foregroundStyle(Theme.warn).help("Needs authorization") }
+                if step.kind.risk == .needsAuthorization { Image(systemName: "exclamationmark.shield").foregroundStyle(Theme.warn).help("Needs authorization").accessibilityLabel("Needs authorization") }
                 Spacer()
                 Button { move(-1) } label: { Image(systemName: "arrow.up") }.buttonStyle(.borderless).disabled(index == 0)
                 Button { move(1) } label: { Image(systemName: "arrow.down") }.buttonStyle(.borderless).disabled(index == count - 1)

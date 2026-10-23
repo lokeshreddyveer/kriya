@@ -194,7 +194,7 @@ private struct MousePresetsTab: View {
             Divider()
             HStack(spacing: 4) {
                 Button { newName = ""; naming = true } label: { Image(systemName: "plus") }
-                Button { duplicate() } label: { Image(systemName: "plus.square.on.square") }.help("Duplicate")
+                Button { duplicate() } label: { Image(systemName: "plus.square.on.square") }.help("Duplicate").accessibilityLabel("Duplicate")
                 Button { delete() } label: { Image(systemName: "minus") }
                     .disabled(selected?.isBuiltin ?? true)
                 Spacer()

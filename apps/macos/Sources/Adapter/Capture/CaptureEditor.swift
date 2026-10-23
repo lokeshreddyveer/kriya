@@ -113,8 +113,8 @@ struct CaptureEditorView: View {
                 }
             }
             Divider().frame(height: 20)
-            Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(model.annotations.isEmpty).keyboardShortcut("z", modifiers: .command).help("Undo")
-            Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(model.undone.isEmpty).keyboardShortcut("z", modifiers: [.command, .shift]).help("Redo")
+            Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(model.annotations.isEmpty).keyboardShortcut("z", modifiers: .command).help("Undo").accessibilityLabel("Undo")
+            Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(model.undone.isEmpty).keyboardShortcut("z", modifiers: [.command, .shift]).help("Redo").accessibilityLabel("Redo")
             Spacer()
             Button { hidePrivateText() } label: { Label("Hide Private Text", systemImage: "eye.slash") }
                 .disabled(model.working).help("Finds emails, phone numbers, card numbers, addresses and keys in the picture and covers them")

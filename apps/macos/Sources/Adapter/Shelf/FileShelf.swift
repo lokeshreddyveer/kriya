@@ -307,7 +307,7 @@ private struct ShelfView: View {
             }
             .menuStyle(.borderlessButton).fixedSize()
             Spacer()
-            Button { searching.toggle(); if !searching { model.query = "" } } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Search every shelf and the history")
+            Button { searching.toggle(); if !searching { model.query = "" } } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Search every shelf and the history").accessibilityLabel("Search every shelf and the history")
             Button("Add Clipboard") { add(NSPasteboard.general) }.controlSize(.small)
             Button { store.change { $0.clear() } } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless).help("Clear this shelf (it goes to the history)").disabled(library.current.items.isEmpty)
@@ -394,8 +394,8 @@ private struct ShelfView: View {
             }
             Spacer(minLength: 4)
             if hovered == item.id {
-                if fromHistory { Button { store.change { _ = $0.restore(item.id) } } label: { Image(systemName: "arrow.uturn.backward") }.buttonStyle(.borderless).help("Put back on this shelf") }
-                else { Button { remove(item) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help("Remove from the shelf") }
+                if fromHistory { Button { store.change { _ = $0.restore(item.id) } } label: { Image(systemName: "arrow.uturn.backward") }.buttonStyle(.borderless).help("Put back on this shelf").accessibilityLabel("Put back on this shelf") }
+                else { Button { remove(item) } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help("Remove from the shelf").accessibilityLabel("Remove from the shelf") }
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)

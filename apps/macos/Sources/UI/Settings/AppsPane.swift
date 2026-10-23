@@ -458,7 +458,7 @@ private struct InstallTab: View {
             }
             Spacer()
             if let page = info.flatMap({ URL(string: $0.homepage) }), page.scheme == "https" {
-                Link(destination: page) { Image(systemName: "safari") }.help("Open the app's website")
+                Link(destination: page) { Image(systemName: "safari") }.help("Open the app's website").accessibilityLabel("Open the app's website")
             }
             if brew.installed.contains(token) {
                 StateBadge(text: "Installed", color: Theme.ok)
@@ -607,9 +607,9 @@ private struct BackgroundItemsTab: View {
                 }
             }
             Spacer()
-            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder")
+            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder").accessibilityLabel("Show in Finder")
             if item.isOrphaned, item.scope == .user {
-                Button { confirming = item } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Move to Trash")
+                Button { confirming = item } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Move to Trash").accessibilityLabel("Move to Trash")
             }
         }
     }

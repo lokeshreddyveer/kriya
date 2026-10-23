@@ -50,6 +50,22 @@ enum Permission: String, CaseIterable, Identifiable {
     }
 }
 
+/// What to tell the person when a permission changes while Kriya is running.
+enum PermissionChange {
+    /// A sentence for a permission that was taken away or given, or nil for a change that needs no notice (such as the first
+    /// check, or "not asked yet" turning into "asked").
+    static func notice(_ permission: Permission, from old: PermissionStatus?, to new: PermissionStatus) -> String? {
+        guard let old, old != new else { return nil }
+        if old == .granted, new != .granted {
+            return "\(permission.title) was turned off for Kriya. Features that need it have stopped. Turn it back on in System Settings › Privacy & Security."
+        }
+        if new == .granted, old != .granted {
+            return "\(permission.title) is on for Kriya. Features that were waiting for it can start."
+        }
+        return nil
+    }
+}
+
 enum PermissionStatus: Equatable {
     case granted
     case denied
@@ -139,6 +155,9 @@ final class PermissionManager: ObservableObject {
         guard updated != statuses else { return }
         for (permission, state) in updated where statuses[permission] != nil && statuses[permission] != state {
             Log.info("Permissions", "\(permission.title) is now \(state)")
+            if defaults.object(forKey: "permissionNotices") as? Bool ?? true, let text = PermissionChange.notice(permission, from: statuses[permission], to: state) {
+                Toast().show(text, isError: state != .granted)
+            }
         }
         statuses = updated
     }

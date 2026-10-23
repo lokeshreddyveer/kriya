@@ -152,9 +152,9 @@ struct CaptureHistorySection: View {
                                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
                             Text(entry.date.formatted(date: .abbreviated, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
                             HStack(spacing: 8) {
-                                if !entry.isMovie { Button { if let image = NSImage(contentsOfFile: entry.path) { PinnedShots.shared.pin(image) } } label: { Image(systemName: "pin") }.help("Pin on screen") }
-                                if !entry.isMovie { Button { if let image = NSImage(contentsOfFile: entry.path) { NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([image]) } } label: { Image(systemName: "doc.on.doc") }.help("Copy") }
-                                Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)]) } label: { Image(systemName: "magnifyingglass") }.help("Show in Finder")
+                                if !entry.isMovie { Button { if let image = NSImage(contentsOfFile: entry.path) { PinnedShots.shared.pin(image) } } label: { Image(systemName: "pin") }.help("Pin on screen").accessibilityLabel("Pin on screen") }
+                                if !entry.isMovie { Button { if let image = NSImage(contentsOfFile: entry.path) { NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([image]) } } label: { Image(systemName: "doc.on.doc") }.help("Copy").accessibilityLabel("Copy") }
+                                Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)]) } label: { Image(systemName: "magnifyingglass") }.help("Show in Finder").accessibilityLabel("Show in Finder")
                             }.buttonStyle(.borderless).controlSize(.small)
                         }
                     }

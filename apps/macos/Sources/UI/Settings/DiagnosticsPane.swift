@@ -449,6 +449,9 @@ enum DiagnosticReport {
         out.append("")
         out.append("Event tap: \(events.state), \(events.subscriberCount) subscribers, \(stats.eventsHandled) events, avg \(stats.averageMicroseconds) µs, p95 \(stats.p95Microseconds) µs, p99 \(stats.p99Microseconds) µs, worst \(stats.worstHandlerMicroseconds) µs, \(stats.slowHandlers) slow, \(stats.tapRecoveries) recoveries")
         out.append("")
+        out.append("Recent activity (what Kriya did, newest first):")
+        out.append(AuditLog.shared.text())
+        out.append("")
         out.append("Log:")
         for file in Log.shared.allLogFiles() {
             if let text = try? String(contentsOf: file, encoding: .utf8) {

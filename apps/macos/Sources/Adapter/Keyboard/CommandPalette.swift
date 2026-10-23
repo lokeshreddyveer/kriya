@@ -375,17 +375,20 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         if !visible.isEmpty {
             target = PaletteLayout.frame(height: wantedHeight(), in: visible, placement: placement, pointer: mouse, saved: PaletteLayout.Remembered.saved)
             // It starts a little off its edge and settles into place as it fades in: from above, or from below when it grows up.
-            panel.setFrame(target.offsetBy(dx: 0, dy: placement.growsUp ? -10 : 10), display: false)
+            panel.setFrame(reduceMotion ? target : target.offsetBy(dx: 0, dy: placement.growsUp ? -10 : 10), display: false)
         }
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.18
+            context.duration = reduceMotion ? 0 : 0.18
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
             if !target.isEmpty { panel.animator().setFrame(target, display: true) }
         }, completionHandler: { [weak self] in self?.placing = false })
     }
+
+    /// The person asked macOS for less motion (System Settings › Accessibility › Display), so the window appears without moving.
+    private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     private var visible = CGRect.zero
     /// True while Kriya itself places the window, so that is not taken for the person dragging it.
@@ -402,7 +405,7 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         let target = PaletteLayout.resized(panel.frame, toHeight: wantedHeight(), in: visible, growsUp: PaletteLayout.Placement.current.growsUp)
         guard abs(target.height - panel.frame.height) > 0.5 else { return }
         placing = true
-        if animated {
+        if animated && !reduceMotion {
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.14
                 context.allowsImplicitAnimation = true
@@ -669,7 +672,7 @@ private struct PaletteView: View {
     /// Each time the launcher opens it rises into place with a small spring.
     private func settle() {
         pop = false
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { pop = true }
+        if reduceMotion { pop = true } else { withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { pop = true } }
     }
 
     private var actions: [PaletteAction] { model.current.map { palette.actions(for: $0) } ?? [] }

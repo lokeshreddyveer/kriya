@@ -258,7 +258,7 @@ private struct SnippetsTab: View {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search snippets", text: $query).textFieldStyle(.plain)
-                Toggle(isOn: $favoritesOnly) { Image(systemName: favoritesOnly ? "star.fill" : "star") }.toggleStyle(.button).help("Favorites only")
+                Toggle(isOn: $favoritesOnly) { Image(systemName: favoritesOnly ? "star.fill" : "star") }.toggleStyle(.button).help("Favorites only").accessibilityLabel("Favorites only")
                 Menu {
                     Button("All categories") { category = nil }
                     Divider()

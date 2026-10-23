@@ -128,7 +128,7 @@ struct StorageSection: View {
                     }
                     Spacer()
                     Text(ByteFormat.size(Double(item.bytes))).monospacedDigit().foregroundStyle(.secondary)
-                    Button { NSWorkspace.shared.activateFileViewerSelecting([item.url]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder")
+                    Button { NSWorkspace.shared.activateFileViewerSelecting([item.url]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder").accessibilityLabel("Show in Finder")
                     if item.name == "Trash" { Button("Empty") { scanner.emptyTrash() }.controlSize(.small) }
                 }
             }
@@ -195,8 +195,8 @@ struct CleanupSection: View {
             }
             Spacer()
             Text(ByteFormat.size(Double(file.size))).monospacedDigit().foregroundStyle(.secondary)
-            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: file.path)]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder")
-            Button { scanner.trash(file) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Move to Trash")
+            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: file.path)]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder").accessibilityLabel("Show in Finder")
+            Button { scanner.trash(file) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Move to Trash").accessibilityLabel("Move to Trash")
         }
     }
 }

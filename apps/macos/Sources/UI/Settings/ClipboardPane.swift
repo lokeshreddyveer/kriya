@@ -137,7 +137,7 @@ private struct ClipBrowser: View {
     private var toolbar: some View {
         HStack(spacing: 6) {
             if snippetsOnly {
-                Button { newSnippet = true } label: { Image(systemName: "plus") }.help("New snippet")
+                Button { newSnippet = true } label: { Image(systemName: "plus") }.help("New snippet").accessibilityLabel("New snippet")
                 Menu {
                     Button("Import Snippets…") { importSnippets() }
                     Button("Export Selected…") { exportSnippets(selected: true) }.disabled(selection == nil)
@@ -149,7 +149,7 @@ private struct ClipBrowser: View {
             } else {
                 Button { service.setPaused(!clip.config.paused) } label: { Image(systemName: clip.config.paused ? "play.circle" : "pause.circle") }
                     .help(clip.config.paused ? "Resume recording" : "Pause recording")
-                Button { confirmClear = true } label: { Image(systemName: "trash") }.help("Clear history")
+                Button { confirmClear = true } label: { Image(systemName: "trash") }.help("Clear history").accessibilityLabel("Clear history")
             }
             if !clip.collections.isEmpty {
                 Menu {

@@ -243,3 +243,13 @@ final class AudioProfileTests: XCTestCase {
         XCTAssertNil(RecordingTrim.range(start: 0, end: 5, duration: 0))
     }
 }
+
+final class PermissionChangeTests: XCTestCase {
+    func testOnlyRealChangesAreAnnounced() {
+        XCTAssertNil(PermissionChange.notice(.accessibility, from: nil, to: .denied), "the first check says nothing")
+        XCTAssertNil(PermissionChange.notice(.accessibility, from: .granted, to: .granted))
+        XCTAssertNil(PermissionChange.notice(.inputMonitoring, from: .notDetermined, to: .denied), "asked but not answered is not a change")
+        XCTAssertTrue(PermissionChange.notice(.screenRecording, from: .granted, to: .denied)?.contains("turned off") == true)
+        XCTAssertTrue(PermissionChange.notice(.accessibility, from: .denied, to: .granted)?.contains("is on") == true)
+    }
+}
