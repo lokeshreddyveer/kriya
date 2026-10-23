@@ -124,6 +124,18 @@ final class WindowStore: ObservableObject {
         perform { try core.saveLayout(layout: layout) }
     }
 
+    func exportLayouts(to url: URL) throws {
+        try core.exportLayouts(ids: []).write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Adds the layouts in a file under new ids. Returns how many were added.
+    func importLayouts(from url: URL) throws -> Int {
+        guard let json = String(data: try Data(contentsOf: url), encoding: .utf8) else { throw CoreError.Backup(message: "the file is not a Kriya layout file") }
+        let added = try core.importLayouts(json: json, now: SystemInfo.nowSeconds)
+        reload()
+        return added.count
+    }
+
     func deleteLayout(_ id: String) {
         perform { try core.deleteLayout(id: id) }
     }

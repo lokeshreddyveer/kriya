@@ -427,3 +427,28 @@ final class InputToolsTests: XCTestCase {
         XCTAssertTrue(t.events(for: "Mouse").count < 5)
     }
 }
+
+final class WindowToolsTests: XCTestCase {
+    func testLocksCoverAWholeAppOrOnlyWindowsWithATitle() {
+        let all = WindowLock(appID: "com.a", titleContains: "")
+        let some = WindowLock(appID: "com.b", titleContains: "Budget")
+        XCTAssertTrue(WindowLocks.isLocked([all, some], appID: "com.a", title: "Anything"))
+        XCTAssertTrue(WindowLocks.isLocked([all, some], appID: "com.b", title: "my budget 2026"))
+        XCTAssertFalse(WindowLocks.isLocked([all, some], appID: "com.b", title: "Notes"))
+        XCTAssertFalse(WindowLocks.isLocked([all, some], appID: "com.c", title: "Budget"))
+        XCTAssertFalse(WindowLocks.isLocked([], appID: "com.a", title: ""))
+    }
+
+    func testPreviewSaysWhatEachEntryWouldDo() {
+        let entries = [("com.a", "Doc", "d1"), ("com.b", "", "d1"), ("com.c", "", "d1"), ("com.d", "", "d9"), ("com.e", "", "d1")]
+        let open = [("com.a", "Doc"), ("com.d", "x"), ("com.e", "Secret"), ("com.c", "other")]
+        let matches: [Int?] = [0, 3, 4, nil]
+        let rows = LayoutPreview.rows(entries: entries, launchMissing: true, open: open, matches: matches, runningApps: ["com.a", "com.c", "com.d", "com.e"],
+                                      displayIDs: ["d1"], isLocked: { $0 == "com.e" })
+        XCTAssertEqual(rows.map(\.result), [.moves(windowTitle: "Doc"), .appMissing(willOpen: true), .noMatchingWindow, .displayAbsent, .lockedWindow])
+        XCTAssertTrue(rows[0].willMove)
+        XCTAssertFalse(rows[4].willMove)
+        XCTAssertTrue(LayoutPreview.describe(rows[1], appName: "B").contains("will be opened"))
+        XCTAssertTrue(LayoutPreview.describe(rows[3], appName: "D").contains("main display"))
+    }
+}

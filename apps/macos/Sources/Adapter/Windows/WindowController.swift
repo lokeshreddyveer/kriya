@@ -277,6 +277,10 @@ final class WindowController: ObservableObject {
     // MARK: The one place windows are moved
 
     func place(_ window: AXWindow, to frame: Rect, from current: Rect, label: String, layout: WindowLayout?) {
+        if let id = window.app?.bundleIdentifier, WindowLockStore.shared.isLocked(appID: id, title: window.title) {
+            setMessage("\(window.appName) is locked, so Kriya did not move it.")
+            return
+        }
         history.record(key: window.key, frame: current)
         let wasSnapped = lastApplied[window.key].map { windowFrameMiss(wanted: $0.frame, actual: current) < 6 } ?? false
         let started = DispatchTime.now()
@@ -407,6 +411,7 @@ final class WindowController: ObservableObject {
             var moved = [Bool](repeating: false, count: open.count)
             for (index, match) in matches.enumerated() {
                 guard let match, let frame = Self.target(for: layout.entries[Int(match)], displays: known) else { continue }
+                if WindowLockStore.shared.isLocked(appID: open[index].appID, title: open[index].title) { continue }
                 let window = open[index].window
                 history.record(key: window.key, frame: open[index].frame)
                 let ok = AXWindow.withoutEnhancedInterface(pid: window.pid) { window.setFrame(frame) }
@@ -734,5 +739,21 @@ extension WindowConfig {
     func isExcluded(appId: String?) -> Bool {
         guard let appId else { return false }
         return excludedAppIds.contains(appId)
+    }
+}
+
+
+extension WindowController {
+    /// What restoring this layout would do right now. Moves nothing.
+    func previewRestore(_ layout: SavedLayout) -> [LayoutPreviewRow] {
+        let known = displays.displays
+        let open = Self.openWindows(excluding: store.currentConfig)
+        let matches = windowMatchEntries(entries: layout.entries, openWindows: open.map { WindowRef(appId: $0.appID, title: $0.title) })
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        return LayoutPreview.rows(
+            entries: layout.entries.map { ($0.appId, $0.title, $0.displayId) }, launchMissing: layout.launchMissing,
+            open: open.map { ($0.appID, $0.title) }, matches: matches.map { $0.map(Int.init) }, runningApps: running,
+            displayIDs: Set(known.map(\.id)), isLocked: { WindowLockStore.shared.isLocked(appID: $0, title: $1) }
+        )
     }
 }

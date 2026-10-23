@@ -1318,6 +1318,14 @@ impl KriyaCore {
         self.store.save_layout(&layout)
     }
 
+    pub fn export_layouts(&self, ids: Vec<String>) -> Result<String, CoreError> {
+        self.store.export_layouts(&ids)
+    }
+
+    pub fn import_layouts(&self, json: String, now: i64) -> Result<Vec<SavedLayout>, CoreError> {
+        self.store.import_layouts(&json, now)
+    }
+
     pub fn delete_layout(&self, id: String) -> Result<(), CoreError> {
         self.store.delete_layout(&id)
     }

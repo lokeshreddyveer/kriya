@@ -418,6 +418,8 @@ private struct LayoutsTab: View {
     @State private var designing: DesignerTarget?
     @State private var showingReport = false
     @State private var makingGroup = false
+    @State private var preview: (name: String, rows: [LayoutPreviewRow])?
+    @ObservedObject private var locks = WindowLockStore.shared
 
     private struct DesignerTarget: Identifiable {
         let id = UUID()
@@ -431,9 +433,28 @@ private struct LayoutsTab: View {
     var body: some View {
         Form {
             Section {
+                ForEach(locks.locks) { lock in
+                    HStack {
+                        Text(AppChoice.name(for: lock.appID)); if !lock.titleContains.isEmpty { Text("“\(lock.titleContains)”").foregroundStyle(.secondary) }
+                        Spacer()
+                        Button(role: .destructive) { locks.remove(lock.id) } label: { Image(systemName: "lock.open") }.buttonStyle(.borderless).accessibilityLabel("Unlock")
+                    }
+                }
+                HStack {
+                    Button("Lock the Window in Front") {
+                        if let (window, _, _) = controller.target(checkResizable: false), let id = window.app?.bundleIdentifier { locks.add(appID: id, title: window.title) }
+                    }.controlSize(.small)
+                    Button("Lock an App…") { if let id = AppChoice.choose(prompt: "Never move") { locks.add(appID: id, title: "") } }.controlSize(.small)
+                }
+            } header: { Text("Windows that stay put") } footer: { Text("A locked window is never moved by a layout, shortcut or rule. “The window in front” locks only windows with that title.") }
+            Section {
                 HStack {
                     Button { name = ""; naming = true } label: { Label("Save Current Windows…", systemImage: "square.and.arrow.down") }
                     Button { designing = DesignerTarget(layout: nil) } label: { Label("Draw a Layout…", systemImage: "rectangle.dashed") }
+                    Menu {
+                        Button("Import Layouts…") { importLayouts() }
+                        Button("Export Layouts…") { exportLayouts() }
+                    } label: { MoreMenuLabel() }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
                     Spacer()
                     Text("\(displays.displays.count) display\(displays.displays.count == 1 ? "" : "s") connected")
                         .font(.callout).foregroundStyle(.secondary)
@@ -483,6 +504,21 @@ private struct LayoutsTab: View {
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.layouts)
+        .sheet(isPresented: Binding(get: { preview != nil }, set: { if !$0 { preview = nil } })) {
+            if let preview {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Restoring “\(preview.name)” would:").font(.headline)
+                    List(preview.rows) { row in
+                        Label(LayoutPreview.describe(row, appName: AppChoice.name(for: row.appID)), systemImage: row.willMove ? "arrow.right.circle" : "minus.circle")
+                            .foregroundStyle(row.willMove ? Color.primary : Color.secondary)
+                    }
+                    .frame(minHeight: 200)
+                    Text("Nothing has moved. This is only a look.").font(.caption).foregroundStyle(.secondary)
+                    HStack { Spacer(); Button("Done") { self.preview = nil }.keyboardShortcut(.defaultAction) }
+                }
+                .padding(20).frame(width: 520)
+            }
+        }
         .animation(.smooth(duration: 0.25), value: message)
         .sheet(item: $designing) { target in
             LayoutDesignerView(existing: target.layout, displays: displays.displays, displayKey: displays.setKey, onSave: { layout in
@@ -529,9 +565,25 @@ private struct LayoutsTab: View {
             .buttonStyle(.borderless).id(bindingTick)
             .help(bindings.isBound(layout: layout.id, to: layout.displayKey) ? "Comes back by itself whenever the displays it was made for are connected. Click to stop." : "Bring this layout back by itself whenever the displays it was made for are connected")
             Button("Edit") { designing = DesignerTarget(layout: layout) }.controlSize(.small)
+            Button("Preview") { preview = (layout.name, controller.previewRestore(layout)) }.controlSize(.small).help("Shows what Restore would do, without moving anything")
             Button("Restore") { restore(layout) }.controlSize(.small)
             Button(role: .destructive) { store.deleteLayout(layout.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
         }
+    }
+
+    private func importLayouts() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { let count = try store.importLayouts(from: url); message = "Added \(count) layout\(count == 1 ? "" : "s")." } catch { message = error.userMessage }
+    }
+
+    private func exportLayouts() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Kriya layouts.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try store.exportLayouts(to: url); message = "Saved \(url.lastPathComponent)." } catch { message = error.userMessage }
     }
 
     private func groupRow(_ group: SavedLayout) -> some View {

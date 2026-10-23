@@ -95,6 +95,63 @@ impl Store {
         write_layout(&self.conn(), &clean)
     }
 
+    /// The chosen saved layouts as a file to share.
+    pub fn export_layouts(&self, ids: &[String]) -> Result<String, CoreError> {
+        let chosen: Vec<SavedLayout> = read_layouts(&self.conn(), false)?
+            .into_iter()
+            .filter(|l| ids.is_empty() || ids.contains(&l.id))
+            .collect();
+        #[derive(Serialize)]
+        struct Package<'a> {
+            format: &'a str,
+            version: u32,
+            layouts: &'a [SavedLayout],
+        }
+        Ok(serde_json::to_string_pretty(&Package {
+            format: "kriya-layouts",
+            version: 1,
+            layouts: &chosen,
+        })?)
+    }
+
+    /// Adds the layouts in a file under new ids. Layouts that are not valid are skipped. Returns what was added.
+    pub fn import_layouts(&self, json: &str, now: i64) -> Result<Vec<SavedLayout>, CoreError> {
+        #[derive(Deserialize)]
+        struct Package {
+            format: String,
+            version: u32,
+            layouts: Vec<SavedLayout>,
+        }
+        if json.len() > 2_000_000 {
+            return Err(CoreError::invalid("that file is too large"));
+        }
+        let package: Package = serde_json::from_str(json)
+            .map_err(|_| CoreError::invalid("that is not a Kriya layout file"))?;
+        if package.format != "kriya-layouts" || package.version != 1 {
+            return Err(CoreError::invalid("that is not a Kriya layout file"));
+        }
+        let existing: HashSet<String> = read_layouts(&self.conn(), true)?
+            .into_iter()
+            .map(|l| l.id)
+            .collect();
+        let mut added = Vec::new();
+        for (index, mut layout) in package.layouts.into_iter().enumerate().take(50) {
+            let mut id = format!("imported-{now}-{index}");
+            while existing.contains(&id) {
+                id.push('x');
+            }
+            layout.id = id;
+            layout.is_auto = false;
+            layout.created_at = now;
+            if check_layout(&layout).is_err() {
+                continue;
+            }
+            write_layout(&self.conn(), &layout)?;
+            added.push(layout);
+        }
+        Ok(added)
+    }
+
     pub fn delete_layout(&self, id: &str) -> Result<(), CoreError> {
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;
@@ -962,5 +1019,31 @@ mod tests {
         value["window"]["shortcuts"][1] = value["window"]["shortcuts"][0].clone();
         assert!(store.import_backup(&value.to_string()).is_err());
         assert_eq!(store.window_config().unwrap().gap, 3.0);
+    }
+
+    #[test]
+    fn layouts_round_trip_through_a_file_with_new_ids() {
+        let s = Store::open_in_memory().unwrap();
+        let layout = SavedLayout {
+            id: "a".into(),
+            name: "Work".into(),
+            display_key: "d".into(),
+            is_auto: false,
+            created_at: 1,
+            entries: vec![],
+            unplaced: Default::default(),
+            launch_missing: false,
+            is_group: false,
+        };
+        s.save_layout(&layout).unwrap();
+        let json = s.export_layouts(&[]).unwrap();
+        let added = s.import_layouts(&json, 50).unwrap();
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].id, "imported-50-0");
+        assert_eq!(s.saved_layouts(false).unwrap().len(), 2);
+        assert!(s.import_layouts("{}", 1).is_err());
+        assert!(s
+            .import_layouts(r#"{"format":"x","version":1,"layouts":[]}"#, 1)
+            .is_err());
     }
 }
