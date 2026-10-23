@@ -489,3 +489,30 @@ final class ResetRollbackTests: XCTestCase {
         XCTAssertNil(undo.load())
     }
 }
+
+final class PreviousAreaTests: XCTestCase {
+    func testAnAreaIsOnlyValidOnTheSameDisplays() throws {
+        let one = PreviousArea.layoutKey([CGRect(x: 0, y: 0, width: 1512, height: 982)], scales: [2])
+        let two = PreviousArea.layoutKey([CGRect(x: 0, y: 0, width: 1512, height: 982), CGRect(x: 1512, y: 0, width: 2560, height: 1440)], scales: [2, 2])
+        let area = try XCTUnwrap(PreviousArea(rect: CGRect(x: 100.4, y: 200.6, width: 300, height: 150), layout: one))
+        XCTAssertEqual(area.valid(for: one), CGRect(x: 100, y: 201, width: 300, height: 150))
+        XCTAssertNil(area.valid(for: two), "a display was added")
+    }
+
+    func testTooSmallOrNonsenseRectanglesAreRefused() {
+        XCTAssertNil(PreviousArea(rect: CGRect(x: 0, y: 0, width: 3, height: 300), layout: "a"))
+        XCTAssertNil(PreviousArea(rect: CGRect(x: .infinity, y: 0, width: 100, height: 100), layout: "a"))
+    }
+
+    func testAppKitCoordinatesBecomeTopLeftOnes() {
+        let converted = PreviousArea.fromAppKit(CGRect(x: 50, y: 100, width: 200, height: 80), mainHeight: 1000)
+        XCTAssertEqual(converted, CGRect(x: 50, y: 820, width: 200, height: 80))
+    }
+
+    func testTheCaptureCommandNamesTheAreaAndNothingElseIsAsked() throws {
+        let area = try XCTUnwrap(PreviousArea(rect: CGRect(x: 10, y: 20, width: 300, height: 200), layout: "a"))
+        let out = URL(fileURLWithPath: "/tmp/x.png")
+        XCTAssertEqual(ScreenCaptureArguments.area(area, delay: 0, sound: false, output: out), ["-R", "10,20,300,200", "-x", "-t", "png", "/tmp/x.png"])
+        XCTAssertFalse(ScreenCaptureArguments.area(area, delay: 3, sound: true, output: out).contains("-i"), "no interactive selection")
+    }
+}

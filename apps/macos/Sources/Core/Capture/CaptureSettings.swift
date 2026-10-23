@@ -36,6 +36,8 @@ enum CaptureAction: String, CaseIterable, Identifiable, Codable {
     case cutout
     /// Cut a saved recording down to part of it.
     case trimRecording
+    /// Drag out an area to capture, and remember it. And capture the same area again without asking.
+    case area, previousArea
     /// Record the screen as a movie, or as a GIF.
     case record, recordGIF
     /// Scroll the window in front and join the pages into one tall picture.
@@ -92,6 +94,8 @@ struct CaptureSettings: Codable, Equatable {
         ("capture.text", "Copy text from a region (OCR)", .region, .text),
         ("capture.redacted", "Capture a region and hide private text", .region, .redacted),
         ("capture.qr", "Read a QR code from a region", .region, .qr),
+        ("capture.area", "Capture an area (and remember it)", .region, .area),
+        ("capture.again", "Capture the previous area again", .region, .previousArea),
         ("capture.trim", "Trim a recording to part of it", .screen, .trimRecording),
         ("capture.cutout", "Cut out the subject of a region (clear background)", .region, .cutout),
         ("capture.record", "Record the screen", .region, .record),

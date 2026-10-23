@@ -114,6 +114,9 @@ final class ScreenCaptureService: ObservableObject {
             return
         }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-capture-\(UUID().uuidString).png")
+        if action == .area || action == .previousArea {
+            return captureArea(pickNew: action == .area, settings: current, file: file)
+        }
         let arguments = ScreenCaptureArguments.make(mode: mode, delay: current.delaySeconds, sound: current.playSound, output: file)
         queue.async { [self] in
             capturer(arguments)
@@ -170,6 +173,50 @@ final class ScreenCaptureService: ObservableObject {
                 guard let image else { self.toast.show("The page could not be captured.", isError: true); return }
                 self.deliver(image, settings: settings, hidden: 0)
             }
+        }
+    }
+
+    private static let areaKey = "capture.previousArea.v1"
+    private let areaPicker = AreaPicker()
+
+    private var previousArea: PreviousArea? {
+        get { UserDefaults.standard.data(forKey: Self.areaKey).flatMap { try? JSONDecoder().decode(PreviousArea.self, from: $0) } }
+        set {
+            if let data = newValue.flatMap({ try? JSONEncoder().encode($0) }) { UserDefaults.standard.set(data, forKey: Self.areaKey) }
+            else { UserDefaults.standard.removeObject(forKey: Self.areaKey) }
+        }
+    }
+
+    /// Captures an area: the one remembered if the displays are as they were, or one the person drags out now.
+    private func captureArea(pickNew: Bool, settings current: CaptureSettings, file: URL) {
+        if !pickNew, let saved = previousArea {
+            if saved.valid(for: AreaPicker.currentLayout) != nil {
+                return captureArea(saved, settings: current, file: file)
+            }
+            previousArea = nil
+            toast.show("The displays changed since that area was captured. Pick the area again.")
+        } else if !pickNew {
+            toast.show("No area has been captured yet. Drag one out.")
+        }
+        DispatchQueue.main.async {
+            self.areaPicker.pick { rect in
+                guard let rect, let area = PreviousArea(rect: rect, layout: AreaPicker.currentLayout) else { self.isCapturing = false; return }
+                self.previousArea = area
+                self.captureArea(area, settings: current, file: file)
+            }
+        }
+    }
+
+    private func captureArea(_ area: PreviousArea, settings current: CaptureSettings, file: URL) {
+        let arguments = ScreenCaptureArguments.area(area, delay: current.delaySeconds, sound: current.playSound, output: file)
+        queue.async { [self] in
+            capturer(arguments)
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard let image = Self.loadImage(at: file) else {
+                DispatchQueue.main.async { self.isCapturing = false }
+                return
+            }
+            process(image, action: .normal, settings: current)
         }
     }
 
@@ -242,7 +289,7 @@ final class ScreenCaptureService: ObservableObject {
                 if settings.saveToFolder, let name = self.save(cut, to: settings.folder) { done += ", saved as \(name)" }
                 self.toast.show("Subject cut out: " + done)
             }
-        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror, .menu, .trimRecording:
+        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror, .menu, .trimRecording, .area, .previousArea:
             DispatchQueue.main.async { self.isCapturing = false }
         case .normal, .redacted:
             var picture = image
