@@ -342,3 +342,26 @@ Verified: it compiles, its tests pass with a stand-in model, and a real call to 
 - **The quick paste window can be moved:** drag the bar at its top, or any empty part. Clipboard › Settings can make it open where you left it instead of at the pointer.
 - **Right-click an item:** Paste, Paste as Plain Text, Copy (without pasting), Pin to the Top, Save as Snippet, Show in Finder or Copy Path for files, Open Link for links, an Apple Intelligence submenu for text (never for items labelled sensitive), and Delete. ⌘P pins the highlighted item. Pinned items show a pin mark and have their own filter.
 - **Apple Intelligence:** the selection is read again when you choose an action, and the longer reading is used when it contains the first (some apps report only part of a selection at first). The result window shows how many characters were used, stays on the screen the pointer is on, and Summarize or Key points on under 140 characters says there is nothing to summarize instead of repeating the text.
+
+## Mouse, Finder, pointer and window additions (0.2.11)
+
+- **Mouse buttons:** a rule can fire on a **hold** (150 to 1500 ms) as well as a click; a quick press is replayed as an ordinary click. **Auto-scroll** (Mouse › Drag) starts with a chosen button and stops on Escape, a click or the wheel. **Devices** shows battery (from macOS, otherwise “not reported”), last used and a reconnect note; the input tester and Trace name the device.
+- **Finder:** moves, copies, renames, archives and new files are listed under Finder Actions › Recent file operations with Undo, Show and failure details. Move to / Copy to offers starred and recent folders, search and ⌘1 to ⌘9.
+- **Pointer:** a spotlight (dims every display except a circle or rounded rectangle at the pointer) and a four-group pane (Everyday, Presentation, Accessibility, Advanced).
+- **Windows:** a restore report says for each window whether it was placed, went to another or the main display, or was not found and why, with a way to choose a replacement window; **window groups** restore, come forward and move or fit together.
+
+## Fixes and a new launcher, switcher and installer (0.2.12 to 0.2.16)
+
+- **Finder right-click actions** work: Finder does not hand back what is attached to a menu item, so the extension now looks the action up by its tag, logs what it does (`log stream --predicate 'subsystem == "app.kriya.finder"'`) and sends requests only to its own app. Run Setup › “Check the Right-Click Menu” if it ever stops.
+- **Launcher:** a compact bar that grows with its results, in sections, with web search and site keywords (“yt cats”).
+- **⌥Tab switcher:** window cards with previews, opens at once, ⌥⇧Tab backwards, ⌥` same app, type to search, hover and close buttons, ⌘W/M/H/Q, size setting.
+- **Apps › Install** searches Homebrew as you type, with descriptions and popular apps.
+- **Pointer presentation mode** and **spotlight** have their own shortcuts and work with the master switch off.
+
+## Launcher tools, Folder Rules, command line and more (0.3.0)
+
+- **Launcher:** quicklinks, scripts, converters (units, time zones, colours, encodings, hashes), generators (UUID, password, lorem, QR code, colour picker), optional currency conversion and your next meeting with Join. See “Launcher” above for the words to type.
+- **Folder Rules**, **menu bar icon manager**, **command-line tool**, **`kriya://` commands**, **Shortcuts actions**, **Record Keys**, **clipboard drag-out** and **newer settings from another Mac**: described above.
+- **Not built:** multi-finger trackpad gestures (they need a private macOS framework that cannot be tested here). The releases repository is private, so other Macs cannot receive updates until a public one exists.
+
+Verified: it compiles and its tests pass, including the command-line script run against a stand-in `open` and folder rules run on real temporary folders. Not verified by hand: menu-bar hiding on macOS 26, the next-meeting button with a real calendar, the Shortcuts actions in the Shortcuts app, the new launcher and ⌥Tab over real windows, and Folder Rules on a real Downloads folder.
