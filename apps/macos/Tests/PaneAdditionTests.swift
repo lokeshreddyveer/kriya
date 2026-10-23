@@ -635,7 +635,7 @@ final class ShelfCareTests: XCTestCase {
         lib.expiryDays = 1
         lib.shelves[0].items = [file("/a", added: now.addingTimeInterval(-23 * 3600)), file("/b", added: now.addingTimeInterval(-10 * 3600)), file("/c", added: now.addingTimeInterval(-26 * 3600))]
         let soon = lib.expiring(within: 24, now: now)
-        XCTAssertEqual(soon.map(\.record.value), ["/a", "/b"].sorted { $0 == "/a" ? true : false } + [])
+        XCTAssertEqual(soon.map(\.record.value), ["/a", "/b"])
         XCTAssertEqual(soon.map(\.hoursLeft), [1, 14])
         lib.expiryDays = nil
         XCTAssertTrue(lib.expiring(within: 24, now: now).isEmpty)
@@ -674,5 +674,36 @@ final class ShelfCareTests: XCTestCase {
         let json = #"{"shelves":[{"id":"main","name":"Shelf","items":[{"id":"1","kind":"file","value":"/a","added":0}]}],"currentID":"main","history":[]}"#
         let lib = try JSONDecoder().decode(ShelfLibrary.self, from: Data(json.utf8))
         XCTAssertNil(lib.shelves[0].items[0].group)
+    }
+}
+
+final class AppTrustTests: XCTestCase {
+    func testNotarizedStoreAndRejectedAppsAreTold() {
+        let sign = "Authority=Developer ID Application: Acme Ltd (ABCDE12345)\nTeamIdentifier=ABCDE12345\n"
+        let notarized = AppTrust.parse(codesign: sign, spctl: "/A.app: accepted\nsource=Notarized Developer ID\n")
+        XCTAssertEqual(notarized.level, .notarized)
+        XCTAssertEqual(notarized.signer, "Developer ID Application: Acme Ltd (ABCDE12345)")
+        XCTAssertEqual(notarized.teamID, "ABCDE12345")
+        XCTAssertEqual(AppTrust.parse(codesign: "Authority=Apple Mac OS Application Signing\n", spctl: "accepted\nsource=Mac App Store").level, .appStore)
+        XCTAssertEqual(AppTrust.parse(codesign: sign, spctl: "/A.app: rejected\nsource=no usable signature").level, .rejected)
+        XCTAssertTrue(AppTrust.parse(codesign: sign, spctl: "rejected").isConcerning)
+        XCTAssertFalse(notarized.isConcerning)
+    }
+
+    func testUnsignedAdhocAndUnknownAreTold() {
+        XCTAssertEqual(AppTrust.parse(codesign: "/A.app: code object is not signed at all", spctl: "rejected").level, .unsigned)
+        XCTAssertEqual(AppTrust.parse(codesign: "Signature=adhoc\nTeamIdentifier=not set\n", spctl: "").level, .adhoc)
+        XCTAssertEqual(AppTrust.parse(codesign: "", spctl: "").level, .unknown)
+        XCTAssertEqual(AppTrust.parse(codesign: "Signature=adhoc\nTeamIdentifier=not set", spctl: "").teamID, nil)
+    }
+
+    func testHomebrewDiagnosisNamesTheLikelyProblem() {
+        let missing = HomebrewDiagnosis.lines(appleSilicon: false, foundAt: nil, optHomebrewExists: true, usrLocalExists: true, pathVariable: "/usr/bin")
+        XCTAssertTrue(missing.contains { $0.contains("/opt/homebrew exists") })
+        let wrongPlace = HomebrewDiagnosis.lines(appleSilicon: true, foundAt: "/usr/local/bin/brew", optHomebrewExists: false, usrLocalExists: true, pathVariable: "/usr/local/bin:/usr/bin")
+        XCTAssertTrue(wrongPlace.contains { $0.contains("normally lives at /opt/homebrew/bin/brew") })
+        let offPath = HomebrewDiagnosis.lines(appleSilicon: true, foundAt: "/opt/homebrew/bin/brew", optHomebrewExists: true, usrLocalExists: false, pathVariable: "/usr/bin")
+        XCTAssertTrue(offPath.contains { $0.contains("not on the PATH") })
+        XCTAssertEqual(HomebrewDiagnosis.lines(appleSilicon: true, foundAt: "/opt/homebrew/bin/brew", optHomebrewExists: true, usrLocalExists: false, pathVariable: "/opt/homebrew/bin").count, 1)
     }
 }

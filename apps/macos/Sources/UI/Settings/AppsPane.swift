@@ -123,11 +123,29 @@ struct AppsPane: View {
                     }
                     Spacer()
                     Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([app.url]) }.controlSize(.small)
+                    Button("Check Signature") { checkTrust(app) }.controlSize(.small)
                     Button("Remove…") { removing = app }.controlSize(.small).disabled(app.isProtected)
                 }
                 .padding(.vertical, 2)
             }
             .listStyle(.inset)
+        }
+    }
+
+    private func checkTrust(_ app: InstalledApp) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            func output(_ path: String, _ args: [String]) -> String {
+                do { return try ToolRunner.run(path, args, timeout: 15) } catch { return (error as? FileActionError)?.message ?? "\(error)" }
+            }
+            let codesign = output("/usr/bin/codesign", ["-dv", "--verbose=2", app.url.path])
+            let spctl = output("/usr/sbin/spctl", ["-a", "-vv", app.url.path])
+            let trust = AppTrust.parse(codesign: codesign, spctl: spctl)
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "\(app.name): \(trust.title)"
+                alert.informativeText = [trust.signer.map { "Signed by \($0)." }, trust.teamID.map { "Team \($0)." }, trust.isConcerning ? "Only open it if you trust where it came from." : nil].compactMap { $0 }.joined(separator: " ")
+                alert.runModal()
+            }
         }
     }
 
@@ -397,6 +415,15 @@ private struct InstallTab: View {
         Form {
             Section {
                 Text("Homebrew is not installed on this Mac.")
+                #if arch(arm64)
+                let silicon = true
+                #else
+                let silicon = false
+                #endif
+                ForEach(HomebrewDiagnosis.lines(appleSilicon: silicon, foundAt: nil, optHomebrewExists: FileManager.default.fileExists(atPath: "/opt/homebrew"),
+                                                usrLocalExists: FileManager.default.fileExists(atPath: "/usr/local/bin"), pathVariable: ProcessInfo.processInfo.environment["PATH"] ?? "").dropFirst(), id: \.self) {
+                    Text($0).font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
                     Link("About Homebrew", destination: URL(string: "https://brew.sh")!)
                     Spacer()
