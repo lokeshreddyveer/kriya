@@ -109,6 +109,7 @@ struct ActionsPane: View {
     private func run(_ saved: NamedAction) {
         guard let executor else { return }
         results[saved.id] = nil
+        UsageLogStore.actions.record(saved.name)
         Task {
             let outcome = await executor.perform(saved.action)
             await MainActor.run { withAnimation(.smooth) { results[saved.id] = outcome } }
@@ -137,6 +138,9 @@ private struct ActionRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(saved.name).font(.headline)
                 Text(saved.action.summary).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                if let last = UsageLogStore.actions.log.lastUsed(saved.name) {
+                    Text("Last run here \(last.formatted(date: .abbreviated, time: .shortened))").font(.caption2).foregroundStyle(.tertiary)
+                }
                 let risk = ActionInsight.risk(of: saved.action)
                 if risk >= .medium { StateBadge(text: risk.title, color: risk == .high ? Theme.danger : Theme.warn).help(ActionInsight.reason(for: saved.action)) }
                 if let outcome {

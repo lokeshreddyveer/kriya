@@ -334,9 +334,21 @@ struct TextOpFields: View {
 private struct AppearanceTab: View {
     @EnvironmentObject private var store: SelectionStore
     private var config: SelectionConfig { store.config }
+    @ObservedObject private var usage = UsageLogStore.selection
 
     var body: some View {
         Form {
+            Section {
+                if usage.log.entries.isEmpty { Text("Nothing used yet.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(usage.log.top(5), id: \.title) { item in
+                    HStack { Text(item.title); Spacer(); Text("\(item.uses) time\(item.uses == 1 ? "" : "s")").foregroundStyle(.secondary).font(.callout) }
+                }
+                ForEach(usage.log.entries.prefix(5)) { entry in
+                    HStack { Text(entry.title); if !entry.detail.isEmpty { Text("in \(entry.detail)").foregroundStyle(.secondary) }; Spacer()
+                        Text(entry.at.formatted(date: .omitted, time: .shortened)).font(.caption).foregroundStyle(.secondary) }.font(.callout)
+                }
+                if !usage.log.entries.isEmpty { Button("Clear") { usage.clear() }.controlSize(.small) }
+            } header: { Text("Most used") } footer: { Text("Only the name of the action and the app it was used in are kept, never the text.") }
             Section("Look") {
                 Picker("Style", selection: Binding(get: { config.theme }, set: { v in store.updateConfig { $0.theme = v } })) {
                     Text("Match the system").tag(ToolbarTheme.system); Text("Light").tag(ToolbarTheme.light); Text("Dark").tag(ToolbarTheme.dark); Text("Accent color").tag(ToolbarTheme.accent)

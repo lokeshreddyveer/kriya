@@ -130,6 +130,7 @@ final class SelectionActionRunner {
 
     func run(_ action: SelectionAction, on snapshot: SelectionSnapshot, pointer: CGPoint) {
         Log.info("Selection", "Action: \(String(describing: action.kind).prefix(20))")
+        UsageLogStore.selection.record(action.title, detail: NSWorkspace.shared.frontmostApplication?.localizedName ?? "")
         switch action.kind {
         case .copy:
             copyToClipboard(snapshot.text)

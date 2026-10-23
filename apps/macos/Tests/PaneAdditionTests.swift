@@ -532,3 +532,29 @@ final class DisplayInsightTests: XCTestCase {
         XCTAssertTrue(DisplayInsight.changes(before: ["1": "A"], after: ["1": "A"]).isEmpty)
     }
 }
+
+final class UsageLogTests: XCTestCase {
+    func testTheLogKeepsNamesCountsUsesAndForgetsOldOnes() {
+        var log = UsageLog()
+        let t = Date(timeIntervalSince1970: 1_760_000_000)
+        log.record("Copy", detail: "Safari", at: t)
+        log.record("Search", at: t.addingTimeInterval(1))
+        log.record("Copy", at: t.addingTimeInterval(2))
+        log.record("", at: t)
+        XCTAssertEqual(log.entries.count, 3)
+        XCTAssertEqual(log.top(1).map(\.title), ["Copy"])
+        XCTAssertEqual(log.top(5).map(\.uses), [2, 1])
+        XCTAssertEqual(log.lastUsed("Copy"), t.addingTimeInterval(2))
+        XCTAssertNil(log.lastUsed("Nope"))
+        for i in 0..<150 { log.record("x\(i)", at: t) }
+        XCTAssertEqual(log.entries.count, UsageLog.limit)
+        XCTAssertEqual(UsageLog().top(3).count, 0)
+    }
+
+    func testLongNamesAreCut() {
+        var log = UsageLog()
+        log.record(String(repeating: "a", count: 200), detail: String(repeating: "b", count: 200), at: Date())
+        XCTAssertEqual(log.entries[0].title.count, 80)
+        XCTAssertEqual(log.entries[0].detail.count, 80)
+    }
+}
