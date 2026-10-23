@@ -1400,3 +1400,42 @@ final class SoundModeTests: XCTestCase {
         XCTAssertNil(BluetoothAudio.peer(named: "  ", in: peers))
     }
 }
+
+final class DialogFolderSearchAndJumpTests: XCTestCase {
+    private func choices() -> [DialogFolders.Choice] {
+        DialogFolders.choices(finder: nil, windows: [], favorites: ["/Users/me/Documents/Taxes", "/Users/me/Downloads", "/Users/me/Projects/tax-tool"], recents: [], exists: { _ in true })
+    }
+
+    func testTypingNarrowsTheFoldersAndNamesThatStartWithItComeFirst() {
+        let all = choices()
+        XCTAssertEqual(DialogFolders.filter(all, query: "").count, 3)
+        XCTAssertEqual(DialogFolders.filter(all, query: "tax").map(\.name), ["Taxes", "tax-tool"])
+        XCTAssertEqual(DialogFolders.filter(all, query: "documents tax").map(\.name), ["Taxes"], "every word must match, in the name or the path")
+        XCTAssertTrue(DialogFolders.filter(all, query: "zzz").isEmpty)
+    }
+
+    func testAnAppJumpsOnlyWhenItsDialogJustOpened() {
+        let folders = ["com.apple.TextEdit": "/Users/me/Documents"]
+        func decide(_ id: String?, was: Bool, now: Bool, enabled: Bool = true, exists: Bool = true) -> String? {
+            DialogAppFolders.destination(for: id, wasInDialog: was, isInDialog: now, enabled: enabled, folders: folders, exists: { _ in exists })
+        }
+        XCTAssertEqual(decide("com.apple.TextEdit", was: false, now: true), "/Users/me/Documents")
+        XCTAssertNil(decide("com.apple.TextEdit", was: true, now: true), "already up: it is not jumped again")
+        XCTAssertNil(decide("com.apple.TextEdit", was: false, now: false))
+        XCTAssertNil(decide("com.apple.Safari", was: false, now: true), "no folder for that app")
+        XCTAssertNil(decide("com.apple.TextEdit", was: false, now: true, enabled: false))
+        XCTAssertNil(decide("com.apple.TextEdit", was: false, now: true, exists: false), "the folder is gone")
+        XCTAssertNil(decide(nil, was: false, now: true))
+    }
+
+    func testTheAppFolderListIsKeptAndLimited() {
+        let defaults = UserDefaults(suiteName: "kriya-dialogs-\(UUID().uuidString)")!
+        let store = DialogAppFolders(defaults: defaults)
+        store.set("/a", for: "x.one")
+        XCTAssertEqual(DialogAppFolders(defaults: defaults).folders, ["x.one": "/a"])
+        store.set(nil, for: "x.one")
+        XCTAssertTrue(store.folders.isEmpty)
+        for i in 0..<(DialogAppFolders.limit + 5) { store.set("/f", for: "app.\(i)") }
+        XCTAssertEqual(store.folders.count, DialogAppFolders.limit)
+    }
+}

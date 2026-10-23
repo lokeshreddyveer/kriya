@@ -40,6 +40,7 @@ final class AppEnvironment {
     let soundMixer = SoundMixerModel()
     let soundRules = SoundRuleRunner()
     private var soundModeSub: AnyCancellable?
+    private var dialogJumpObserver: NSObjectProtocol?
     private var soundModeCommands: Set<String> = []
     let focusSession = FocusSessionController()
     let worldClock = WorldClockModel()
@@ -334,6 +335,8 @@ final class AppEnvironment {
         worldClock.start()
         sharedClipboard.start()
         dialogFolders.type = { [weak keyboard] text in keyboard?.injector.insert(text, cursorBack: 0) }
+        dialogFolders.applyAutoJump()
+        dialogJumpObserver = NotificationCenter.default.addObserver(forName: .kriyaDialogAutoJumpChanged, object: nil, queue: .main) { [weak self] _ in self?.dialogFolders.applyAutoJump() }
         dictation.insert = { [weak keyboard] text in DispatchQueue.global(qos: .userInitiated).async { keyboard?.injector.insert(text, cursorBack: 0) } }
         let keys = VolumeKeys(events: events, engine: appAudio)
         volumeKeys = keys

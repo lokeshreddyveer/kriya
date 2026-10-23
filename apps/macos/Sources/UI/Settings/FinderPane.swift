@@ -510,6 +510,7 @@ private struct SetupTab: View {
     @EnvironmentObject private var finder: FinderService
     @EnvironmentObject private var store: FinderStore
     @State private var checks: [FinderCheckResult] = []
+    @ObservedObject private var dialogFolders = DialogAppFolders.shared
     private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -558,6 +559,32 @@ private struct SetupTab: View {
                 }
             } header: { Text("Action launcher") } footer: {
                 Text("A search box for every action that fits what is selected in Finder. The first time, macOS asks to let Kriya control Finder so it can read the selection.")
+            }
+
+            Section {
+                Toggle("Jump to a folder by itself when an app opens a dialog", isOn: $dialogFolders.enabled)
+                    .onChange(of: dialogFolders.enabled) { _, _ in NotificationCenter.default.post(name: .kriyaDialogAutoJumpChanged, object: nil) }
+                ForEach(dialogFolders.folders.sorted { $0.key < $1.key }, id: \.key) { id, path in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(AppChoice.name(for: id))
+                            Text((path as NSString).abbreviatingWithTildeInPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        }
+                        Spacer()
+                        Button(role: .destructive) { dialogFolders.set(nil, for: id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    }
+                }
+                Button {
+                    guard let app = AppChoice.choose(prompt: "Choose the app") else { return }
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = false
+                    panel.canChooseDirectories = true
+                    panel.prompt = "Use This Folder"
+                    panel.message = "The folder its Open and Save dialogs should start in."
+                    if panel.runModal() == .OK, let url = panel.url { dialogFolders.set(url.path, for: app) }
+                } label: { Label("Set a Folder for an App…", systemImage: "plus") }
+            } header: { Text("Open and Save dialogs") } footer: {
+                Text("Give an app a folder and its Open and Save dialogs go there as soon as they appear, by typing the path into the dialog's “Go to the folder” sheet. It needs Accessibility, and it checks the front app a little more than once a second only while an app with a folder is in front. The “Dialog Folders” command shows a searchable list of Finder's folders, favorites and recent folders, with a button for hidden files.")
             }
 
             DefaultAppsSection()

@@ -47,3 +47,55 @@ enum DialogFolders {
         return ["open", "save", "choose", "export", "import", "select", "attach"].contains { t == $0 || t.hasPrefix($0 + " ") }
     }
 }
+
+
+extension DialogFolders {
+    /// The choices whose name or path contains every word typed; names that start with the first word come first.
+    static func filter(_ choices: [Choice], query: String) -> [Choice] {
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return choices }
+        let found = choices.filter { choice in
+            let haystack = (choice.name + " " + choice.shortPath).lowercased()
+            return words.allSatisfy { haystack.contains($0) }
+        }
+        let first = words[0]
+        return found.enumerated().sorted { a, b in
+            let aStarts = a.element.name.lowercased().hasPrefix(first), bStarts = b.element.name.lowercased().hasPrefix(first)
+            return aStarts != bStarts ? aStarts : a.offset < b.offset
+        }.map(\.element)
+    }
+}
+
+extension Notification.Name {
+    static let kriyaDialogAutoJumpChanged = Notification.Name("app.kriya.dialogAutoJumpChanged")
+}
+
+/// Which folder an app's Open or Save dialog should jump to by itself, kept in the app's preferences.
+final class DialogAppFolders: ObservableObject {
+    static let shared = DialogAppFolders()
+    static let limit = 40
+
+    @Published private(set) var folders: [String: String]
+    @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: enabledKey) } }
+    private let defaults: UserDefaults
+    private let key = "dialogAppFolders.v1"
+    private let enabledKey = "dialogAutoJump"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        folders = (defaults.dictionary(forKey: key) as? [String: String]) ?? [:]
+        enabled = defaults.bool(forKey: enabledKey)
+    }
+
+    func set(_ path: String?, for bundleID: String) {
+        if let path, !path.isEmpty, folders.count < Self.limit || folders[bundleID] != nil { folders[bundleID] = path } else { folders[bundleID] = nil }
+        defaults.set(folders, forKey: key)
+    }
+
+    /// The folder to jump to when `bundleID` shows a dialog it was not showing before. Nil when it should not jump: the feature is
+    /// off, no folder is set for that app, the dialog was already up, or the folder is gone.
+    static func destination(for bundleID: String?, wasInDialog: Bool, isInDialog: Bool, enabled: Bool, folders: [String: String], exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> String? {
+        guard enabled, isInDialog, !wasInDialog, let bundleID, let path = folders[bundleID], exists(path) else { return nil }
+        return path
+    }
+}
