@@ -44,6 +44,12 @@ struct IntelligencePane: View {
             }
 
             Section {
+                Toggle("Allow web research", isOn: Binding(get: { settings.webResearchOn == true }, set: { v in intelligence.update { $0.webResearchOn = v ? true : nil } }))
+            } header: { Text("Web research") } footer: {
+                Text("Off by default. The on-device model cannot look things up, so this lets it read the opening of Wikipedia articles first. In the launcher type “research” and a question, for example “research who directed Baahubali”. Only the words of your question are sent, to Wikipedia, in the language of your question (Telugu script goes to the Telugu Wikipedia) and in English. The model then answers only from what was found, cites it as [1], [2], and the sources are listed under the answer. If nothing matches, it says so instead of guessing. Nothing is sent while Local-only mode is on.")
+            }
+
+            Section {
                 TextField("Language of the result", text: Binding(get: { settings.outputLanguage }, set: { v in intelligence.update { $0.outputLanguage = v } }), prompt: Text("Same as the text"))
             } header: { Text("Language") } footer: {
                 Text("Leave empty to get a result in the language of the text. Type a language, such as French, to always get that one. The model supports a limited set of languages.")

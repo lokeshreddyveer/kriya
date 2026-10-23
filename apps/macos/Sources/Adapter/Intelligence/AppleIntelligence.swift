@@ -140,6 +140,32 @@ struct IntelligenceSettings: Codable, Equatable {
     var onClipboardItems = true
     /// A language to write results in. Empty means the language of the text.
     var outputLanguage = ""
+    /// Web research, off until switched on: a question's words are sent to Wikipedia so the answer can cite what it found. Optional
+    /// so settings saved before it existed still load.
+    var webResearchOn: Bool?
+}
+
+/// Where research finds its sources. The real one asks Wikipedia; a test stands one in.
+protocol ResearchFetching {
+    func sources(for question: String) async throws -> [ResearchSource]
+}
+
+struct WikipediaFetcher: ResearchFetching {
+    var session: URLSession = .shared
+
+    func sources(for question: String) async throws -> [ResearchSource] {
+        var lists: [[ResearchSource]] = []
+        for language in WebResearch.languages(for: question) {
+            guard let url = WebResearch.requestURL(question: question, language: language) else { continue }
+            var request = URLRequest(url: url, timeoutInterval: 12)
+            request.setValue("Kriya (a Mac utility; reads the opening of articles for the person who asked)", forHTTPHeaderField: "User-Agent")
+            AuditLog.shared.record(.network, "Web research: GET \(url.host ?? "?")")
+            let (data, response) = try await session.data(for: request)
+            guard (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else { continue }
+            lists.append(WebResearch.parse(data))
+        }
+        return WebResearch.merge(lists)
+    }
 }
 
 /// Where Kriya uses Apple Intelligence's on-device model: what it is asked, in what order of fallbacks, and what the
@@ -218,6 +244,25 @@ final class AppleIntelligence: ObservableObject {
     func ask(_ question: String) async throws -> Output {
         let instructions = withLanguage(intelligenceAskInstructions())
         return try await send(text: question, instructions: instructions, rewriting: false, original: "") { $0 }
+    }
+
+    /// Answers a question from sources found on the web, if the person turned web research on. The question's words go to
+    /// Wikipedia; the sources are read by the on-device model, and the answer lists them. Without sources nothing is guessed.
+    func research(_ question: String, fetcher: ResearchFetching = WikipediaFetcher()) async throws -> Output {
+        guard settings.webResearchOn == true else {
+            return Output(text: "Web research is off. Turn it on in Apple Intelligence settings to let Kriya look the question up on Wikipedia.", truncated: false)
+        }
+        guard !LocalOnly.isOn else { return Output(text: LocalOnly.blockedMessage, truncated: false) }
+        let words = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(WebResearch.maxQuestionCharacters))
+        let sources: [ResearchSource]
+        do { sources = try await fetcher.sources(for: words) } catch {
+            return Output(text: "The lookup could not reach Wikipedia. Check the connection and try again.", truncated: false)
+        }
+        guard !sources.isEmpty else {
+            return Output(text: "No Wikipedia article matched that question, so there is nothing reliable to answer from. Try different words, or use “Search with” in the launcher.", truncated: false)
+        }
+        let answer = try await send(text: words, instructions: withLanguage(WebResearch.instructions), rewriting: false, original: "") { _ in WebResearch.prompt(question: words, sources: sources) }
+        return Output(text: answer.text + "\n\nSources:\n" + WebResearch.sourceLines(sources), truncated: answer.truncated)
     }
 
     private func withLanguage(_ instructions: String) -> String {

@@ -246,6 +246,16 @@ final class IntelligenceCoordinator {
         panel.show(job, near: pointer)
     }
 
+    /// Looks a question up on Wikipedia and answers from what was found, with the sources listed.
+    func research(_ question: String, near pointer: CGPoint? = nil) {
+        guard service.isAvailable else {
+            toast.show(service.availability.explanation, isError: true)
+            return
+        }
+        let job = IntelligenceJob(title: "Web research", source: question, replace: nil) { [service] in try await service.research(question) }
+        panel.show(job, near: pointer)
+    }
+
     /// Answers a question.
     func ask(_ question: String, near pointer: CGPoint? = nil) {
         guard service.isAvailable else {

@@ -439,6 +439,12 @@ final class LauncherSources {
                 category: .intelligence, rememberable: false, queryScore: 900
             ) { [weak intelligence] in intelligence?.ask(question) })
         }
+        if data.isEnabled(.intelligence), let question = Self.researchQuestion(in: text), let intelligence, intelligence.service.isAvailable, intelligence.service.settings.webResearchOn == true, !LocalOnly.isOn {
+            found.append(PaletteEntry(
+                id: "ai:research:\(question)", title: "Research on the web: \(Self.oneLine(question))", subtitle: "Looks it up on Wikipedia; answers from the sources, which it lists", symbol: "globe",
+                category: .intelligence, rememberable: false, queryScore: 905
+            ) { [weak intelligence] in intelligence?.research(question) })
+        }
         if data.isEnabled(.clipboard) { found.append(contentsOf: clipboardEntries(text)) }
         if data.isEnabled(.file) { found.append(contentsOf: fileEntries(text)) }
         if let tools { found.append(contentsOf: tools.queryEntries(text)) }
@@ -703,6 +709,9 @@ final class LauncherSources {
         if ["ask", "ai"].contains(word), let intelligence, intelligence.service.isAvailable, prefs.data.isEnabled(.intelligence) {
             return ArgumentToken(keyword: word, title: "Apple Intelligence", symbol: "sparkles", placeholder: "Ask a question…")
         }
+        if ["research", "lookup"].contains(word), let intelligence, intelligence.service.isAvailable, intelligence.service.settings.webResearchOn == true, !LocalOnly.isOn, prefs.data.isEnabled(.intelligence) {
+            return ArgumentToken(keyword: word, title: "Web research", symbol: "globe", placeholder: "Ask something to look up…")
+        }
         if ["define", "def"].contains(word) {
             return ArgumentToken(keyword: word, title: "Dictionary", symbol: "character.book.closed", placeholder: "Look up a word…")
         }
@@ -859,6 +868,16 @@ final class LauncherSources {
     // MARK: Apple Intelligence
 
     /// "ask what is a monad" or "ai what is a monad" or "? what is a monad", as the question that follows.
+    /// "research who directed Baahubali": a question to look up on the web, when the person allowed that.
+    static func researchQuestion(in text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["research ", "lookup "] where trimmed.lowercased().hasPrefix(prefix) {
+            let rest = String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return rest.count >= 3 ? String(rest.prefix(WebResearch.maxQuestionCharacters)) : nil
+        }
+        return nil
+    }
+
     static func question(in text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         for prefix in ["ask ", "ai ", "? "] where trimmed.lowercased().hasPrefix(prefix) {
