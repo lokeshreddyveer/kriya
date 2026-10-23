@@ -99,6 +99,14 @@ pub struct PointerEffectsConfig {
     /// How dark the rest of the screen goes, from barely to nearly black.
     pub spotlight_dim: f64,
     pub spotlight_shape: SpotlightShape,
+    /// A shortcut that turns the spotlight on and off.
+    pub spotlight_key: Option<u16>,
+    pub spotlight_modifiers: u64,
+    /// A shortcut that turns presentation mode on and off.
+    pub presentation_key: Option<u16>,
+    pub presentation_modifiers: u64,
+    /// Presentation mode also turns on the spotlight.
+    pub presentation_spotlight: bool,
 }
 
 impl Default for PointerEffectsConfig {
@@ -132,6 +140,11 @@ impl Default for PointerEffectsConfig {
             spotlight_size: 300.0,
             spotlight_dim: 0.6,
             spotlight_shape: SpotlightShape::Circle,
+            spotlight_key: None,
+            spotlight_modifiers: 0,
+            presentation_key: None,
+            presentation_modifiers: 0,
+            presentation_spotlight: false,
         }
     }
 }
@@ -207,6 +220,15 @@ impl PointerEffectsConfig {
         }
         kept.truncate(MAX_POSITIONS);
         self.magnifier_hold_modifier &= crate::actions::modifiers::ALL;
+        self.spotlight_modifiers &= crate::actions::modifiers::ALL;
+        self.presentation_modifiers &= crate::actions::modifiers::ALL;
+        // A shortcut with no modifier would take over a plain key.
+        if self.spotlight_modifiers == 0 {
+            self.spotlight_key = None;
+        }
+        if self.presentation_modifiers == 0 {
+            self.presentation_key = None;
+        }
         self.positions = kept;
         let mut seen_apps = std::collections::HashSet::new();
         self.excluded_app_ids = self
@@ -334,6 +356,27 @@ mod tests {
             faint.spotlight_dim, 0.1,
             "never so faint that it does nothing"
         );
+    }
+
+    #[test]
+    fn presentation_shortcuts_need_a_modifier_and_are_off_by_default() {
+        let d = PointerEffectsConfig::default();
+        assert!(
+            d.spotlight_key.is_none() && d.presentation_key.is_none() && !d.presentation_spotlight
+        );
+        let bare = PointerEffectsConfig {
+            spotlight_key: Some(1),
+            spotlight_modifiers: 0,
+            presentation_key: Some(2),
+            presentation_modifiers: crate::actions::modifiers::COMMAND,
+            ..PointerEffectsConfig::default()
+        }
+        .sanitized();
+        assert_eq!(
+            bare.spotlight_key, None,
+            "a bare key would take over typing"
+        );
+        assert_eq!(bare.presentation_key, Some(2));
     }
 
     #[test]

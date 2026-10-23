@@ -509,6 +509,7 @@ private struct AppsSettingsTab: View {
 private struct SetupTab: View {
     @EnvironmentObject private var finder: FinderService
     @EnvironmentObject private var store: FinderStore
+    @State private var checks: [FinderCheckResult] = []
     private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -518,10 +519,32 @@ private struct SetupTab: View {
                     StateBadge(text: finder.extensionEnabled ? "Finder extension is on" : "Finder extension is off", color: finder.extensionEnabled ? Theme.ok : Theme.warn)
                     Spacer()
                     Button("Open Extension Settings") { finder.openExtensionSettings() }
+                    Button("Restart Extension") { finder.restartExtension(); checks = [] }
                     Button("Relaunch Finder") { _ = try? ToolRunner.run("/usr/bin/killall", ["Finder"]) }
                 }
             } header: { Text("Finder extension") } footer: {
                 Text("Switch on “Kriya” under Finder extensions, then relaunch Finder. The menu then shows when you right-click files, folders or the empty space in a folder, and from the toolbar button if you add it.")
+            }
+
+            Section {
+                ForEach(checks) { check in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: check.ok ? "checkmark.circle.fill" : "xmark.octagon.fill").foregroundStyle(check.ok ? Theme.ok : Theme.danger)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(check.title)
+                            Text(check.detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                HStack {
+                    Button("Check the Right-Click Menu") { withAnimation(.smooth) { checks = finder.selfCheck() } }
+                    if !checks.isEmpty, checks.allSatisfy(\.ok) {
+                        Text("Everything Kriya can see is fine. If the menu still does not show, restart the extension, then relaunch Finder.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } header: { Text("If it does not work") } footer: {
+                Text("This looks at each link between Finder and Kriya and says which one is broken. It changes nothing.")
             }
 
             Section {

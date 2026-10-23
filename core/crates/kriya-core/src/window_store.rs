@@ -450,6 +450,69 @@ mod tests {
     }
 
     #[test]
+    fn the_switcher_gets_a_backwards_and_a_same_app_shortcut_and_a_size() {
+        let fresh = open();
+        let list = fresh.window_shortcuts().unwrap();
+        let find = |c: &str| list.iter().find(|b| b.command == c).cloned().unwrap();
+        assert_eq!(
+            (
+                find("window.switcher_previous").key_code,
+                find("window.switcher_previous").modifiers
+            ),
+            (48, m::OPTION | m::SHIFT)
+        );
+        assert_eq!(
+            (
+                find("window.switcher_app").key_code,
+                find("window.switcher_app").modifiers
+            ),
+            (50, m::OPTION)
+        );
+        let config = fresh.window_config().unwrap();
+        assert_eq!(config.switcher_scale, 1.0);
+        assert!(config.switcher_follow_pointer);
+        let wild = crate::windows::WindowConfig {
+            switcher_scale: 9.0,
+            ..config.clone()
+        }
+        .sanitized();
+        assert_eq!(wild.switcher_scale, 1.5);
+        let tiny = crate::windows::WindowConfig {
+            switcher_scale: f64::NAN,
+            ..config
+        }
+        .sanitized();
+        assert_eq!(tiny.switcher_scale, 1.0);
+        // An older list is offered the two new shortcuts once, and a key already in use is left alone.
+        let older = open();
+        let mut stored = older.window_shortcuts().unwrap();
+        stored.retain(|b| {
+            b.command != "window.switcher_previous" && b.command != "window.switcher_app"
+        });
+        // The person gave ⌥` to another command already.
+        for b in stored.iter_mut().filter(|b| b.command == "window.grid") {
+            b.key_code = 50;
+            b.modifiers = m::OPTION;
+        }
+        older.save_window_shortcuts(&stored).unwrap();
+        older
+            .conn()
+            .execute(
+                "UPDATE settings SET value = '4' WHERE key = 'window_shortcut_version'",
+                [],
+            )
+            .unwrap();
+        let after = older.window_shortcuts().unwrap();
+        assert!(after
+            .iter()
+            .any(|b| b.command == "window.switcher_previous"));
+        assert!(
+            !after.iter().any(|b| b.command == "window.switcher_app"),
+            "⌥` was already theirs"
+        );
+    }
+
+    #[test]
     fn the_switcher_moves_to_option_tab_unless_the_person_changed_it() {
         // Fresh installs get it.
         let fresh = open();

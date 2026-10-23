@@ -94,6 +94,26 @@ struct PointerPane: View {
 
     @ViewBuilder private var presentation: some View {
         Section {
+            Toggle("Presentation mode", isOn: Binding(get: { store.presentationOn }, set: { _ in run("pointer.presentation") }))
+            LabeledContent("Shortcut") {
+                ShortcutRecorder(shortcut: Binding(
+                    get: { config.presentationKey.map { RecordedShortcut(keyCode: $0, modifiers: config.presentationModifiers) } },
+                    set: { new in store.update { $0.presentationKey = new?.keyCode; $0.presentationModifiers = new?.modifiers ?? 0 } }
+                )).frame(width: 190, height: 26)
+            }
+            Toggle("Also dim the screen around the pointer (spotlight)", isOn: Binding(get: { config.presentationSpotlight }, set: { v in store.update { $0.presentationSpotlight = v } }))
+        } header: { Text("Presentation mode") } footer: {
+            Text("One switch for a talk, a demo or a recording. While it is on, the pointer gets a highlight and every click gets a ring, whatever their own switches say, so your audience can follow. Turn it off and everything goes back to how it was. It works on its own: you do not need “Use pointer effects” on. Press the shortcut to toggle it from anywhere.")
+        }
+
+        Section {
+            Toggle("Spotlight", isOn: Binding(get: { store.spotlightOn }, set: { _ in run("pointer.spotlight") }))
+            LabeledContent("Shortcut") {
+                ShortcutRecorder(shortcut: Binding(
+                    get: { config.spotlightKey.map { RecordedShortcut(keyCode: $0, modifiers: config.spotlightModifiers) } },
+                    set: { new in store.update { $0.spotlightKey = new?.keyCode; $0.spotlightModifiers = new?.modifiers ?? 0 } }
+                )).frame(width: 190, height: 26)
+            }
             Picker("Shape", selection: Binding(get: { config.spotlightShape }, set: { v in store.update { $0.spotlightShape = v } })) {
                 Text("Circle").tag(SpotlightShape.circle)
                 Text("Rounded rectangle").tag(SpotlightShape.roundedRectangle)
@@ -101,16 +121,14 @@ struct PointerPane: View {
             .pickerStyle(.segmented)
             SliderRow(title: "Size", value: Binding(get: { config.spotlightSize }, set: { v in store.update { $0.spotlightSize = v } }), range: 100...900, format: { "\(Int($0)) pt" })
             SliderRow(title: "Darkness", value: Binding(get: { config.spotlightDim }, set: { v in store.update { $0.spotlightDim = v } }), range: 0.1...0.95, format: { "\(Int($0 * 100))%" })
-            Button("Spotlight On or Off") { run("pointer.spotlight") }
         } header: { Text("Spotlight") } footer: {
-            Text("Everything but a bright area around the pointer goes dark, on every display, and the bright area follows the pointer. The command “Spotlight (on or off)” can have a shortcut, a button or a hot corner, like any other command.")
+            Text("Everything but a bright area around the pointer goes dark, on every display, and the bright area follows the pointer. It also works on its own, and can be given a button or a hot corner as the command “Spotlight (on or off)”.")
         }
 
         Section {
             Toggle("Show the effects to people watching a shared screen or a recording", isOn: Binding(get: { config.showWhenSharing }, set: { v in store.update { $0.showWhenSharing = v } }))
-            Button("Presentation Mode On or Off") { run("pointer.presentation") }
-        } header: { Text("Presenting") } footer: {
-            Text("Presentation mode turns on the highlight and the click rings together, whatever their own switches say. The command “Presentation mode (on or off)” can have a shortcut too. With the switch above off, the highlight, the rings, the magnifier and the spotlight are hidden from screen sharing and recordings where macOS allows it, so you see them and your audience does not; turn it on to show them. Some sharing tools capture regardless.")
+        } header: { Text("Your audience") } footer: {
+            Text("When you share your screen or record it, the highlight, rings, magnifier and spotlight are normally hidden from what people see, so only you see them. Turn this on to show them to your audience too, which is what you want for a talk. Some sharing tools capture the whole screen regardless.")
         }
     }
 

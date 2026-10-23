@@ -215,9 +215,12 @@ struct SettingsRootView: View {
     private var results: [SettingsPane] { SettingsPane.allCases.filter { $0.matches(query) } }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 200, ideal: 215, max: 250)
+                // The sidebar always stays; the round sidebar button beside the window buttons is not needed.
+                .toolbar(removing: .sidebarToggle)
+                .frame(minWidth: 215)
+                .navigationSplitViewColumnWidth(min: 215, ideal: 230, max: 260)
         } detail: {
             VStack(spacing: 0) {
                 StatusBanners()
@@ -226,6 +229,7 @@ struct SettingsRootView: View {
                 paneContent
             }
             .navigationTitle(navigator.pane.title)
+            .toolbar(removing: .sidebarToggle)
         }
         .frame(minWidth: 800, minHeight: 540)
         .scrollIndicators(.hidden)

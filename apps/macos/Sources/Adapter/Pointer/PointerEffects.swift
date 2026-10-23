@@ -462,6 +462,7 @@ final class PointerEffects {
     private var registered = Set<String>()
     private var cancellables = Set<AnyCancellable>()
     private var presentation = false
+    private lazy var hotkeys = HotkeyCenter(owner: "Pointer effects") { [weak self] command in self?.run(command) }
 
     // Double-tap Control and mouse shaking, watched only while the effects are on and one of them is wanted.
     private var findMonitors: [Any] = []
@@ -482,6 +483,7 @@ final class PointerEffects {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] config in
                 self?.registerPositions(config)
+                self?.updateShortcuts(config)
                 self?.apply()
             }
             .store(in: &cancellables)
@@ -493,6 +495,7 @@ final class PointerEffects {
         hider.stop()
         magnifier.stop()
         spotlight.stop()
+        hotkeys.unregisterAll()
         stopFindWatchers()
         for command in registered { executor.unregisterCommand(command) }
         registered.removeAll()
@@ -500,10 +503,14 @@ final class PointerEffects {
 
     // MARK: Commands
 
+    /// Presentation mode and the spotlight are things a person asks for outright, so they work even with the master switch off.
+    private static let alwaysAvailable: Set<String> = ["pointer.presentation", "pointer.spotlight"]
+
     private func register(_ command: String, _ work: @escaping () -> Void) {
         registered.insert(command)
+        let always = Self.alwaysAvailable.contains(command)
         executor.registerCommand(command) { [weak self] in
-            guard self?.store.current.enabled == true else { return }
+            guard always || self?.store.current.enabled == true else { return }
             DispatchQueue.main.async { work() }
         }
     }
@@ -527,19 +534,33 @@ final class PointerEffects {
         case "pointer.zoom_out": magnifier.adjustZoom(by: 0.8)
         case "pointer.show": hider.show()
         case "pointer.spotlight":
-            if spotlight.isOn {
-                spotlight.stop()
-                toast.show("Spotlight off")
-            } else {
-                spotlight.start(config: store.current)
-                toast.show("Spotlight on")
-            }
+            setSpotlight(!spotlight.isOn)
+            toast.show(spotlight.isOn ? "Spotlight on" : "Spotlight off")
         case "pointer.presentation":
             presentation.toggle()
+            store.presentationOn = presentation
+            // The spotlight follows presentation mode when the person asked for that.
+            if store.current.presentationSpotlight { setSpotlight(presentation) }
             toast.show(presentation ? "Presentation mode on" : "Presentation mode off")
             apply()
         default: break
         }
+    }
+
+    private func setSpotlight(_ on: Bool) {
+        if on { spotlight.start(config: store.current) } else { spotlight.stop() }
+        store.spotlightOn = spotlight.isOn
+    }
+
+    private func updateShortcuts(_ config: PointerEffectsConfig) {
+        var bindings: [ShortcutBinding] = []
+        if let key = config.spotlightKey, config.spotlightModifiers != 0 {
+            bindings.append(ShortcutBinding(command: "pointer.spotlight", keyCode: key, modifiers: config.spotlightModifiers))
+        }
+        if let key = config.presentationKey, config.presentationModifiers != 0 {
+            bindings.append(ShortcutBinding(command: "pointer.presentation", keyCode: key, modifiers: config.presentationModifiers))
+        }
+        hotkeys.update(bindings)
     }
 
     // MARK: Keeping the watchers in step with the settings
@@ -547,13 +568,14 @@ final class PointerEffects {
     /// Starts and stops the halo, the click rings and the idle hiding to match the settings and presentation mode.
     private func apply() {
         let config = store.current
-        let wantsHalo = config.enabled && (config.haloEnabled || presentation)
-        let wantsClicks = config.enabled && (config.clickEnabled || presentation)
+        // Presentation mode stands on its own: it shows the highlight and the rings even when the master switch is off.
+        let wantsHalo = (config.enabled && config.haloEnabled) || presentation
+        let wantsClicks = (config.enabled && config.clickEnabled) || presentation
         if wantsHalo || wantsClicks { startWatching(halo: wantsHalo, clicks: wantsClicks) } else { stopWatching() }
         if wantsHalo { updateHalo(config) } else { halo?.orderOut(nil) }
         if config.enabled, config.hideWhenIdle { hider.start(after: config.hideAfterSeconds) } else if !(config.enabled && config.hideWhileTyping) { hider.stop() }
         if !config.enabled, magnifier.isOn { magnifier.stop() }
-        if !config.enabled, spotlight.isOn { spotlight.stop() } else if spotlight.isOn { spotlight.update(config) }
+        if spotlight.isOn { spotlight.update(config) }
         if config.enabled, config.doubleTapControl || config.shakeToLocate || config.magnifierHoldModifier != 0 || config.hideWhileTyping { startFindWatchers() } else { stopFindWatchers() }
     }
 

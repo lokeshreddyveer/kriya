@@ -321,94 +321,154 @@ private struct InstallTab: View {
     @State private var missing: [String] = []
     @State private var chosen = Set<String>()
     @State private var message: String?
+    @State private var searchTask: Task<Void, Never>?
+    @FocusState private var searching: Bool
+
+    private var typed: String { query.trimmingCharacters(in: .whitespaces) }
+    /// What the list shows: search results while there is a search, otherwise some well-known apps.
+    private var shown: [String] { typed.isEmpty ? HomebrewParsing.featured : Array(brew.results.prefix(30)) }
 
     var body: some View {
-        Form {
-            if brew.brewPath == nil {
-                Section {
-                    Text("Homebrew is not installed on this Mac.")
-                    HStack {
-                        Link("About Homebrew", destination: URL(string: "https://brew.sh")!)
-                        Spacer()
-                        Text("Kriya notices when it is installed.").font(.caption).foregroundStyle(.secondary)
+        if brew.brewPath == nil {
+            notInstalled
+        } else {
+            VStack(spacing: 0) {
+                searchField
+                if brew.isRunning || !brew.log.isEmpty { progress }
+                List {
+                    Section {
+                        if shown.isEmpty, typed.count > 0, !brew.isSearching { Text(brew.status ?? "No apps match.").foregroundStyle(.secondary) }
+                        ForEach(shown, id: \.self) { appRow($0) }
+                    } header: {
+                        Text(typed.isEmpty ? "Popular apps" : (brew.isSearching ? "Searching…" : "Results"))
+                    } footer: {
+                        Text(typed.isEmpty
+                             ? "Type above to search every app Homebrew offers. Kriya shows you the exact command and asks before anything is installed."
+                             : "Installing runs “brew install --cask …” for you. Some apps ask for your password to finish; if Homebrew stops for that, run the command in Terminal.")
                     }
-                } footer: {
-                    Text("Kriya uses Homebrew, if you have it, to find and install apps. It never installs Homebrew itself.")
-                }
-            } else {
-                Section {
-                    HStack {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("Search for an app", text: $query).textFieldStyle(.plain).onSubmit { brew.search(query) }
-                        Button("Search") { brew.search(query) }.controlSize(.small).disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                    if let status = brew.status { Text(status).font(.callout).foregroundStyle(.secondary) }
-                    ForEach(brew.results, id: \.self) { token in
-                        HStack {
-                            Text(token)
-                            Spacer()
-                            if brew.installed.contains(token) {
-                                StateBadge(text: "Installed", color: Theme.ok)
-                            } else {
-                                Button("Install…") { confirmAndInstall([token]) }.controlSize(.small).disabled(brew.isRunning)
+                    Section {
+                        Button("Save My Apps as a List…") { exportList() }
+                        Button("Reinstall from a List…") { importList() }
+                        if !missing.isEmpty {
+                            ForEach(missing, id: \.self) { token in
+                                Toggle(token, isOn: Binding(get: { chosen.contains(token) }, set: { on in if on { chosen.insert(token) } else { chosen.remove(token) } }))
                             }
-                        }
-                    }
-                } header: { Text("Find an app") } footer: {
-                    Text("Searches Homebrew's casks. You see the exact command before anything is installed.")
-                }
-
-                Section {
-                    Button("Save My Apps as a List…") { exportList() }
-                    Button("Reinstall from a List…") { importList() }
-                } header: { Text("Your apps list") } footer: {
-                    Text("A list holds the names of the Homebrew apps installed here. Open it on another Mac to see which ones are missing and install the ones you pick. System apps are never part of it.")
-                }
-
-                if !missing.isEmpty {
-                    Section {
-                        ForEach(missing, id: \.self) { token in
-                            Toggle(token, isOn: Binding(get: { chosen.contains(token) }, set: { on in if on { chosen.insert(token) } else { chosen.remove(token) } }))
-                        }
-                        HStack {
-                            Button("Select All") { chosen = Set(missing) }.controlSize(.small)
-                            Spacer()
-                            Button("Install \(chosen.count)…") { confirmAndInstall(missing.filter { chosen.contains($0) }) }
-                                .disabled(chosen.isEmpty || brew.isRunning)
-                        }
-                    } header: { Text("In the list, not on this Mac") }
-                } else if message != nil {
-                    Section { Text(message ?? "").font(.callout).foregroundStyle(.secondary) }
-                }
-
-                if !brew.log.isEmpty || brew.isRunning {
-                    Section {
-                        ScrollView {
-                            Text(brew.log).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(height: 170)
-                        if brew.isRunning {
                             HStack {
-                                ProgressView().controlSize(.small)
-                                Text("Working…").foregroundStyle(.secondary)
+                                Button("Select All") { chosen = Set(missing) }.controlSize(.small)
                                 Spacer()
-                                Button("Stop") { brew.cancel() }.controlSize(.small)
+                                Button("Install \(chosen.count)…") { confirmAndInstall(missing.filter { chosen.contains($0) }) }.disabled(chosen.isEmpty || brew.isRunning)
                             }
+                        } else if let message {
+                            Text(message).font(.callout).foregroundStyle(.secondary)
                         }
-                    } header: { Text("What Homebrew says") }
+                    } header: { Text("Move to another Mac") } footer: {
+                        Text("A list holds the names of the Homebrew apps installed here. Open it on another Mac to see which ones are missing and install the ones you pick. System apps are never part of it.")
+                    }
                 }
+                .animation(.smooth(duration: 0.2), value: shown)
+                .animation(.smooth(duration: 0.2), value: brew.details.count)
+            }
+            .onAppear { brew.locate(); searching = true; brew.describe(HomebrewParsing.featured) }
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    if brew.brewPath == nil { brew.locate() }
+                }
+            }
+        }
+    }
+
+    private var notInstalled: some View {
+        Form {
+            Section {
+                Text("Homebrew is not installed on this Mac.")
+                HStack {
+                    Link("About Homebrew", destination: URL(string: "https://brew.sh")!)
+                    Spacer()
+                    Text("Kriya notices when it is installed.").font(.caption).foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("Homebrew is a free tool that installs Mac apps from a list, without dragging them from a disk image. Kriya uses it, if you have it, to find and install apps. It never installs Homebrew itself.")
             }
         }
         .formStyle(.grouped)
         .onAppear { brew.locate() }
-        // Homebrew installed while this is open: it shows up within a few seconds, with no button to press.
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 if brew.brewPath == nil { brew.locate() }
             }
         }
+    }
+
+    private var searchField: some View {
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search for an app to install, such as Firefox or VLC", text: $query)
+                .textFieldStyle(.plain).focused($searching)
+                .onSubmit { startSearch(immediately: true) }
+                .onChange(of: query) { _, _ in startSearch(immediately: false) }
+            if brew.isSearching { ProgressView().controlSize(.small) }
+            if !query.isEmpty {
+                Button { query = ""; brew.clearSearch() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.primary.opacity(0.14)))
+        .padding(.horizontal, 20).padding(.vertical, 10)
+    }
+
+    /// Searches a moment after typing stops, so each letter does not start its own search.
+    private func startSearch(immediately: Bool) {
+        searchTask?.cancel()
+        let text = typed
+        guard !text.isEmpty else { brew.clearSearch(); return }
+        searchTask = Task {
+            if !immediately { try? await Task.sleep(nanoseconds: 350_000_000) }
+            guard !Task.isCancelled else { return }
+            brew.search(text)
+        }
+    }
+
+    private func appRow(_ token: String) -> some View {
+        let info = brew.details[token]
+        return HStack(spacing: 12) {
+            Image(systemName: "shippingbox").font(.system(size: 18)).foregroundStyle(Theme.accent).frame(width: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(info?.name ?? token).font(.headline)
+                    if let version = info?.version, !version.isEmpty { Text(version).font(.caption).foregroundStyle(.tertiary).lineLimit(1) }
+                }
+                Text(info?.description.isEmpty == false ? info!.description : token).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer()
+            if let page = info.flatMap({ URL(string: $0.homepage) }), page.scheme == "https" {
+                Link(destination: page) { Image(systemName: "safari") }.help("Open the app's website")
+            }
+            if brew.installed.contains(token) {
+                StateBadge(text: "Installed", color: Theme.ok)
+            } else {
+                Button("Install…") { confirmAndInstall([token]) }.controlSize(.small).disabled(brew.isRunning)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var progress: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                if brew.isRunning { ProgressView().controlSize(.small); Text("Working…").foregroundStyle(.secondary) } else { Text("What Homebrew said").foregroundStyle(.secondary) }
+                Spacer()
+                if brew.isRunning { Button("Stop") { brew.cancel() }.controlSize(.small) }
+            }
+            ScrollView {
+                Text(brew.log).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 110)
+        }
+        .padding(.horizontal, 20).padding(.bottom, 8)
+        .transition(.opacity)
     }
 
     /// Shows the exact commands and installs only if the person agrees.

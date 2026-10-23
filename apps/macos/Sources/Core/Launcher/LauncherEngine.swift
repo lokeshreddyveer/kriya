@@ -3,7 +3,7 @@ import Foundation
 /// The kinds of thing the launcher can find. Each can be turned off in Settings › Launcher.
 enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
     case calculator, utility, command, layout, snippet, action, workflow, feature, setting
-    case app, window, clipboard, file, system, emoji, intelligence
+    case app, window, clipboard, file, system, emoji, intelligence, web
 
     var id: String { rawValue }
 
@@ -25,6 +25,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .system: return "System"
         case .emoji: return "Emoji"
         case .intelligence: return "Apple Intelligence"
+        case .web: return "Web search"
         }
     }
 
@@ -47,6 +48,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .system: return "System"
         case .emoji: return "Emoji"
         case .intelligence: return "AI"
+        case .web: return "Web"
         }
     }
 
@@ -68,6 +70,20 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .system: return "desktopcomputer"
         case .emoji: return "face.smiling"
         case .intelligence: return "sparkles"
+        case .web: return "globe"
+        }
+    }
+
+    /// What pressing Return does with this kind of result, for the hint on the chosen row.
+    var verb: String {
+        switch self {
+        case .app, .file, .setting, .feature, .system: return "Open"
+        case .window: return "Switch to"
+        case .web: return "Search"
+        case .calculator, .emoji, .clipboard: return "Copy"
+        case .utility: return "Start"
+        case .intelligence: return "Ask"
+        case .command, .layout, .snippet, .action, .workflow: return "Run"
         }
     }
 
@@ -79,6 +95,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .window: return "Needs Accessibility, to list and raise windows."
         case .app: return "Installed and running apps."
         case .intelligence: return "Type “ask” and a question, or use the clipboard shortcuts. Handled on this Mac; needs Apple Intelligence."
+        case .web: return "Offers to search the web, or open an address you type. Only the words you choose are sent, to the site you pick."
         default: return ""
         }
     }
@@ -94,6 +111,7 @@ enum LauncherCategory: String, CaseIterable, Identifiable, Codable {
         case .setting, .system: return 0
         case .emoji: return -10
         case .intelligence: return 10
+        case .web: return -80
         case .clipboard: return -20
         case .file: return -60
         }
@@ -115,6 +133,8 @@ struct LauncherPrefsData: Codable, Equatable {
     var usage: [String: LauncherUsage] = [:]
     /// The names of pinned results and results with a short name, so Settings can list them. Never any clipboard text.
     var titles: [String: String] = [:]
+    /// The search site for plain web searches. Nil is the default, Google.
+    var webEngine: String?
 
     func isEnabled(_ category: LauncherCategory) -> Bool { !disabledCategories.contains(category.rawValue) }
 }
@@ -137,10 +157,10 @@ enum LauncherEngine {
     static let maxRemembered = 300
 
     /// The ids in the order they should be shown.
-    static func rank(_ items: [LauncherCandidate], query: String, prefs: LauncherPrefsData, now: Date = Date(), limit: Int = 60) -> [String] {
+    static func rank(_ items: [LauncherCandidate], query: String, prefs: LauncherPrefsData, now: Date = Date(), limit: Int = 60, suggestions: [String] = []) -> [String] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let visible = items.filter { prefs.isEnabled($0.category) }
-        if text.isEmpty { return startList(visible, prefs: prefs, now: now) }
+        if text.isEmpty { return startList(visible, prefs: prefs, now: now, suggestions: suggestions) }
 
         let alias = text.lowercased().filter { !$0.isWhitespace }
         var scored: [(candidate: LauncherCandidate, score: Int)] = []
@@ -165,8 +185,12 @@ enum LauncherEngine {
         return scored.prefix(limit).map(\.candidate.id)
     }
 
-    /// Nothing typed: pinned results in the order they were pinned, then the ones used most and most recently.
-    private static func startList(_ items: [LauncherCandidate], prefs: LauncherPrefsData, now: Date) -> [String] {
+    /// How many suggestions the opening list shows at most.
+    static let startCount = 9
+
+    /// Nothing typed: pinned results in the order they were pinned, then the ones used most and most recently, then
+    /// whatever the launcher suggests (the apps that are open) so the list is never bare.
+    static func startList(_ items: [LauncherCandidate], prefs: LauncherPrefsData, now: Date, suggestions: [String] = []) -> [String] {
         let known = Set(items.map(\.id))
         var out = prefs.pinned.filter { known.contains($0) }
         let recents = prefs.usage
@@ -175,7 +199,14 @@ enum LauncherEngine {
             .prefix(recentCount)
             .map(\.key)
         out.append(contentsOf: recents)
-        return out
+        for id in suggestions where known.contains(id) && !out.contains(id) { out.append(id) }
+        return Array(out.prefix(max(startCount, prefs.pinned.count)))
+    }
+
+    /// The heading a row sits under when nothing is typed.
+    static func startSection(for id: String, prefs: LauncherPrefsData) -> String {
+        if prefs.pinned.contains(id) { return "Pinned" }
+        return prefs.usage[id] != nil ? "Recent" : "Suggested"
     }
 
     /// Up to 60 for something used often, and fading over a few weeks.
@@ -250,6 +281,10 @@ final class LauncherPrefs: ObservableObject {
                 if let title { $0.titles[id] = title }
             }
         }
+    }
+
+    func setWebEngine(_ id: String) {
+        change { $0.webEngine = id == WebSearch.defaultEngineID ? nil : id }
     }
 
     func unpin(_ id: String) { change { $0.pinned.removeAll { $0 == id } } }

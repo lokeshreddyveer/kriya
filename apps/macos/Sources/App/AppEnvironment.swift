@@ -137,7 +137,7 @@ final class AppEnvironment {
         let backup = BackupManager(core: core, folder: paths.backups)
         let updates = UpdateManager(config: config)
         // Shortcuts may not take keys that other parts of Kriya already use.
-        keyboard.store.reservedProvider = { [windows, clipboard, selection, finder, keyboard] in
+        keyboard.store.reservedProvider = { [windows, clipboard, selection, finder, keyboard, pointerStore] in
             var keys: [ReservedKey] = []
             for s in windows.shortcuts { keys.append(ReservedKey(keyCode: s.keyCode, modifiers: s.modifiers, owner: "Windows: \(windows.title(forCommand: s.command))")) }
             let c = clipboard.store.config
@@ -146,6 +146,9 @@ final class AppEnvironment {
             if let k = c.stripKey { keys.append(ReservedKey(keyCode: k, modifiers: c.stripModifiers, owner: "Clipboard: remove formatting")) }
             if let k = selection.store.config.manualKey { keys.append(ReservedKey(keyCode: k, modifiers: selection.store.config.manualModifiers, owner: "Selection bar")) }
             if let k = finder.store.config.launcherKeyCode { keys.append(ReservedKey(keyCode: k, modifiers: finder.store.config.launcherModifiers, owner: "Finder action launcher")) }
+            let p = pointerStore.current
+            if let k = p.spotlightKey { keys.append(ReservedKey(keyCode: k, modifiers: p.spotlightModifiers, owner: "Pointer: spotlight")) }
+            if let k = p.presentationKey { keys.append(ReservedKey(keyCode: k, modifiers: p.presentationModifiers, owner: "Pointer: presentation mode")) }
             if let k = keyboard.store.config.paletteKey { keys.append(ReservedKey(keyCode: k, modifiers: keyboard.store.config.paletteModifiers, owner: "Command launcher")) }
             return keys
         }

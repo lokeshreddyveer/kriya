@@ -16,6 +16,7 @@ enum DesignShots {
                     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                     capturePopover(env: env, to: dir.appendingPathComponent("popover.png"))
                     captureClipboardPanel(env: env, to: dir.appendingPathComponent("quickpaste.png"))
+                    captureSwitcher(to: dir.appendingPathComponent("switcher.png"))
                     let only = ProcessInfo.processInfo.environment["KRIYA_SHOT_PANES"]?.split(separator: ",").map(String.init)
                     for pane in SettingsPane.allCases where only == nil || only!.contains(pane.rawValue) {
                         show(pane)
@@ -95,6 +96,41 @@ enum DesignShots {
         model.select(3)
         RunLoop.current.run(until: Date().addingTimeInterval(0.6))
         snap(window, to: url.deletingLastPathComponent().appendingPathComponent("quickpaste-image.png"))
+        window.orderOut(nil)
+    }
+
+    /// The window switcher's cards with sample windows, drawn on a plain backdrop so the glass shows.
+    private static func captureSwitcher(to url: URL) {
+        let apps: [(String, String, String, Bool)] = [
+            ("Safari", "Kriya on GitHub", "/Applications/Safari.app", false), ("Xcode", "WindowSwitcher.swift", "/Applications/Xcode.app", false),
+            ("Notes", "Ideas", "/System/Applications/Notes.app", false), ("Terminal", "zsh", "/System/Applications/Utilities/Terminal.app", false),
+            ("Mail", "Inbox", "/System/Applications/Mail.app", true), ("Finder", "Downloads", "/System/Library/CoreServices/Finder.app", false),
+            ("Calendar", "October", "/System/Applications/Calendar.app", false),
+        ]
+        let withPictures = ProcessInfo.processInfo.environment["KRIYA_SHOT_SWITCHER"] != "plain"
+        func picture(_ index: Int) -> NSImage {
+            NSImage(size: NSSize(width: 440, height: 273), flipped: false) { rect in
+                let hue = CGFloat(index) / 8
+                NSGradient(colors: [NSColor(hue: hue, saturation: 0.35, brightness: 0.9, alpha: 1), NSColor(hue: hue + 0.08, saturation: 0.5, brightness: 0.55, alpha: 1)])?.draw(in: rect, angle: 60)
+                NSColor.white.withAlphaComponent(0.85).setFill()
+                NSBezierPath(roundedRect: NSRect(x: 0, y: rect.height - 26, width: rect.width, height: 26), xRadius: 0, yRadius: 0).fill()
+                return true
+            }
+        }
+        let cards = apps.enumerated().map { index, app in
+            SwitcherCardData(id: "\(index)", appName: app.0, title: app.1, icon: NSWorkspace.shared.icon(forFile: app.2), thumbnail: withPictures ? picture(index) : nil, isMinimized: app.3)
+        }
+        let size = SwitcherLayout.size(count: cards.count, maxWidth: 1400)
+        let columns = SwitcherLayout.columns(count: cards.count, maxWidth: 1400)
+        let host = NSHostingController(rootView: SwitcherCardsView(cards: cards, selected: 1, columns: columns).frame(width: size.width, height: size.height))
+        let window = NSWindow(contentViewController: host)
+        window.styleMask = [.borderless]
+        window.setContentSize(size)
+        window.backgroundColor = .clear
+        window.setFrameOrigin(NSPoint(x: 120, y: 160))
+        window.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        snap(window, to: url)
         window.orderOut(nil)
     }
 

@@ -368,6 +368,43 @@ final class LauncherSources {
         }
         if data.isEnabled(.clipboard) { found.append(contentsOf: clipboardEntries(text)) }
         if data.isEnabled(.file) { found.append(contentsOf: fileEntries(text)) }
+        if data.isEnabled(.web) { found.append(contentsOf: webEntries(text, engineID: data.webEngine)) }
+        return found
+    }
+
+    // MARK: The web
+
+    /// An address typed as one word opens; "yt cats" searches YouTube; anything else can be searched on the default site.
+    /// Only the words typed are sent anywhere, and only when the result is chosen.
+    func webEntries(_ text: String, engineID: String?) -> [PaletteEntry] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        var found: [PaletteEntry] = []
+
+        if let address = WebSearch.address(in: trimmed) {
+            found.append(PaletteEntry(
+                id: "web:open:\(trimmed)", title: "Open \(trimmed)", subtitle: address.host ?? "Web address", symbol: "safari",
+                category: .web, rememberable: false, queryScore: 900,
+                actions: [PaletteAction(title: "Copy the Address", symbol: "doc.on.doc") { Self.copy(address.absoluteString) }]
+            ) { NSWorkspace.shared.open(address) })
+        }
+        if let (engine, rest) = WebSearch.trigger(in: trimmed), let url = WebSearch.url(for: engine, query: rest) {
+            found.append(PaletteEntry(
+                id: "web:\(engine.id):\(rest)", title: "Search \(engine.name) for “\(Self.oneLine(rest))”", subtitle: "Opens in your browser", symbol: engine.symbol,
+                category: .web, rememberable: false, queryScore: 980
+            ) { NSWorkspace.shared.open(url) })
+        }
+        let engine = WebSearch.engine(id: engineID)
+        if let url = WebSearch.url(for: engine, query: trimmed) {
+            let others = WebSearch.engines.filter { $0.id != engine.id }.compactMap { other -> PaletteAction? in
+                guard let target = WebSearch.url(for: other, query: trimmed) else { return nil }
+                return PaletteAction(title: "Search \(other.name)", symbol: other.symbol) { NSWorkspace.shared.open(target) }
+            }
+            found.append(PaletteEntry(
+                id: "web:\(engine.id):all:\(trimmed)", title: "Search \(engine.name) for “\(Self.oneLine(trimmed))”", subtitle: "Opens in your browser", symbol: engine.symbol,
+                category: .web, rememberable: false, queryScore: 10, actions: others
+            ) { NSWorkspace.shared.open(url) })
+        }
         return found
     }
 

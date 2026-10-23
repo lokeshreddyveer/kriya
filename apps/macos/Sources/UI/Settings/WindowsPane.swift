@@ -156,6 +156,7 @@ private struct ShortcutsTab: View {
 // MARK: - Options
 
 private struct OptionsTab: View {
+    @AppStorage(SwitcherStyle.key) private var switcherStyle = SwitcherStyle.cards.rawValue
     @EnvironmentObject private var store: WindowStore
     @EnvironmentObject private var permissions: PermissionManager
 
@@ -237,6 +238,13 @@ private struct OptionsTab: View {
                     SliderRow(title: "Rest for", value: Binding(get: { Double(config.focusDelayMs) }, set: { v in store.updateConfig { $0.focusDelayMs = UInt32(v) } }),
                               range: 150...2000, format: { "\(Int($0)) ms" }, help: "How long the pointer stays before the window comes forward.")
                 }
+                Picker("Switcher looks like", selection: $switcherStyle) {
+                    Text("Window cards (like AltTab)").tag(SwitcherStyle.cards.rawValue)
+                    Text("Searchable list").tag(SwitcherStyle.list.rawValue)
+                }
+                SliderRow(title: "Switcher card size", value: Binding(get: { config.switcherScale }, set: { v in store.updateConfig { $0.switcherScale = v } }),
+                          range: 0.7...1.5, format: { "\(Int($0 * 100))%" })
+                Toggle("Open the switcher on the display the pointer is on", isOn: Binding(get: { config.switcherFollowPointer }, set: { v in store.updateConfig { $0.switcherFollowPointer = v } }))
                 Toggle("Hold and release, like ⌘Tab", isOn: Binding(get: { config.switcherHoldRelease }, set: { v in store.updateConfig { $0.switcherHoldRelease = v } }))
                 Toggle("Show a picture of each window in the switcher", isOn: Binding(get: { config.switcherThumbnails }, set: { v in
                     store.updateConfig { $0.switcherThumbnails = v }

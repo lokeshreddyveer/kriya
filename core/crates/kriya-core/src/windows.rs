@@ -532,6 +532,10 @@ pub struct WindowConfig {
     pub apply_rules_on_activate: bool,
     /// Like ⌘Tab: press the shortcut again to step through the windows, and letting go of its keys switches to the chosen one.
     pub switcher_hold_release: bool,
+    /// How big the switcher's cards are, as a multiple of the normal size.
+    pub switcher_scale: f64,
+    /// Show the switcher on the display the pointer is on. Off, it opens on the display of the window in front.
+    pub switcher_follow_pointer: bool,
     /// Resting the pointer over another app's window brings that window to the front, without a click.
     pub focus_follows_mouse: bool,
     /// How long the pointer must rest, in milliseconds.
@@ -570,6 +574,8 @@ impl Default for WindowConfig {
             act_on_pointer_window: false,
             switcher_thumbnails: false,
             switcher_hold_release: true,
+            switcher_scale: 1.0,
+            switcher_follow_pointer: true,
             focus_follows_mouse: false,
             focus_delay_ms: 400,
             radial_color: "#7B97B9".to_string(),
@@ -592,6 +598,7 @@ impl WindowConfig {
         self.edge_margin = fix(self.edge_margin, 1.0, 60.0, 6.0);
         self.corner_size = fix(self.corner_size, 10.0, 200.0, 40.0);
         self.stash_sliver = fix(self.stash_sliver, 6.0, 60.0, 14.0);
+        self.switcher_scale = fix(self.switcher_scale, 0.7, 1.5, 1.0);
         self.grid_columns = self.grid_columns.clamp(2, 12);
         self.grid_rows = self.grid_rows.clamp(2, 12);
         self.todo_fraction = fix(self.todo_fraction, 0.10, 0.50, 0.25);
@@ -642,7 +649,7 @@ impl WindowConfig {
 // ---- shortcuts -------------------------------------------------------------------------------------------------------
 
 /// Commands that are not layouts but can still have a shortcut.
-pub const EXTRA_COMMANDS: [(&str, &str); 31] = [
+pub const EXTRA_COMMANDS: [(&str, &str); 33] = [
     ("window.restore", "Undo last move or resize"),
     (
         "window.restore_original",
@@ -651,6 +658,14 @@ pub const EXTRA_COMMANDS: [(&str, &str); 31] = [
     ("window.next_display", "Move to next display"),
     ("window.previous_display", "Move to previous display"),
     ("window.switcher", "Open the window switcher"),
+    (
+        "window.switcher_previous",
+        "Open the window switcher, starting from the last window",
+    ),
+    (
+        "window.switcher_app",
+        "Switch between the windows of the front app",
+    ),
     (
         "window.apply_rules",
         "Apply placement rules to open windows",
@@ -693,8 +708,8 @@ pub const EXTRA_COMMANDS: [(&str, &str); 31] = [
 
 /// Shortcuts added after the first release, with the version of the shortcut list that introduced each. A person who
 /// already has saved shortcuts is offered the ones newer than the version they last had, once, unless a key is taken.
-pub const SHORTCUT_LIST_VERSION: u32 = 4;
-const ADDED_COMMANDS: [(u32, &str); 11] = [
+pub const SHORTCUT_LIST_VERSION: u32 = 5;
+const ADDED_COMMANDS: [(u32, &str); 13] = [
     (2, "window.focus_left"),
     (2, "window.focus_right"),
     (2, "window.focus_up"),
@@ -706,6 +721,8 @@ const ADDED_COMMANDS: [(u32, &str); 11] = [
     (3, "window.grid"),
     (3, "window.todo_toggle"),
     (3, "window.todo_focus"),
+    (5, "window.switcher_previous"),
+    (5, "window.switcher_app"),
 ];
 
 pub fn added_default_shortcuts(since_version: u32) -> Vec<ShortcutBinding> {
@@ -775,6 +792,8 @@ pub fn default_shortcuts() -> Vec<ShortcutBinding> {
         bind("window.next_display", 124, coc),
         bind("window.previous_display", 123, coc),
         bind("window.switcher", 48, m::OPTION),
+        bind("window.switcher_previous", 48, m::OPTION | m::SHIFT),
+        bind("window.switcher_app", 50, m::OPTION),
         bind("window.focus_left", 123, cos),
         bind("window.focus_right", 124, cos),
         bind("window.focus_up", 126, cos),

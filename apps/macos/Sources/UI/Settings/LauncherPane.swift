@@ -22,6 +22,14 @@ struct LauncherPane: View {
             }
 
             Section {
+                Picker("Search the web with", selection: Binding(get: { prefs.data.webEngine ?? WebSearch.defaultEngineID }, set: { prefs.setWebEngine($0) })) {
+                    ForEach(WebSearch.general) { Text($0.name).tag($0.id) }
+                }
+            } header: { Text("Web search") } footer: {
+                Text("Type anything and the last row offers to search the web for it, in your browser. Type an address like “apple.com” to open it. A short word first picks another site: “yt” YouTube, “maps” Apple Maps, “gh” GitHub, “wiki” Wikipedia, “so” Stack Overflow, “ddg” DuckDuckGo, “g” Google. Only the words you type are sent, to the site you pick, and only when you press Return.")
+            }
+
+            Section {
                 ForEach(LauncherCategory.allCases) { category in
                     Toggle(isOn: Binding(get: { prefs.data.isEnabled(category) }, set: { prefs.setEnabled(category, $0) })) {
                         VStack(alignment: .leading, spacing: 1) {

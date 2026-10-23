@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Something else you can do with a result, shown with ⌘K.
@@ -37,6 +38,8 @@ final class PaletteModel: ObservableObject {
     @Published var selected = 0
     @Published var showingActions = false
     @Published var actionIndex = 0
+    /// The heading each row sits under, for the section titles. Same length as `results`.
+    @Published private(set) var sections: [String] = []
 
     let prefs: LauncherPrefs
     private var all: [PaletteEntry] = []
@@ -66,9 +69,17 @@ final class PaletteModel: ObservableObject {
         let text = query.trimmingCharacters(in: .whitespaces)
         let dynamic = text.isEmpty ? [] : queryProviders.flatMap { $0(text) }
         let combined = all + dynamic
-        let order = LauncherEngine.rank(combined.map(\.candidate), query: query, prefs: prefs.data)
+        // With nothing typed the open apps are suggested, so the list is never bare for someone who has not used it yet.
+        let running = text.isEmpty ? all.filter { $0.category == .app && $0.subtitle == "Running" }.map(\.id) : []
+        let useful = text.isEmpty ? all.filter { ["clipboard:open", "finder:launcher"].contains($0.id) }.map(\.id) : []
+        let order = LauncherEngine.rank(combined.map(\.candidate), query: query, prefs: prefs.data, suggestions: Array(running.prefix(5)) + useful)
         let byID = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         results = order.compactMap { byID[$0] }
+        sections = results.enumerated().map { index, entry in
+            if text.isEmpty { return LauncherEngine.startSection(for: entry.id, prefs: prefs.data) }
+            if entry.category == .web { return "Search the web" }
+            return index == 0 ? "Top hit" : "Results"
+        }
         if resetSelection {
             selected = 0
             showingActions = false
@@ -162,12 +173,34 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         self.panel = panel
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        if let frame = screen?.visibleFrame {
-            panel.setFrameOrigin(NSPoint(x: frame.midX - panel.frame.width / 2, y: frame.midY + frame.height * 0.14))
-        }
+        visible = screen?.visibleFrame ?? .zero
+        if !visible.isEmpty { panel.setFrame(PaletteLayout.frame(height: wantedHeight(), in: visible), display: false) }
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
         NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
+    }
+
+    private var visible = CGRect.zero
+    private var sizeWatcher: AnyCancellable?
+
+    private func wantedHeight() -> CGFloat {
+        PaletteLayout.height(sections: model.sections, typed: !model.query.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
+
+    /// Grows or shrinks the window as results come and go, keeping its top where it is.
+    private func resize(animated: Bool = true) {
+        guard let panel, panel.isVisible, !visible.isEmpty else { return }
+        let target = PaletteLayout.resized(panel.frame, toHeight: wantedHeight(), in: visible)
+        guard abs(target.height - panel.frame.height) > 0.5 else { return }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.14
+                context.allowsImplicitAnimation = true
+                panel.animator().setFrame(target, display: true)
+            }
+        } else {
+            panel.setFrame(target, display: true)
+        }
     }
 
     func close() { panel?.orderOut(nil) }
@@ -288,7 +321,8 @@ final class CommandPalette: NSObject, NSWindowDelegate {
     }
 
     private func makePanel() -> Panel {
-        let panel = Panel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480), styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless], backing: .buffered, defer: false)
+        sizeWatcher = model.$sections.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.resize() }
+        let panel = Panel(contentRect: NSRect(x: 0, y: 0, width: PaletteLayout.width, height: PaletteLayout.emptyHeight), styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -331,29 +365,27 @@ private struct PaletteView: View {
     }
 
     private var actions: [PaletteAction] { model.current.map { palette.actions(for: $0) } ?? [] }
+    private var typed: Bool { !model.query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Theme.accent).font(.title3)
-                TextField("Search apps, windows, files, commands…", text: $model.query)
-                    .textFieldStyle(.plain).font(.title3).focused($focused)
-                    .onSubmit { submit() }
-                if !model.query.isEmpty {
-                    Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
+            searchBar
+            if !model.results.isEmpty {
+                Divider().opacity(0.5)
+                ZStack(alignment: .bottomTrailing) {
+                    list
+                    if model.showingActions, let entry = model.current { actionMenu(for: entry) }
                 }
+                Divider().opacity(0.5)
+                footer
+            } else {
+                emptyState
             }
-            .padding(14)
-            Divider().opacity(0.6)
-            ZStack(alignment: .bottomTrailing) {
-                list
-                if model.showingActions, let entry = model.current { actionMenu(for: entry) }
-            }
-            Divider().opacity(0.6)
-            footer
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.22), lineWidth: 1))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.primary.opacity(0.2), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .onAppear { focused = true }
         .onChange(of: model.showingActions) { _, on in
             if on { model.actionCount = actions.count; model.actionIndex = 0 }
@@ -362,50 +394,76 @@ private struct PaletteView: View {
         .animation(.smooth(duration: 0.16), value: model.showingActions)
     }
 
+    // MARK: The search bar
+
+    private var searchBar: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "magnifyingglass").font(.system(size: 22, weight: .regular)).foregroundStyle(.secondary)
+            TextField("Search apps, files, windows or the web", text: $model.query)
+                .textFieldStyle(.plain).font(.system(size: 24, weight: .light)).focused($focused)
+                .onSubmit { submit() }
+            if !model.query.isEmpty {
+                Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 16)).foregroundStyle(.tertiary) }.buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 22)
+        .frame(height: PaletteLayout.searchHeight)
+    }
+
     // MARK: Results
 
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(model.results.enumerated()), id: \.element.id) { index, entry in
+                        if index == 0 || model.sections.indices.contains(index) && model.sections[index] != model.sections[index - 1] {
+                            header(model.sections.indices.contains(index) ? model.sections[index] : "")
+                        }
                         row(entry, index: index)
                             .id(entry.id)
                             .onTapGesture { palette.run(entry) }
                     }
                 }
-                .padding(6)
+                .padding(.horizontal, 8).padding(.vertical, PaletteLayout.listPadding)
             }
             .scrollIndicators(.hidden)
             .onChange(of: model.selected) { _, new in
                 if model.results.indices.contains(new) { withAnimation(.smooth(duration: 0.12)) { proxy.scrollTo(model.results[new].id) } }
             }
-            .overlay { if model.results.isEmpty { emptyState } }
         }
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            .frame(height: PaletteLayout.headerHeight, alignment: .bottom).padding(.horizontal, 12).padding(.bottom, 4)
     }
 
     @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: model.query.isEmpty ? "sparkle.magnifyingglass" : "magnifyingglass").font(.system(size: 28, weight: .light)).foregroundStyle(.tertiary)
-            Text(model.query.isEmpty ? "Start typing" : "Nothing matches").foregroundStyle(.secondary)
-            if model.query.isEmpty {
-                Text("Apps, windows, files, clipboard, settings and commands. Try a sum like 12*8, “timer 5m”, or an emoji name. Pin what you use most (⌘P) and it shows here.")
-                    .font(.caption).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 380)
+        VStack(spacing: 6) {
+            if typed {
+                Text("Nothing matches").foregroundStyle(.secondary)
+            } else {
+                Text("Type to search").foregroundStyle(.secondary)
+                Text("Apps, windows, files, clipboard and settings. Try a sum like 12*8, “timer 5m”, an address, or “yt cats” to search YouTube.")
+                    .font(.caption).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 460)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .top) { Divider().opacity(0.5) }
     }
 
     private func row(_ entry: PaletteEntry, index: Int) -> some View {
         let on = index == model.selected
         let pinned = prefs.isPinned(entry.id)
         let alias = prefs.alias(for: entry.id)
-        return HStack(spacing: 12) {
+        return HStack(spacing: 14) {
             icon(entry)
             VStack(alignment: .leading, spacing: 1) {
-                Text(entry.title).font(.system(size: 14)).lineLimit(1)
+                Text(entry.title).font(.system(size: 15, weight: .medium)).lineLimit(1)
                 if let subtitle = entry.subtitle, !subtitle.isEmpty {
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             Spacer(minLength: 6)
@@ -414,12 +472,20 @@ private struct PaletteView: View {
                 Text(alias).font(.system(size: 10, design: .rounded)).padding(.horizontal, 5).padding(.vertical, 1)
                     .background(Color.primary.opacity(0.08), in: Capsule())
             }
-            Text(entry.category.label).font(.system(size: 10)).foregroundStyle(.tertiary)
-            if index < 9 { Text("⌘\(index + 1)").font(.system(size: 10, design: .rounded)).foregroundStyle(on ? .secondary : .tertiary) }
+            if on {
+                HStack(spacing: 5) {
+                    Text(entry.category.verb).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("↩").font(.system(size: 12, design: .rounded)).padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+            } else {
+                Text(entry.category.label).font(.system(size: 11)).foregroundStyle(.tertiary)
+                if index < 9 { Text("⌘\(index + 1)").font(.system(size: 11, design: .rounded)).foregroundStyle(.tertiary) }
+            }
         }
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(on ? Theme.accent.opacity(0.22) : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(on ? Theme.accent.opacity(0.5) : Color.clear, lineWidth: 1))
+        .padding(.horizontal, 12)
+        .frame(height: PaletteLayout.rowHeight)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(on ? Theme.accent.opacity(0.24) : Color.clear))
         .contentShape(Rectangle())
         .animation(.smooth(duration: 0.12), value: on)
     }
@@ -427,12 +493,12 @@ private struct PaletteView: View {
     @ViewBuilder
     private func icon(_ entry: PaletteEntry) -> some View {
         if let path = entry.iconPath {
-            Image(nsImage: PaletteIcons.icon(at: path)).resizable().frame(width: 28, height: 28)
+            Image(nsImage: PaletteIcons.icon(at: path)).resizable().frame(width: 32, height: 32)
         } else {
-            Image(systemName: entry.symbol).font(.system(size: 14))
-                .frame(width: 28, height: 28)
+            Image(systemName: entry.symbol).font(.system(size: 16))
+                .frame(width: 32, height: 32)
                 .foregroundStyle(Theme.accent)
-                .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .background(Theme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
@@ -465,16 +531,17 @@ private struct PaletteView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 12) {
-            hint("↩", "Open")
+        HStack(spacing: 14) {
+            hint("↩", model.current?.category.verb ?? "Open")
             hint("⌘K", "More")
             hint("⌘P", "Pin")
             hint("⎋", "Close")
             Spacer(minLength: 4)
-            if !model.query.isEmpty { Text("\(model.results.count) result\(model.results.count == 1 ? "" : "s")").font(.caption2).foregroundStyle(.tertiary) }
+            if typed { Text("\(model.results.count) result\(model.results.count == 1 ? "" : "s")").font(.caption2).foregroundStyle(.tertiary) }
         }
         .font(.caption).foregroundStyle(.secondary)
-        .padding(.horizontal, 12).padding(.vertical, 7)
+        .padding(.horizontal, 16)
+        .frame(height: PaletteLayout.footerHeight)
     }
 
     private func hint(_ key: String, _ text: String) -> some View {

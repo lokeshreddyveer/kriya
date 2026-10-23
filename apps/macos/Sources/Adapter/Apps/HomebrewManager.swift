@@ -27,6 +27,48 @@ enum HomebrewParsing {
         return Array(tokens.filter { seen.insert($0).inserted }.prefix(40))
     }
 
+    /// What Homebrew knows about a cask, for showing next to its name.
+    struct CaskInfo: Identifiable, Equatable {
+        let token: String
+        let name: String
+        let description: String
+        let version: String
+        let homepage: String
+        var id: String { token }
+    }
+
+    /// The cask details in the output of `brew info --json=v2 --cask …`. Anything that is not understood gives nothing.
+    static func parseInfo(_ data: Data) -> [CaskInfo] {
+        guard data.count < 8_000_000,
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let casks = root["casks"] as? [[String: Any]] else { return [] }
+        return casks.compactMap { cask in
+            guard let token = cask["token"] as? String, isValidToken(token) else { return nil }
+            let names = cask["name"] as? [String] ?? []
+            return CaskInfo(
+                token: token, name: names.first ?? token, description: (cask["desc"] as? String) ?? "",
+                version: (cask["version"] as? String) ?? "", homepage: (cask["homepage"] as? String) ?? ""
+            )
+        }
+    }
+
+    /// Search results in a useful order: the exact name first, then names that start with what was typed, then the rest.
+    static func rank(_ tokens: [String], query: String) -> [String] {
+        let wanted = query.lowercased().trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "-")
+        func score(_ token: String) -> Int {
+            if token == wanted { return 0 }
+            if token.hasPrefix(wanted + "-") || token.hasPrefix(wanted + "@") { return 1 }
+            if token.hasPrefix(wanted) { return 2 }
+            return token.contains(wanted) ? 3 : 4
+        }
+        return tokens.enumerated().sorted { (score($0.element), $0.offset) < (score($1.element), $1.offset) }.map(\.element)
+    }
+
+    /// Well-known apps to suggest before anything is typed.
+    static let featured: [String] = [
+        "google-chrome", "firefox", "visual-studio-code", "slack", "zoom", "spotify", "vlc", "iterm2", "obsidian", "notion", "raycast", "rectangle",
+    ]
+
     /// What an exported list holds: the casks, and the apps they sit beside for reference.
     struct AppList: Codable, Equatable {
         struct AppRecord: Codable, Equatable {
@@ -77,6 +119,10 @@ final class HomebrewManager: ObservableObject {
     @Published private(set) var log = ""
     @Published private(set) var isRunning = false
     @Published private(set) var status: String?
+    /// Names, descriptions and versions for the casks shown, filled in a moment after the names appear.
+    @Published private(set) var details: [String: HomebrewParsing.CaskInfo] = [:]
+    @Published private(set) var isSearching = false
+    private var searchGeneration = 0
 
     // The running process and the Stop request are touched from the main thread and from the install queue, so they are
     // guarded by one lock. The process is started while the lock is held, so Stop either comes before it starts (and it never
@@ -108,15 +154,43 @@ final class HomebrewManager: ObservableObject {
 
     func search(_ query: String) {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let brewPath, !text.isEmpty, text.count <= 60, !text.contains("\0"), !text.hasPrefix("-") else { return }
-        status = "Searching…"
+        guard !text.isEmpty else { clearSearch(); return }
+        guard let brewPath, text.count <= 60, !text.contains("\0"), !text.hasPrefix("-") else { return }
+        searchGeneration += 1
+        let generation = searchGeneration
+        isSearching = true
+        status = nil
         readQueue.async { [self] in
             let output = (try? ToolRunner.run(brewPath, ["search", "--cask", text], environment: Self.environment, timeout: 60)) ?? ""
-            let found = HomebrewParsing.parseSearch(output)
+            let found = HomebrewParsing.rank(HomebrewParsing.parseSearch(output), query: text)
             DispatchQueue.main.async {
+                // A newer search has started since: this answer is old.
+                guard generation == self.searchGeneration else { return }
                 self.results = found
-                self.status = found.isEmpty ? "No casks match “\(text)”." : nil
+                self.isSearching = false
+                self.status = found.isEmpty ? "No apps match “\(text)”." : nil
+                self.describe(Array(found.prefix(12)))
             }
+        }
+    }
+
+    /// Forgets the last search (the box was emptied).
+    func clearSearch() {
+        searchGeneration += 1
+        results = []
+        isSearching = false
+        status = nil
+    }
+
+    /// Looks up names and descriptions for casks, so a list shows more than their short names.
+    func describe(_ tokens: [String]) {
+        let wanted = tokens.filter(HomebrewParsing.isValidToken).filter { details[$0] == nil }
+        guard let brewPath, !wanted.isEmpty else { return }
+        readQueue.async { [self] in
+            // Homebrew may print a warning before the JSON, so the reading starts at its first brace.
+            let text = (try? ToolRunner.run(brewPath, ["info", "--json=v2", "--cask"] + wanted, environment: Self.environment, timeout: 60)) ?? ""
+            let infos = HomebrewParsing.parseInfo(Data((text.firstIndex(of: "{").map { String(text[$0...]) } ?? "").utf8))
+            DispatchQueue.main.async { for info in infos { self.details[info.token] = info } }
         }
     }
 

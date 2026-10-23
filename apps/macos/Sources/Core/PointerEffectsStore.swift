@@ -27,9 +27,13 @@ final class PointerEffectsStore: ObservableObject {
         clickEnabled: false, clickSize: 56, clickDurationMs: 450, leftClickColor: "#6F94B8", rightClickColor: "#C77B6E",
         locateSize: 240, magnifierZoom: 2.5, magnifierSize: 220, magnifierShape: .circle, hideWhenIdle: false, hideAfterSeconds: 5,
         showWhenSharing: false, positions: [], doubleTapControl: true, shakeToLocate: false, magnifierHoldModifier: 0, hideWhileTyping: false, excludedAppIds: [],
-        spotlightSize: 300, spotlightDim: 0.6, spotlightShape: .circle
+        spotlightSize: 300, spotlightDim: 0.6, spotlightShape: .circle,
+        spotlightKey: nil, spotlightModifiers: 0, presentationKey: nil, presentationModifiers: 0, presentationSpotlight: false
     )
     @Published var lastError: String?
+    /// Whether presentation mode and the spotlight are on right now. Not saved: they start off each time Kriya starts.
+    @Published var presentationOn = false
+    @Published var spotlightOn = false
 
     private let core: KriyaCore
     private let lock = NSLock()

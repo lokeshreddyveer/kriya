@@ -32,6 +32,7 @@ final class WindowFeature: FeatureModule {
         recency.start()
         let switcher = WindowSwitcher(store: store, recency: recency)
         self.switcher = switcher
+        switcher.start()
         radial = RadialMenu(controller: controller, store: store)
         grid = GridMenu(controller: controller, store: store)
 
@@ -81,7 +82,7 @@ final class WindowFeature: FeatureModule {
         modifierDrag = nil
         focusFollow?.stop()
         focusFollow = nil
-        switcher?.close()
+        switcher?.stop()
         switcher = nil
         radial?.close()
         radial = nil
@@ -156,6 +157,14 @@ final class WindowFeature: FeatureModule {
         guard let context, context.profiles.isFeatureActive(.windowManagement) else { return }
         if command == "window.switcher" {
             switcher?.toggle()
+            return
+        }
+        if command == "window.switcher_previous" {
+            switcher?.toggle(backwards: true)
+            return
+        }
+        if command == "window.switcher_app" {
+            switcher?.toggle(appOnly: true)
             return
         }
         if command == "window.radial" {

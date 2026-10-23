@@ -124,7 +124,7 @@ final class FinderStore: ObservableObject {
     @Published var lastError: String?
 
     private let core: KriyaCore
-    private let menuFile: URL
+    let menuFile: URL
     private let defaults: UserDefaults
     private var active = false
 

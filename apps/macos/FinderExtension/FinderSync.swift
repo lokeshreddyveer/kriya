@@ -1,5 +1,6 @@
 import Cocoa
 import FinderSync
+import os
 
 /// Adds Kriya's actions to Finder's right-click menu and toolbar button.
 ///
@@ -8,6 +9,13 @@ import FinderSync
 /// item's id, the selected paths and a secret from the menu file.
 final class FinderSync: FIFinderSync {
     private var cached: (modified: Date, file: FinderMenuFile)?
+    /// What each menu item stands for, by its tag. Finder carries the menu to its own process and back, and drops anything
+    /// attached to an item except its tag and title, so the item is looked up here when it is chosen.
+    private var choices: [Int: (item: String, child: String?)] = [:]
+    private var nextTag = 1
+    /// What the extension did, readable with `log stream --predicate 'subsystem == "app.kriya.finder"'`. It never records
+    /// file names, only what happened and how many.
+    private let log = Logger(subsystem: "app.kriya.finder", category: "extension")
 
     override init() {
         super.init()
@@ -25,7 +33,13 @@ final class FinderSync: FIFinderSync {
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu {
         let menu = NSMenu(title: "")
-        guard menuKind != .contextualMenuForSidebar, let file = loadFile() else { return menu }
+        // Menus built before may still be on screen, so their tags stay valid; only a long list is cleared.
+        if choices.count > 400 { choices.removeAll(); nextTag = 1 }
+        guard menuKind != .contextualMenuForSidebar else { return menu }
+        guard let file = loadFile() else {
+            log.error("menu: the menu file could not be read")
+            return menu
+        }
 
         let controller = FIFinderSyncController.default()
         let background = menuKind == .contextualMenuForContainer || menuKind == .toolbarItemMenu
@@ -37,6 +51,7 @@ final class FinderSync: FIFinderSync {
             isBackground: background
         )
         let items = file.visibleItems(for: selection)
+        log.info("menu: kind \(menuKind.rawValue), \(selection.count) selected, \(items.count) actions")
         guard !items.isEmpty else { return menu }
 
         let container: NSMenu
@@ -65,30 +80,56 @@ final class FinderSync: FIFinderSync {
     private func entry(_ title: String, item: String, child: String?) -> NSMenuItem {
         let menuItem = NSMenuItem(title: title, action: #selector(choose(_:)), keyEquivalent: "")
         menuItem.target = self
-        menuItem.representedObject = ["item": item, "child": child ?? ""]
+        let tag = nextTag
+        nextTag += 1
+        choices[tag] = (item, child)
+        menuItem.tag = tag
         return menuItem
     }
 
     // MARK: Choosing
 
     @objc private func choose(_ sender: NSMenuItem) {
-        guard let info = sender.representedObject as? [String: String], let item = info["item"],
-              let file = loadFile() else { return }
+        log.info("choose: a menu item was clicked")
+        guard let chosen = choices[sender.tag] else {
+            log.error("choose: the clicked item is not one this extension made (tag \(sender.tag))")
+            return
+        }
+        let item = chosen.item
+        guard let file = loadFile() else {
+            log.error("choose: the menu file could not be read")
+            return
+        }
         let controller = FIFinderSyncController.default()
         let selected = (controller.selectedItemURLs() ?? []).map(\.path)
         let target = controller.targetedURL()?.path
         let request = FinderRequest(
             item: item,
-            child: info["child"].flatMap { $0.isEmpty ? nil : $0 },
+            child: chosen.child,
             token: file.token,
             // With nothing selected the action is for the folder itself.
             paths: selected,
             target: selected.isEmpty ? target : nil
         )
-        guard let url = request.url else { return }
+        guard let url = request.url else {
+            log.error("choose: the request address could not be made")
+            return
+        }
+        log.info("choose: sending a request for \(item, privacy: .public), \(selected.count) selected, address \(url.absoluteString.count) characters")
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
-        NSWorkspace.shared.open(url, configuration: configuration)
+        // Sent to the app this extension lives in (…/Kriya.app/Contents/PlugIns/KriyaFinder.appex), never to whichever copy of
+        // Kriya macOS happens to have registered for the address: old build folders and mounted disk images do too.
+        let host = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let log = self.log
+        if host.pathExtension == "app" {
+            NSWorkspace.shared.open([url], withApplicationAt: host, configuration: configuration) { _, error in
+                if let error { log.error("choose: could not hand the request to the app: \((error as NSError).domain, privacy: .public) \((error as NSError).code)") } else { log.info("choose: the app accepted the request") }
+            }
+        } else {
+            log.error("choose: the extension is not inside an app, sending to whichever is registered")
+            NSWorkspace.shared.open(url, configuration: configuration)
+        }
     }
 
     // MARK: The menu file
