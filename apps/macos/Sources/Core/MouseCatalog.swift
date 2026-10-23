@@ -147,6 +147,7 @@ enum WindowCommands {
         list.append((command: "dictation.toggle", title: "Start or stop dictation"))
         list.append((command: "clipboard.send_other", title: "Send the clipboard to my other Macs"))
         list.append((command: "clipboard.receive_other", title: "Paste what another Mac sent"))
+        list.append((command: "clipboard.paste_as_file", title: "Paste the clipboard as a file in the front folder"))
         list.append((command: "focus.session", title: "Start or end a focus session"))
         list.append((command: "color.pick", title: "Pick a colour from the screen"))
         list += AudioControl.commands.map { (command: $0.command, title: $0.title) }
