@@ -194,6 +194,7 @@ final class LauncherSources {
         palette.addProvider { [weak self] in self?.intelligenceEntries() ?? [] }
         palette.addProvider { [weak self] in self?.musicEntries() ?? [] }
         palette.addProvider { [weak self] in self?.finderWindowEntries() ?? [] }
+        palette.addProvider { [weak self] in self?.monitorPresetEntries() ?? [] }
         FinderWindowTracker.shared.start()
         RecentAppsTracker.shared.start()
         palette.addProvider { [weak self] in (self?.tools?.staticEntries() ?? []) + (self?.tools?.meetingEntries() ?? []) }

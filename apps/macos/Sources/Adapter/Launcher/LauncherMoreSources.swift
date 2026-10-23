@@ -85,6 +85,19 @@ extension LauncherSources {
         return entries
     }
 
+    /// Saved monitor presets.
+    func monitorPresetEntries() -> [PaletteEntry] {
+        guard prefs.data.isEnabled(.command) else { return [] }
+        return DDCController.shared.presets.map { preset in
+            PaletteEntry(id: "monitorpreset:\(preset.id)", title: "Monitor preset: \(preset.name)", subtitle: "Brightness and input of external monitors", symbol: "display", category: .command,
+                         keywords: ["monitor", "display", "brightness", "input", "preset", preset.name.lowercased()]) {
+                let ddc = DDCController.shared
+                if ddc.monitors.isEmpty { ddc.refresh() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + (ddc.monitors.isEmpty ? 4 : 0)) { ddc.apply(preset) }
+            }
+        }
+    }
+
     /// Apps used lately, offered when the box is empty.
     func recentAppEntries(limit: Int = 6) -> [(entry: PaletteEntry, section: String)] {
         guard prefs.data.isEnabled(.app) else { return [] }

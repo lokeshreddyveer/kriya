@@ -12,7 +12,7 @@ struct DisplaysPane: View {
     @State private var newName = ""
 
     enum Tab: String, CaseIterable, Identifiable {
-        case displays = "Displays", profiles = "Profiles", corners = "Hot Corners"
+        case displays = "Displays", monitors = "Monitor Controls", profiles = "Profiles", corners = "Hot Corners"
         var id: String { rawValue }
     }
 
@@ -26,6 +26,7 @@ struct DisplaysPane: View {
             Group {
                 switch tab {
                 case .displays: displaysTab
+                case .monitors: MonitorControlTab()
                 case .profiles: profilesTab
                 case .corners: cornersTab
                 }

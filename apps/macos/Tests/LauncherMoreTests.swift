@@ -553,3 +553,42 @@ final class TimingTableTests: XCTestCase {
         XCTAssertGreaterThan(ProcessMemory.residentBytes() ?? 0, 0)
     }
 }
+
+final class DDCTests: XCTestCase {
+    func testSetPacketsCarryTheValueAndAChecksum() {
+        let packet = DDC.setPacket(0x10, value: 0x0032)
+        XCTAssertEqual(Array(packet.prefix(5)), [0x84, 0x03, 0x10, 0x00, 0x32])
+        XCTAssertEqual(packet.last, 0x6E ^ 0x51 ^ 0x84 ^ 0x03 ^ 0x10 ^ 0x00 ^ 0x32)
+        XCTAssertEqual(DDC.getRequest(0x60), [0x82, 0x01, 0x60, 0x6E ^ 0x51 ^ 0x82 ^ 0x01 ^ 0x60])
+    }
+
+    func testRepliesAreReadOnlyWhenTheyAnswerTheQuestionAsked() {
+        let good: [UInt8] = [0x6E, 0x88, 0x02, 0x00, 0x10, 0x00, 0x00, 0x64, 0x00, 0x32, 0x00]
+        XCTAssertEqual(DDC.parseReply(good, vcp: 0x10), DDC.Reading(current: 50, maximum: 100))
+        XCTAssertNil(DDC.parseReply(good, vcp: 0x60), "an answer about a different feature")
+        var unsupported = good; unsupported[3] = 0x01
+        XCTAssertNil(DDC.parseReply(unsupported, vcp: 0x10), "the monitor says it has no such feature")
+        XCTAssertNil(DDC.parseReply(Array(good.prefix(6)), vcp: 0x10), "too short")
+        var zeroMax = good; zeroMax[6] = 0; zeroMax[7] = 0
+        XCTAssertNil(DDC.parseReply(zeroMax, vcp: 0x10), "brightness with no range")
+    }
+
+    func testBrightnessScalesToTheMonitorsOwnRange() {
+        XCTAssertEqual(DDC.raw(fromPercent: 50, maximum: 100), 50)
+        XCTAssertEqual(DDC.raw(fromPercent: 50, maximum: 255), 128)
+        XCTAssertEqual(DDC.raw(fromPercent: 500, maximum: 100), 100, "never past the maximum")
+        XCTAssertEqual(DDC.raw(fromPercent: -5, maximum: 100), 0)
+        XCTAssertEqual(DDC.percent(fromRaw: 128, maximum: 255), 50)
+        XCTAssertEqual(DDC.percent(fromRaw: 5, maximum: 0), 0)
+    }
+
+    func testInputNamesAndPresetPlans() {
+        XCTAssertEqual(DDC.inputName(0x11), "HDMI 1")
+        XCTAssertEqual(DDC.inputName(0x2A), "Input 0x2A")
+        let preset = MonitorPreset(name: "Desk", settings: [
+            MonitorSetting(monitor: "Studio", brightnessPercent: 40, inputCode: 0x0F),
+            MonitorSetting(monitor: "Gone", brightnessPercent: 10, inputCode: nil),
+        ])
+        XCTAssertEqual(MonitorPresets.plan(preset, connected: ["Studio"]), ["Studio: brightness 40%, input DisplayPort 1", "Gone: not connected, skipped"])
+    }
+}
