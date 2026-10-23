@@ -3,6 +3,7 @@ import SwiftUI
 /// Keeping the Mac awake: for a while, until turned off, or while chosen apps run.
 struct PowerPane: View {
     @EnvironmentObject private var awake: KeepAwake
+    @State private var assertions: [PowerAssertions.Assertion] = []
     @State private var untilTime = Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: Date()) ?? Date()
 
     private static let durations: [(title: String, minutes: Int?)] = [
@@ -59,8 +60,38 @@ struct PowerPane: View {
             } header: { Text("While these apps are running") } footer: {
                 Text("The Mac stays awake for as long as any of these apps is open, then goes back to normal.")
             }
+
+            Section {
+                Text(PowerAssertions.summary(assertions)).font(.callout)
+                ForEach(PowerAssertions.awakeHolders(assertions)) { item in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.process)
+                            Text("\(item.effect) · \(item.name)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Text(item.heldFor).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    Button("Refresh", action: refresh).controlSize(.small)
+                    Button("Reset Kriya's Rules") { awake.stop(); awake.watchedAppIDs.removeAll(); refresh() }.controlSize(.small)
+                        .help("Stops keep-awake and forgets the apps chosen above. Other apps' holds are not touched.")
+                }
+            } header: { Text("What is keeping this Mac awake") } footer: {
+                Text("From the system's own list. Closing the lid still sleeps a laptop; macOS does not let an app report or change that.")
+            }
         }
         .formStyle(.grouped)
+        .onAppear(perform: refresh)
         .animation(.smooth(duration: 0.25), value: awake.isOn)
+    }
+
+    private func refresh() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let output = (try? ToolRunner.run("/usr/bin/pmset", ["-g", "assertions"], timeout: 4)) ?? ""
+            let parsed = PowerAssertions.parse(output)
+            DispatchQueue.main.async { assertions = parsed }
+        }
     }
 }

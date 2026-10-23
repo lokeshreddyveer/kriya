@@ -186,6 +186,19 @@ final class KeyboardStore: ObservableObject {
         (try? core.searchTextSnippets(query: query, category: category, favoritesOnly: favoritesOnly, limit: limit)) ?? []
     }
 
+    /// All shortcuts (or the chosen ones) as a file to share.
+    func exportShortcuts(_ ids: [String] = [], to url: URL) throws {
+        try core.exportKeyShortcuts(ids: ids).write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Adds the shortcuts in a file that can be added, switched off. Says what was added and what was left out.
+    func importShortcuts(from url: URL) throws -> ShortcutImportPlan {
+        guard let json = String(data: try Data(contentsOf: url), encoding: .utf8) else { throw CoreError.Backup(message: "the file is not a Kriya shortcut file") }
+        let plan = try core.importKeyShortcuts(json: json, reserved: reservedProvider(), now: SystemInfo.nowSeconds)
+        reload()
+        return plan
+    }
+
     func exportSnippets(_ ids: [String], to url: URL) throws {
         try core.exportTextSnippets(ids: ids).write(to: url, atomically: true, encoding: .utf8)
     }

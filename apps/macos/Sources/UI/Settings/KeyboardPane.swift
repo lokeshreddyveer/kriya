@@ -72,9 +72,11 @@ private struct ShortcutsListTab: View {
     @EnvironmentObject private var store: KeyboardStore
     @EnvironmentObject private var library: ActionLibrary
     @State private var editing: KeyShortcut?
+    @State private var note: String?
 
     var body: some View {
         Form {
+            if let note { Section { Text(note).font(.callout).foregroundStyle(.secondary) } }
             Section {
                 if store.shortcuts.isEmpty { Text("No shortcuts yet.").font(.callout).foregroundStyle(.secondary) }
                 ForEach(store.shortcuts) { shortcut in
@@ -96,6 +98,10 @@ private struct ShortcutsListTab: View {
                 HStack {
                     Text("Keyboard shortcuts")
                     Spacer()
+                    Menu {
+                        Button("Import Shortcuts…") { importShortcuts() }
+                        Button("Export Shortcuts…") { exportShortcuts() }.disabled(store.shortcuts.isEmpty)
+                    } label: { MoreMenuLabel() }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
                     Button { editing = KeyShortcut(id: UUID().uuidString, name: "", keyCode: 0, modifiers: 0, scope: .global, target: .command(command: "palette.open"), enabled: true) } label: { Label("New Shortcut", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: {
@@ -105,6 +111,25 @@ private struct ShortcutsListTab: View {
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.shortcuts)
         .sheet(item: $editing) { ShortcutEditor(shortcut: $0) }
+    }
+
+    private func importShortcuts() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let plan = try store.importShortcuts(from: url)
+            let skipped = plan.skipped.isEmpty ? "" : " Left out: " + plan.skipped.joined(separator: "; ") + "."
+            note = "Added \(plan.add.count), switched off. Turn each on when you are ready." + skipped
+        } catch { store.lastError = error.userMessage }
+    }
+
+    private func exportShortcuts() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Kriya shortcuts.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try store.exportShortcuts(to: url); note = "Saved \(url.lastPathComponent)." } catch { store.lastError = error.userMessage }
     }
 
     private func describe(_ target: ShortcutTarget) -> String {

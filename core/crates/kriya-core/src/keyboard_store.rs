@@ -171,6 +171,42 @@ impl Store {
         ))
     }
 
+    /// The chosen shortcuts as a file to share.
+    pub fn export_key_shortcuts(&self, ids: &[String]) -> Result<String, CoreError> {
+        let chosen: Vec<KeyShortcut> = read_shortcuts(&self.conn())?
+            .into_iter()
+            .filter(|s| ids.is_empty() || ids.contains(&s.id))
+            .collect();
+        crate::keyboard::export_shortcut_package(&chosen)
+    }
+
+    /// Adds the shortcuts a file holds that can be added, switched off. Returns what was added and what was left out.
+    pub fn import_key_shortcuts(
+        &self,
+        json: &str,
+        reserved: &[ReservedKey],
+        now: i64,
+    ) -> Result<crate::keyboard::ShortcutImportPlan, CoreError> {
+        let conn = self.conn();
+        let existing = read_shortcuts(&conn)?;
+        let actions: HashSet<String> = crate::store::read_actions(&conn)?
+            .into_iter()
+            .map(|a| a.id)
+            .collect();
+        let snippets: HashSet<String> = read_snippets(&conn)?.into_iter().map(|s| s.id).collect();
+        let known = |target: &ShortcutTarget| match target {
+            ShortcutTarget::Action { action_id } => actions.contains(action_id),
+            ShortcutTarget::Snippet { snippet_id } => snippets.contains(snippet_id),
+            ShortcutTarget::Command { .. } => true,
+        };
+        let plan = crate::keyboard::plan_shortcut_import(json, &existing, reserved, &known, now)?;
+        let mut all = existing;
+        all.extend(plan.add.iter().cloned());
+        check_list(&all, reserved)?;
+        write_json(&conn, "key_shortcuts", &all)?;
+        Ok(plan)
+    }
+
     pub fn restore_default_keyboard_settings(&self, everything: bool) -> Result<(), CoreError> {
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;

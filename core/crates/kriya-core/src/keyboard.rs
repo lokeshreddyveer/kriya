@@ -342,6 +342,102 @@ pub fn check_list(list: &[KeyShortcut], reserved: &[ReservedKey]) -> Result<(), 
     Ok(())
 }
 
+// ---- sharing -------------------------------------------------------------------------------------------------------
+
+const SHORTCUT_PACKAGE_FORMAT: &str = "kriya-shortcuts";
+const MAX_PACKAGE_BYTES: usize = 1_000_000;
+
+#[derive(Serialize, Deserialize)]
+struct ShortcutPackage {
+    format: String,
+    version: u32,
+    shortcuts: Vec<KeyShortcut>,
+}
+
+/// A list of shortcuts as text to save to a file and share.
+pub fn export_shortcut_package(list: &[KeyShortcut]) -> Result<String, CoreError> {
+    Ok(serde_json::to_string_pretty(&ShortcutPackage {
+        format: SHORTCUT_PACKAGE_FORMAT.to_string(),
+        version: 1,
+        shortcuts: list.to_vec(),
+    })?)
+}
+
+/// What importing a shortcut file would do.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ShortcutImportPlan {
+    /// Shortcuts to add: new ids, switched off.
+    pub add: Vec<KeyShortcut>,
+    /// "name: why" for each one left out.
+    pub skipped: Vec<String>,
+}
+
+/// Reads a shortcut file and decides what can be added. Nothing arrives switched on, and anything that would clash with
+/// macOS, another part of Kriya or a shortcut already on is left out with the reason.
+pub fn plan_shortcut_import(
+    json: &str,
+    existing: &[KeyShortcut],
+    reserved: &[ReservedKey],
+    known_targets: &dyn Fn(&ShortcutTarget) -> bool,
+    now: i64,
+) -> Result<ShortcutImportPlan, CoreError> {
+    if json.len() > MAX_PACKAGE_BYTES {
+        return Err(CoreError::invalid("that file is too large"));
+    }
+    let package: ShortcutPackage = serde_json::from_str(json)
+        .map_err(|_| CoreError::invalid("that is not a Kriya shortcut file"))?;
+    if package.format != SHORTCUT_PACKAGE_FORMAT {
+        return Err(CoreError::invalid("that is not a Kriya shortcut file"));
+    }
+    if package.version != 1 {
+        return Err(CoreError::invalid("that file is from a newer Kriya"));
+    }
+    let mut taken: HashSet<String> = existing.iter().map(|s| s.id.clone()).collect();
+    let mut add: Vec<KeyShortcut> = Vec::new();
+    let mut skipped = Vec::new();
+    for (index, original) in package.shortcuts.into_iter().enumerate() {
+        let label = if original.name.trim().is_empty() {
+            format!("shortcut {}", index + 1)
+        } else {
+            original.name.clone()
+        };
+        if existing.len() + add.len() >= MAX_SHORTCUTS {
+            skipped.push(format!("{label}: there are too many shortcuts"));
+            continue;
+        }
+        let mut id = format!("imported-{now}-{index}");
+        while taken.contains(&id) {
+            id.push('x');
+        }
+        let mut shortcut = original;
+        shortcut.id = id.clone();
+        shortcut.enabled = false;
+        if let Err(e) = shortcut.check() {
+            skipped.push(format!("{label}: {e}"));
+            continue;
+        }
+        if !known_targets(&shortcut.target) {
+            skipped.push(format!("{label}: what it runs is not on this Mac"));
+            continue;
+        }
+        // Compared as if it were on, so a clash that would appear on switching it on is reported now.
+        let mut probe = shortcut.clone();
+        probe.enabled = true;
+        let mut against: Vec<KeyShortcut> = existing.to_vec();
+        against.extend(add.iter().cloned());
+        if let Some(c) = shortcut_conflicts(&probe, &against, reserved)
+            .into_iter()
+            .find(|c| c.blocking)
+        {
+            skipped.push(format!("{label}: clashes with {}", c.with));
+            continue;
+        }
+        taken.insert(id);
+        add.push(shortcut);
+    }
+    Ok(ShortcutImportPlan { add, skipped })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,5 +652,110 @@ mod tests {
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<KeyShortcut>(&json).unwrap(), s);
+    }
+
+    fn known(_: &ShortcutTarget) -> bool {
+        true
+    }
+
+    #[test]
+    fn a_shortcut_file_round_trips_and_arrives_switched_off_with_new_ids() {
+        let mut a = sc("a", 40, m::COMMAND | m::OPTION, ShortcutScope::Global);
+        a.enabled = true;
+        let json = export_shortcut_package(&[a.clone()]).unwrap();
+        let plan = plan_shortcut_import(&json, &[], &[], &known, 100).unwrap();
+        assert_eq!(plan.skipped, Vec::<String>::new());
+        assert_eq!(plan.add.len(), 1);
+        assert!(!plan.add[0].enabled);
+        assert_eq!(plan.add[0].id, "imported-100-0");
+        assert_eq!(plan.add[0].key_code, 40);
+        assert_ne!(plan.add[0].id, a.id);
+    }
+
+    #[test]
+    fn clashes_missing_targets_and_bad_shortcuts_are_left_out_with_a_reason() {
+        let mut mine = sc("mine", 40, m::COMMAND | m::OPTION, ShortcutScope::Global);
+        mine.enabled = true;
+        let clash = KeyShortcut {
+            name: "Same keys".into(),
+            ..sc("x1", 40, m::COMMAND | m::OPTION, ShortcutScope::Global)
+        };
+        let system = KeyShortcut {
+            name: "Quit".into(),
+            ..sc("x2", 12, m::COMMAND, ShortcutScope::Global)
+        };
+        let bare = KeyShortcut {
+            name: "Bare".into(),
+            ..sc("x3", 0, 0, ShortcutScope::Global)
+        };
+        let fine = KeyShortcut {
+            name: "Fine".into(),
+            ..sc("x4", 41, m::CONTROL | m::OPTION, ShortcutScope::Global)
+        };
+        let json = export_shortcut_package(&[clash, system, bare, fine]).unwrap();
+        let plan = plan_shortcut_import(&json, &[mine], &[], &known, 5).unwrap();
+        assert_eq!(
+            plan.add.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            vec!["Fine"]
+        );
+        assert_eq!(plan.skipped.len(), 3);
+        assert!(plan.skipped[0].starts_with("Same keys: clashes with"));
+        assert!(plan.skipped[2].starts_with("Bare:"));
+
+        let nothing = |_: &ShortcutTarget| false;
+        let again = plan_shortcut_import(
+            &export_shortcut_package(&[sc("y", 41, m::CONTROL | m::OPTION, ShortcutScope::Global)])
+                .unwrap(),
+            &[],
+            &[],
+            &nothing,
+            5,
+        )
+        .unwrap();
+        assert!(again.add.is_empty());
+        assert!(again.skipped[0].contains("not on this Mac"));
+    }
+
+    #[test]
+    fn other_files_and_newer_versions_are_refused_and_two_in_one_file_do_not_collide() {
+        assert!(plan_shortcut_import("{}", &[], &[], &known, 1).is_err());
+        assert!(plan_shortcut_import("[1,2]", &[], &[], &known, 1).is_err());
+        assert!(plan_shortcut_import(
+            r#"{"format":"other","version":1,"shortcuts":[]}"#,
+            &[],
+            &[],
+            &known,
+            1
+        )
+        .is_err());
+        assert!(plan_shortcut_import(
+            r#"{"format":"kriya-shortcuts","version":2,"shortcuts":[]}"#,
+            &[],
+            &[],
+            &known,
+            1
+        )
+        .is_err());
+        let a = sc("a", 40, m::COMMAND | m::OPTION, ShortcutScope::Global);
+        let b = KeyShortcut {
+            name: "Second".into(),
+            ..sc("b", 40, m::COMMAND | m::OPTION, ShortcutScope::Global)
+        };
+        let plan = plan_shortcut_import(
+            &export_shortcut_package(&[a, b]).unwrap(),
+            &[],
+            &[],
+            &known,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.add.len(),
+            2,
+            "both arrive switched off, so they do not block each other"
+        );
+        assert_ne!(plan.add[0].id, plan.add[1].id);
+        let huge = "x".repeat(2_000_000);
+        assert!(plan_shortcut_import(&huge, &[], &[], &known, 1).is_err());
     }
 }

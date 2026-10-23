@@ -281,3 +281,35 @@ final class DiskRiskTests: XCTestCase {
         XCTAssertEqual(result.total, 60)
     }
 }
+
+final class PowerAssertionTests: XCTestCase {
+    private let sample = """
+    Assertion status system-wide:
+       BackgroundTask                 0
+       PreventUserIdleSystemSleep     1
+    Listed by owning process:
+       pid 412(caffeinate): [0x0000000100012345] 00:12:05 PreventUserIdleSystemSleep named: "caffeinate command-line tool"
+       \tTimeout will fire in 3595 secs Action=TimeoutActionRelease
+       pid 733(zoom.us): [0x00000001000ABCDE] 01:02:03 PreventUserIdleDisplaySleep named: "Zoom Meeting"
+       pid 733(zoom.us): [0x00000001000ABCDF] 01:02:03 PreventUserIdleDisplaySleep named: "Zoom Meeting"
+       pid 90(powerd): [0x0000000100000001] 05:00:00 BackgroundTask named: "com.apple.powerd.bg"
+    """
+
+    func testHoldersAreReadAndRepeatsAndBackgroundWorkAreLeftOut() {
+        let all = PowerAssertions.parse(sample)
+        XCTAssertEqual(all.count, 4)
+        XCTAssertEqual(all[0].process, "caffeinate")
+        XCTAssertEqual(all[0].heldFor, "00:12:05")
+        XCTAssertEqual(all[0].effect, "Keeps the Mac awake")
+        XCTAssertEqual(PowerAssertions.awakeHolders(all).map(\.process), ["caffeinate", "zoom.us"])
+        XCTAssertEqual(PowerAssertions.summary(all), "caffeinate and zoom.us are keeping this Mac awake.")
+    }
+
+    func testSummariesForNoneOneAndMany() {
+        XCTAssertEqual(PowerAssertions.summary([]), "Nothing is keeping this Mac awake.")
+        XCTAssertEqual(PowerAssertions.parse("garbage\n\nnot a line"), [])
+        let many = (1...4).map { PowerAssertions.Assertion(pid: $0, process: "p\($0)", kind: "PreventSystemSleep", name: "n", heldFor: "0:0:1") }
+        XCTAssertEqual(PowerAssertions.summary(many), "p1, p2 and 2 more are keeping this Mac awake.")
+        XCTAssertEqual(PowerAssertions.summary([many[0]]), "p1 is keeping this Mac awake.")
+    }
+}

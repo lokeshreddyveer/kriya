@@ -65,7 +65,7 @@ pub use expansion::{
 pub use gestures::{ButtonDecision, GestureEngine, GestureEngineConfig, RockerKind};
 pub use keyboard::{
     KeyShortcut, KeyboardConfig, ReservedKey, ShortcutConflict, ShortcutConflictKind,
-    ShortcutScope, ShortcutTarget,
+    ShortcutImportPlan, ShortcutScope, ShortcutTarget,
 };
 pub use link_routing::{LinkDecision, LinkRoutingConfig, LinkRule, LinkTarget, MatchKind};
 pub use model::{
@@ -1785,6 +1785,19 @@ impl KriyaCore {
         reserved: Vec<ReservedKey>,
     ) -> Result<(), CoreError> {
         self.store.save_key_shortcuts(&list, &reserved)
+    }
+
+    pub fn export_key_shortcuts(&self, ids: Vec<String>) -> Result<String, CoreError> {
+        self.store.export_key_shortcuts(&ids)
+    }
+
+    pub fn import_key_shortcuts(
+        &self,
+        json: String,
+        reserved: Vec<ReservedKey>,
+        now: i64,
+    ) -> Result<ShortcutImportPlan, CoreError> {
+        self.store.import_key_shortcuts(&json, &reserved, now)
     }
 
     pub fn restore_default_keyboard_settings(&self, everything: bool) -> Result<(), CoreError> {
