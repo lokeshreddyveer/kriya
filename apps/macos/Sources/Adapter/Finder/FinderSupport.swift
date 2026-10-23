@@ -153,7 +153,7 @@ final class CancelToken {
         stopped = true
         let running = process
         lock.unlock()
-        if running?.isRunning == true { running?.terminate() }
+        if let running, running.isRunning { HomebrewManager.terminateTree(running.processIdentifier) }
     }
 
     fileprivate func attach(_ process: Process) {
@@ -200,7 +200,8 @@ enum ToolRunner {
         do { try process.run() } catch { throw FileActionError("Could not start \((executable as NSString).lastPathComponent).") }
         cancel?.attach(process)
         let timedOut = SyncFlag()
-        let watchdog = DispatchWorkItem { if process.isRunning { timedOut.value = true; process.terminate() } }
+        // The whole tree is ended: a child still holding the pipe would keep the read below waiting after the parent was gone.
+        let watchdog = DispatchWorkItem { if process.isRunning { timedOut.value = true; HomebrewManager.terminateTree(process.processIdentifier) } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()

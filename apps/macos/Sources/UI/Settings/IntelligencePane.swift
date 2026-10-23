@@ -32,7 +32,7 @@ struct IntelligencePane: View {
                 }
                 .animation(.smooth(duration: 0.2), value: intelligence.availability)
             } header: { Text("Status") } footer: {
-                Text("Kriya uses only the model that runs on this Mac. It never uses a cloud model, and sends nothing to Apple or anyone else. What you select or copy is not logged, saved or kept after the result is shown.")
+                Text("Kriya uses only the model that runs on this Mac. It never uses a cloud model, and sends nothing to Apple or anyone else. What you select or copy is not logged, saved or kept after the result is shown. Because it works offline it cannot look things up: it does not know current facts, films, or other specifics, and may refuse or guess. Use it to rewrite, summarize or explain the text you give it, and use a web search (the “Search with” rows in the launcher) to find facts.")
             }
 
             Section {

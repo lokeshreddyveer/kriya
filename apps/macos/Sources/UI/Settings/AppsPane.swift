@@ -164,14 +164,22 @@ struct AppsPane: View {
             Section {
                 HStack {
                     if inventory.isCheckingUpdates {
-                        Text("Checking…").foregroundStyle(.secondary)
                         ProgressView().controlSize(.small)
+                        Text(inventory.checkStage ?? "Checking…").foregroundStyle(.secondary)
                     } else if let last = inventory.lastUpdateCheck {
                         Text("Last checked \(RelativeDateTimeFormatter().localizedString(for: last, relativeTo: Date())).").foregroundStyle(.secondary)
                     } else {
                         Text("Not checked yet.").foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if inventory.isCheckingUpdates {
+                        Button("Stop") { inventory.cancelCheck() }.controlSize(.small)
+                    } else {
+                        Button("Check Now") { inventory.checkUpdates() }.controlSize(.small)
+                    }
+                }
+                if let failed = inventory.lastFailedCheck, !inventory.isCheckingUpdates {
+                    Text("Last problem, \(RelativeDateTimeFormatter().localizedString(for: failed.at, relativeTo: Date())): \(failed.note)").font(.caption).foregroundStyle(.orange)
                 }
                 Toggle("Upgrade Homebrew apps automatically", isOn: $inventory.upgradeHomebrewAutomatically)
             } footer: {
@@ -194,7 +202,12 @@ struct AppsPane: View {
                         Spacer()
                         switch update.action {
                         case .open(let url): Button("Open Page") { NSWorkspace.shared.open(url) }.controlSize(.small)
-                        case .brew(let token): Button("Upgrade") { inventory.runBrewUpgrade(token) { message = $0 } }.controlSize(.small)
+                        case .brew(let token):
+                            if inventory.upgrading.contains(token) {
+                                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Upgrading…").font(.caption).foregroundStyle(.secondary) }
+                            } else {
+                                Button("Upgrade") { inventory.runBrewUpgrade(token) { message = $0 } }.controlSize(.small)
+                            }
                         case .appStore: Button("App Store") { NSWorkspace.shared.open(URL(string: "macappstore://showUpdatesPage")!) }.controlSize(.small)
                         }
                         Button("Ignore") { inventory.ignoredUpdates.insert(update.appName) }.controlSize(.small).buttonStyle(.borderless)
@@ -458,9 +471,31 @@ private struct InstallTab: View {
     private var progress: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                if brew.isRunning { ProgressView().controlSize(.small); Text("Working…").foregroundStyle(.secondary) } else { Text("What Homebrew said").foregroundStyle(.secondary) }
+                if brew.isRunning {
+                    ProgressView().controlSize(.small)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(["Installing \(brew.currentCask ?? "")", brew.progressNote].compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
+                        if let stage = brew.stage { Text(stage).font(.caption).foregroundStyle(stage.contains("password") || stage.hasPrefix("No news") ? .orange : .secondary) }
+                    }
+                } else {
+                    Text("What Homebrew said").foregroundStyle(.secondary)
+                }
                 Spacer()
+                if brew.isRunning, let cask = brew.currentCask {
+                    Button("Run in Terminal") { HomebrewManager.runInTerminal(install: cask) }.controlSize(.small)
+                        .help("Opens Terminal with the install command, for apps that need your password")
+                }
                 if brew.isRunning { Button("Stop") { brew.cancel() }.controlSize(.small) }
+            }
+            if !brew.isRunning, !brew.failures.isEmpty {
+                ForEach(brew.failures.keys.sorted(), id: \.self) { token in
+                    HStack {
+                        Label("\(token): \(brew.failures[token] ?? "")", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                        Spacer()
+                        Button("Try Again") { confirmAndInstall([token]) }.controlSize(.small)
+                        Button("Run in Terminal") { HomebrewManager.runInTerminal(install: token) }.controlSize(.small)
+                    }
+                }
             }
             ScrollView {
                 Text(brew.log).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)

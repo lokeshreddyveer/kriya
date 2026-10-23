@@ -59,6 +59,10 @@ final class AppInventory: ObservableObject {
     @Published private(set) var updates: [AppUpdate] = []
     @Published private(set) var isCheckingUpdates = false
     @Published private(set) var updateNote: String?
+    /// Which source the check is waiting on, while it runs ("Homebrew apps…").
+    @Published private(set) var checkStage: String?
+    /// The last time a check ran and could not reach anything, with why. Shown beside the last good time.
+    @Published private(set) var lastFailedCheck: (at: Date, note: String)?
     @Published var ignoredUpdates: Set<String> {
         didSet { UserDefaults.standard.set(Array(ignoredUpdates), forKey: "ignoredAppUpdates") }
     }
@@ -81,7 +85,10 @@ final class AppInventory: ObservableObject {
     private var rescanWork: DispatchWorkItem?
     private var updateTimer: Timer?
     private var started = false
-    private var upgrading = Set<String>()
+    /// The Homebrew apps being upgraded right now, so the list can show it.
+    @Published private(set) var upgrading = Set<String>()
+    private var checkTask: Task<Void, Never>?
+    private var checkCancel: CancelToken?
     /// For tests: a stand-in program used instead of the real Homebrew.
     var brewExecutableOverride: String?
 
@@ -299,12 +306,24 @@ final class AppInventory: ObservableObject {
 
     // MARK: Updates
 
+    /// Stops a check in progress. What it had found so far is dropped, and the old list stays.
+    func cancelCheck() {
+        checkCancel?.cancel()
+        checkTask?.cancel()
+        isCheckingUpdates = false
+        checkStage = nil
+        updateNote = "Stopped."
+    }
+
     func checkUpdates() {
         guard !isCheckingUpdates else { return }
         isCheckingUpdates = true
         updateNote = nil
+        checkStage = "Apps that update themselves…"
         let apps = self.apps
-        Task {
+        let cancel = CancelToken()
+        checkCancel = cancel
+        checkTask = Task {
             var found: [AppUpdate] = []
             var attempts = 0
             var failures = 0
@@ -323,7 +342,10 @@ final class AppInventory: ObservableObject {
                     }
                 }
             }
-            let brew = await Self.brewOutdated()
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self.checkStage = "Homebrew apps (Homebrew updates itself first, this can take a minute)…" }
+            let brew = await Self.brewOutdated(cancel: cancel)
+            guard !Task.isCancelled else { return }
             if brew.attempted { attempts += 1 }
             if brew.failed { failures += 1 }
             found.append(contentsOf: brew.updates)
@@ -337,8 +359,10 @@ final class AppInventory: ObservableObject {
                 self.updates = sorted
                 self.updateNote = notes.isEmpty ? nil : notes.joined(separator: " ")
                 self.isCheckingUpdates = false
+                self.checkStage = nil
                 // A check where every source failed is not shown as done: the time shown is the last one that worked.
                 if record { self.lastUpdateCheck = Date() }
+                if failures > 0 { self.lastFailedCheck = (Date(), Self.failureNote(attempts: attempts, failures: failures)) } else { self.lastFailedCheck = nil }
                 self.upgradeAutomatically(sorted)
             }
         }
@@ -376,9 +400,11 @@ final class AppInventory: ObservableObject {
 
     /// What `brew outdated` says. `attempted` is false when Homebrew is not installed, and `failed` when it was asked and
     /// could not answer.
-    private static func brewOutdated() async -> (updates: [AppUpdate], attempted: Bool, failed: Bool) {
+    private static func brewOutdated(cancel: CancelToken) async -> (updates: [AppUpdate], attempted: Bool, failed: Bool) {
         guard let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return ([], false, false) }
-        guard let output = try? ToolRunner.run(brew, ["outdated", "--cask", "--json=v2"], timeout: 60),
+        // The same environment the installs use: an app started from Finder has almost no PATH, and Homebrew needs it. It also
+        // updates its own list first, which can take a while, so it is given time.
+        guard let output = try? ToolRunner.run(brew, ["outdated", "--cask", "--json=v2"], environment: HomebrewManager.environment, timeout: 180, cancel: cancel),
               let data = output.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let casks = json["casks"] as? [[String: Any]] else { return ([], true, true) }
@@ -396,12 +422,8 @@ final class AppInventory: ObservableObject {
         for update in list {
             guard case .brew(let token) = update.action, HomebrewParsing.isValidToken(token),
                   !ignoredUpdates.contains(update.appName), !upgrading.contains(token) else { continue }
-            upgrading.insert(token)
             note("Updating \(token)…")
-            runBrewUpgrade(token) { [weak self] result in
-                self?.upgrading.remove(token)
-                self?.note(result)
-            }
+            runBrewUpgrade(token) { [weak self] result in self?.note(result) }
         }
     }
 
@@ -416,20 +438,25 @@ final class AppInventory: ObservableObject {
             done("“\(token)” is not a name Homebrew would use.")
             return
         }
+        guard !upgrading.contains(token) else {
+            done("Already updating \(token).")
+            return
+        }
+        upgrading.insert(token)
         let override = brewExecutableOverride
         HomebrewQueue.shared.async {
             guard let brew = override ?? ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-                DispatchQueue.main.async { done("Homebrew was not found.") }
+                DispatchQueue.main.async { self.upgrading.remove(token); done("Homebrew was not found.") }
                 return
             }
             let result: String
             do {
-                _ = try ToolRunner.run(brew, ["upgrade", "--cask", token], timeout: 1200)
+                _ = try ToolRunner.run(brew, ["upgrade", "--cask", token], environment: HomebrewManager.environment, timeout: 1200)
                 result = "Updated \(token)."
             } catch {
                 result = error.localizedDescription
             }
-            DispatchQueue.main.async { done(result); self.scan() }
+            DispatchQueue.main.async { self.upgrading.remove(token); done(result); self.scan() }
         }
     }
 }

@@ -288,6 +288,15 @@ private struct HoverTab: View {
     var body: some View {
         Form {
             Section {
+                Text("1. Turn this on.  2. Choose what each button's menu holds below, or tap “Add Window Snapping Menu”.  3. Rest the pointer on that window button (red, yellow or green) without clicking. After the wait below, a small menu appears next to it.  4. Click an action in the menu, or move away to dismiss it.")
+                    .font(.callout).foregroundStyle(.secondary)
+                if traffic.config.hoverEnabled, TrafficButton.all.allSatisfy({ traffic.config.hoverActions(for: $0).isEmpty }) {
+                    Label("Hover is on, but no button has a menu yet, so nothing will appear.", systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                }
+                Button("Add Window Snapping Menu to the Green Button") { traffic.update { $0.hoverEnabled = true; $0.hoverSets = suggestedTrafficHoverSets() } }
+                    .help("Halves, quarters, thirds, maximize, center and full screen")
+            } header: { Text("How hover works") }
+            Section {
                 Toggle("Show a menu when the pointer rests on a button", isOn: Binding(get: { traffic.config.hoverEnabled }, set: { v in traffic.update { $0.hoverEnabled = v } }))
                 if traffic.config.hoverEnabled {
                     SliderRow(title: "Wait before showing", value: Binding(get: { Double(traffic.config.hoverDelayMs) }, set: { v in traffic.update { $0.hoverDelayMs = UInt32(v) } }),

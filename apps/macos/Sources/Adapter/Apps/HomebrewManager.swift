@@ -97,6 +97,19 @@ enum HomebrewParsing {
         return list.casks.filter { isValidToken($0) && seen.insert($0).inserted }
     }
 
+    /// What an install is doing, judged from the last thing Homebrew printed. Nil when there is nothing worth saying.
+    static func stage(forOutput text: String) -> String? {
+        let tail = String(text.suffix(600)).lowercased()
+        if tail.contains("password:") || tail.contains("a terminal is required") || tail.contains("no tty present") || tail.contains("sudo:") {
+            return "Needs your password. Use “Run in Terminal” to finish this one."
+        }
+        if tail.contains("auto-updating homebrew") || tail.contains("updating homebrew") { return "Updating Homebrew first…" }
+        if tail.contains("downloading") || tail.contains("fetching") { return "Downloading…" }
+        if tail.contains("moving app") || tail.contains("installing cask") || tail.contains("running installer") || tail.contains("linking") { return "Installing…" }
+        if tail.contains("verifying") || tail.contains("verified") { return "Verifying download…" }
+        return nil
+    }
+
     /// The wanted casks that are not installed yet, in the order they were wanted.
     static func missing(wanted: [String], installed: [String]) -> [String] {
         let have = Set(installed)
@@ -119,6 +132,16 @@ final class HomebrewManager: ObservableObject {
     @Published private(set) var log = ""
     @Published private(set) var isRunning = false
     @Published private(set) var status: String?
+    /// What the install in progress is doing right now, or why it looks stuck.
+    @Published private(set) var stage: String?
+    /// The cask being installed now, and how far through the list it is ("2 of 5").
+    @Published private(set) var currentCask: String?
+    @Published private(set) var progressNote: String?
+    /// The casks that did not install, with why, after the last run.
+    @Published private(set) var failures: [String: String] = [:]
+    /// How long an install may run, and how long it may be silent before it is called stalled. Changed by tests.
+    var installTimeout: TimeInterval = 1_200
+    var stallAfter: TimeInterval = 90
     /// Names, descriptions and versions for the casks shown, filled in a moment after the names appear.
     @Published private(set) var details: [String: HomebrewParsing.CaskInfo] = [:]
     @Published private(set) var isSearching = false
@@ -210,25 +233,54 @@ final class HomebrewManager: ObservableObject {
         isRunning = true
         setCancelRequested(false)
         log = ""
+        failures = [:]
+        stage = nil
         queue.async { [self] in
-            for token in wanted {
+            for (index, token) in wanted.enumerated() {
                 if isCancelRequested { append("Stopped.\n"); break }
+                setProgress(cask: token, note: wanted.count > 1 ? "\(index + 1) of \(wanted.count)" : nil)
                 append("$ \(Self.command(install: token))\n")
                 let code = runStreaming(brewPath, ["install", "--cask", token])
-                append(code == 0 ? "\nInstalled \(token).\n\n" : "\nHomebrew stopped with code \(code) for \(token).\n\n")
+                switch code {
+                case 0: append("\nInstalled \(token).\n\n")
+                case Self.timedOutCode: recordFailure(token, "It took longer than \(Int(installTimeout / 60)) minutes and was stopped."); append("\n\(token) was stopped: it took too long.\n\n")
+                case -2: break
+                default: recordFailure(token, "Homebrew stopped with code \(code)."); append("\nHomebrew stopped with code \(code) for \(token).\n\n")
+                }
             }
             DispatchQueue.main.async {
                 self.isRunning = false
+                self.setProgress(cask: nil, note: nil)
+                self.stage = nil
                 self.refreshInstalled()
             }
         }
+    }
+
+    private func setProgress(cask: String?, note: String?) {
+        DispatchQueue.main.async { self.currentCask = cask; self.progressNote = note; self.stage = nil }
+    }
+
+    private func recordFailure(_ token: String, _ reason: String) {
+        DispatchQueue.main.async { self.failures[token] = reason }
+    }
+
+    /// Opens Terminal with the install command ready to run, for the apps that need a password. The command is also copied.
+    static func runInTerminal(install token: String) {
+        guard HomebrewParsing.isValidToken(token) else { return }
+        let command = command(install: token)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
+        let script = "tell application \"Terminal\"\nactivate\ndo script \"\(command)\"\nend tell"
+        var error: NSDictionary?
+        NSAppleScript(source: script)?.executeAndReturnError(&error)
     }
 
     /// Stops the install in progress, and the ones waiting behind it.
     func cancel() {
         stateLock.lock()
         cancelRequested = true
-        if let process, process.isRunning { process.terminate() }
+        if let process, process.isRunning { Self.terminateTree(process.processIdentifier) }
         stateLock.unlock()
     }
 
@@ -256,7 +308,7 @@ final class HomebrewManager: ObservableObject {
 
     // MARK: Running
 
-    private static var environment: [String: String] {
+    static var environment: [String: String] {
         ["PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOMEBREW_NO_ENV_HINTS": "1", "NONINTERACTIVE": "1"]
     }
 
@@ -268,7 +320,29 @@ final class HomebrewManager: ObservableObject {
         }
     }
 
-    /// Runs a command and streams its output into the log as it arrives. Returns the exit code.
+    /// The code `runStreaming` returns when it ended the command for taking too long.
+    static let timedOutCode: Int32 = -3
+
+    /// Every process below this one, deepest first, so a stuck installer's helpers are ended before their parent.
+    static func descendants(of pid: pid_t) -> [pid_t] {
+        guard let output = try? ToolRunner.run("/usr/bin/pgrep", ["-P", String(pid)], timeout: 5) else { return [] }
+        let children = output.split(whereSeparator: \.isNewline).compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+        return children.flatMap { descendants(of: $0) } + children
+    }
+
+    /// Ends a process and everything it started. Homebrew runs curl, sudo and installers as children, and ending only the
+    /// parent leaves them holding the output open.
+    static func terminateTree(_ root: pid_t) {
+        let tree = descendants(of: root)
+        for pid in tree { kill(pid, SIGTERM) }
+        kill(root, SIGTERM)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+            for pid in tree + [root] where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        }
+    }
+
+    /// Runs a command and streams its output into the log as it arrives. Returns the exit code, or `timedOutCode` when it ran
+    /// past `installTimeout`. While it runs, `stage` says what it is doing, or that it has gone quiet.
     private func runStreaming(_ executable: String, _ arguments: [String]) -> Int32 {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: executable)
@@ -278,9 +352,14 @@ final class HomebrewManager: ObservableObject {
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
+        let activity = ActivityClock()
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if !data.isEmpty, let text = String(data: data, encoding: .utf8) { self?.append(text) }
+            if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
+                activity.touch(text)
+                self?.append(text)
+                if let stage = HomebrewParsing.stage(forOutput: activity.recent) { self?.publish(stage: stage) }
+            }
         }
         // Start it under the lock: a Stop that arrives first is seen here, and one that arrives later finds it running.
         stateLock.lock()
@@ -295,13 +374,50 @@ final class HomebrewManager: ObservableObject {
         }
         process = task
         stateLock.unlock()
-        task.waitUntilExit()
+
+        // Watch it instead of waiting blindly: a quiet install is reported, and one that never ends is ended.
+        let started = Date()
+        var timedOut = false
+        var warned = false
+        while task.isRunning {
+            Thread.sleep(forTimeInterval: 0.2)
+            let now = Date()
+            if now.timeIntervalSince(started) > installTimeout {
+                timedOut = true
+                Self.terminateTree(task.processIdentifier)
+                break
+            }
+            if !warned, activity.silence(since: now) > stallAfter, HomebrewParsing.stage(forOutput: activity.recent) == nil {
+                warned = true
+                publish(stage: "No news from Homebrew for \(Int(stallAfter)) seconds. It may be waiting for the network or a password. Stop it, or use “Run in Terminal”.")
+            }
+        }
+        // After ending the tree the output closes; give the last of it a moment, then stop reading either way.
+        if timedOut { Thread.sleep(forTimeInterval: 0.5) } else { task.waitUntilExit() }
         pipe.fileHandleForReading.readabilityHandler = nil
         stateLock.lock()
         process = nil
         stateLock.unlock()
-        return task.terminationStatus
+        return timedOut ? Self.timedOutCode : task.terminationStatus
     }
+
+    private func publish(stage: String) {
+        DispatchQueue.main.async { if self.isRunning { self.stage = stage } }
+    }
+}
+
+/// When Homebrew last printed something, and the last of what it printed. Written from the pipe's thread, read by the watcher.
+private final class ActivityClock {
+    private let lock = NSLock()
+    private var last = Date()
+    private var tail = ""
+    func touch(_ text: String) {
+        lock.lock(); defer { lock.unlock() }
+        last = Date()
+        tail = String((tail + text).suffix(800))
+    }
+    var recent: String { lock.lock(); defer { lock.unlock() }; return tail }
+    func silence(since now: Date) -> TimeInterval { lock.lock(); defer { lock.unlock() }; return now.timeIntervalSince(last) }
 }
 
 /// The one place Homebrew installs and upgrades run, so two of them never run at once.

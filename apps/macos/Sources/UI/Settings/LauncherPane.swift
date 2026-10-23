@@ -48,7 +48,7 @@ struct LauncherPane: View {
                     Button("Put It Back Near the Top") { PaletteLayout.Remembered.saved = nil; placement = .top; PaletteLayout.Placement.current = .top }
                 }
             } header: { Text("Position") } footer: {
-                Text("Drag the launcher by its search bar, its headings or its bottom strip and it opens where you leave it, on whichever display that was. “At the pointer” opens it under the pointer, and “In the middle” keeps it centred as the results grow.")
+                Text("Drag the launcher by its search bar, its headings or its bottom strip and it opens where you leave it, on whichever display that was. “At the pointer” opens it under the pointer. “In the middle” puts the search bar at the centre of the screen with results opening below it. The bottom choices put the search bar at the bottom with results opening upward.")
             }
 
             Section {
@@ -94,7 +94,7 @@ struct LauncherPane: View {
                     }
                 }
             } header: { Text("Fallbacks") } footer: {
-                Text("Text that matches nothing is offered to these, in this order, under “Search with”. Turn on Apple Intelligence to ask it, or a quicklink or script to send the text there.")
+                Text("Whatever you type is offered to these, in this order, under “Search with”, a few rows down, and Return on one opens it in your browser. Press ⌘K on one for the other sites. They need “Web” turned on under the kinds of result above. Turn on Apple Intelligence to ask it, or a quicklink or script to send the text there.")
             }
 
             Section {
@@ -165,8 +165,11 @@ struct LauncherPane: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(link.name)
                             Text(link.keyword.isEmpty ? link.template : "\(link.keyword)  ·  \(link.template)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text(link.example).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
                         }
                         Spacer()
+                        Button("Test") { if let url = link.testURL { NSWorkspace.shared.open(url) } }.controlSize(.small).disabled(link.testURL == nil)
+                            .help("Opens this link in your browser with the words “kriya test”")
                         Button("Edit") { editingLink = link }.controlSize(.small)
                         Button(role: .destructive) { extras.deleteQuicklink(link.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
                     }
@@ -178,7 +181,7 @@ struct LauncherPane: View {
                     Button { editingLink = Quicklink(name: "", keyword: "", template: "https://") } label: { Label("Add", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: {
-                Text("Put {query} in the address where your words go. “gh swift” with the address https://github.com/search?q={query} opens that search in your browser.")
+                Text("Put {query} in the address where your words go: “gh swift” with https://github.com/search?q={query} opens that search. {clipboard} and {selection} fill in from the clipboard or the selected text, so typing just the keyword is enough. Test opens the link with the words “kriya test”.")
             }
 
             Section {
@@ -295,7 +298,12 @@ private struct QuicklinkEditor: View {
                 TextField("Keyword (optional)", text: $link.keyword)
                 TextField("Address", text: $link.template)
                 if let problem { Text(problem).font(.callout).foregroundStyle(Theme.danger) }
-                Text("Use {query} where what you type goes.").font(.caption).foregroundStyle(.secondary)
+                Text("Use {query} where what you type goes, or {clipboard} / {selection} for the clipboard or selected text.").font(.caption).foregroundStyle(.secondary)
+                if link.problem == nil { Text(link.example).font(.caption).foregroundStyle(.secondary) }
+                if let url = link.testURL {
+                    Text(url.absoluteString).font(.caption.monospaced()).foregroundStyle(.tertiary).lineLimit(2).textSelection(.enabled)
+                    Button("Test in Browser") { NSWorkspace.shared.open(url) }.controlSize(.small)
+                }
             }
             .formStyle(.grouped)
             Divider()
@@ -306,7 +314,7 @@ private struct QuicklinkEditor: View {
             }
             .padding(12)
         }
-        .frame(width: 480, height: 300)
+        .frame(width: 480, height: 380)
     }
 }
 

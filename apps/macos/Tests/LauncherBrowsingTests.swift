@@ -307,6 +307,20 @@ final class PaletteTokenTests: XCTestCase {
         XCTAssertEqual(m.sections, ["Search with"])
     }
 
+    func testFallbacksStayWithinSightEvenBesideManyResults() {
+        let m = model()
+        var fallback = PaletteEntry(id: "web:g:all:app", title: "Search Google for “app”", subtitle: nil, symbol: "magnifyingglass", category: .web, rememberable: false, queryScore: 10, run: {})
+        fallback.isFallback = true
+        m.queryProviders = [{ _ in [fallback] }]
+        let apps = (0..<20).map { PaletteEntry(id: "app:\($0)", title: "App \($0)", subtitle: nil, symbol: "app", category: .app, run: {}) }
+        m.load(apps)
+        m.query = "app"
+        let place = m.results.firstIndex { $0.isFallback }
+        XCTAssertNotNil(place)
+        XCTAssertLessThan(place ?? 99, PaletteLayout.maxRows, "the search row is among the rows that are shown without scrolling")
+        XCTAssertEqual(m.sections[place ?? 0], "Search with")
+    }
+
     func testSingleWordDetection() {
         XCTAssertEqual(PaletteModel.singleWord("gh "), "gh")
         XCTAssertEqual(PaletteModel.singleWord("GH "), "gh")

@@ -136,7 +136,7 @@ final class ShortcutRegistry: ObservableObject {
     static func title(for command: String) -> String {
         let known: [String: String] = [
             "palette.open": "Open the command palette", "finder.launcher": "Open the file-action launcher",
-            "selection.manual": "Show the selection bar", "clipboard.quick": "Open the quick paste panel",
+            "selection.manual": "Show the selection bar", "selection.paste": "Show paste actions here", "clipboard.quick": "Open the quick paste panel",
             "clipboard.plain": "Paste as plain text", "clipboard.strip": "Remove formatting from the clipboard",
             "clipboard.pause": "Pause clipboard history",
         ]

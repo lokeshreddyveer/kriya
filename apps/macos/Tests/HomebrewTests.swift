@@ -119,6 +119,42 @@ final class HomebrewTests: XCTestCase {
     }
 
     /// A stand-in for `brew` that writes the arguments it was given, one per line, and then waits.
+    func testAnInstallThatNeverEndsIsStoppedAndItsHelpersWithIt() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-hang-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let pidFile = folder.appendingPathComponent("child.pid")
+        let script = folder.appendingPathComponent("brew")
+        // Like Homebrew: a parent that starts a helper which keeps the output open, then waits for it.
+        try """
+        #!/bin/sh
+        if [ "$1" = "install" ]; then
+          sleep 60 &
+          echo $! > "\(pidFile.path)"
+          wait
+        fi
+        exit 0
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let manager = HomebrewManager(brewPath: script.path)
+        manager.installTimeout = 1.5
+        manager.install(["stuck"])
+        XCTAssertTrue(waitUntil(15) { !manager.isRunning }, "the install is ended instead of waiting forever")
+        XCTAssertNotNil(manager.failures["stuck"], "and it is reported as failed")
+        let child = pid_t(try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        XCTAssertGreaterThan(child, 0)
+        XCTAssertTrue(waitUntil(6) { kill(child, 0) != 0 }, "the helper process did not survive")
+    }
+
+    func testWhatAnInstallIsWaitingOnIsRecognisedFromItsOutput() {
+        XCTAssertEqual(HomebrewParsing.stage(forOutput: "==> Downloading https://x/y.dmg"), "Downloading…")
+        XCTAssertEqual(HomebrewParsing.stage(forOutput: "==> Moving App 'X.app' to '/Applications/X.app'"), "Installing…")
+        XCTAssertTrue(HomebrewParsing.stage(forOutput: "Password:")?.contains("password") == true)
+        XCTAssertTrue(HomebrewParsing.stage(forOutput: "sudo: a terminal is required to read the password")?.contains("password") == true)
+        XCTAssertNil(HomebrewParsing.stage(forOutput: "nothing special"))
+    }
+
     private func makeStandIn() throws -> (path: String, cleanup: () -> Void) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-brew-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

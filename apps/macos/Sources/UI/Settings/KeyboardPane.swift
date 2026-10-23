@@ -125,7 +125,7 @@ enum KeyboardCommands {
         list += [
             ("palette.open", "Open the command launcher"), ("clipboard.quick", "Open clipboard history"), ("clipboard.plain", "Paste as plain text"),
             ("clipboard.strip", "Remove formatting from the clipboard"), ("clipboard.pause", "Pause or resume clipboard recording"),
-            ("selection.manual", "Show selection actions"), ("finder.launcher", "Finder actions for the selected files"),
+            ("selection.manual", "Show selection actions"), ("selection.paste", "Show paste actions here (nothing selected)"), ("finder.launcher", "Finder actions for the selected files"),
         ]
         list += extra().map { ($0.command, $0.title) }
         return list.map { (command: $0.0, title: $0.1) }

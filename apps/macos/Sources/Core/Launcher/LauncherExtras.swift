@@ -30,6 +30,20 @@ struct Quicklink: Codable, Identifiable, Equatable {
         return url
     }
 
+    /// How to use it, in the words the person would type, for showing beside the link.
+    var example: String {
+        let word = keyword.trimmingCharacters(in: .whitespaces)
+        if takesQuery { return word.isEmpty ? "Type its name, then a space and your words" : "Type “\(word) swift” to search for swift" }
+        if usesVariables {
+            let source = template.contains("{selection}") ? "the selected text" : "the clipboard"
+            return word.isEmpty ? "Type its name; it uses \(source)" : "Type “\(word)” to open it with \(source)"
+        }
+        return word.isEmpty ? "Type its name to open it" : "Type “\(word)” to open it"
+    }
+
+    /// The address a test opens: sample words stand in for what would be typed, clipboard or selected.
+    var testURL: URL? { url(for: "kriya test", clipboard: "kriya test", selection: "kriya test") }
+
     /// Why this quicklink cannot be saved, or nil when it can.
     var problem: String? {
         if name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give it a name." }

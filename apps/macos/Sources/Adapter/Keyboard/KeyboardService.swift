@@ -208,6 +208,7 @@ final class KeyboardService: ObservableObject {
         context.executor.registerCommand("clipboard.strip") { clipboard.paster.removeFormattingFromClipboard() }
         context.executor.registerCommand("clipboard.pause") { clipboard.setPaused(!clipboard.store.config.paused) }
         context.executor.registerCommand("selection.manual") { selection.showManually() }
+        context.executor.registerCommand("selection.paste") { selection.showPasteBar() }
         context.executor.registerCommand("finder.launcher") { finder.launcher.show() }
         palette.configure(context: context, keyboard: self)
         Log.info("Keyboard", "Keyboard shortcuts and text expansion started")
@@ -224,7 +225,7 @@ final class KeyboardService: ObservableObject {
         hotkeys?.unregisterAll()
         hotkeys = nil
         front.stop()
-        for command in ["palette.open", "clipboard.quick", "clipboard.plain", "clipboard.strip", "clipboard.pause", "selection.manual", "finder.launcher"] {
+        for command in ["palette.open", "clipboard.quick", "clipboard.plain", "clipboard.strip", "clipboard.pause", "selection.manual", "selection.paste", "finder.launcher"] {
             context?.executor.unregisterCommand(command)
         }
         palette.close()

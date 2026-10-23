@@ -382,6 +382,27 @@ final class SelectionService: ObservableObject {
         check(manual: true)
     }
 
+    /// A bar with only paste actions, next to the pointer, for a place where nothing can be selected (blank space in a
+    /// document, an empty field). It does not look for a selection, and it does not move focus: the paste goes where the
+    /// caret already is.
+    func showPasteBar() {
+        guard isRunning, profiles?.isFeatureActive(.selectionBar) ?? true else { return }
+        pointer = DisplayManager.mouseLocation()
+        let app = NSWorkspace.shared.frontmostApplication
+        guard app?.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        let (_, config) = store.current
+        let actions = [
+            SelectionAction(id: "paste-here", title: "Paste", symbol: "doc.on.clipboard", kind: .paste, enabled: true, applies: .anything, appIds: []),
+            SelectionAction(id: "paste-here-plain", title: "Paste without formatting", symbol: "doc.plaintext", kind: .pastePlain, enabled: true, applies: .anything, appIds: []),
+        ]
+        snapshot = SelectionSnapshot(text: "", editable: true, element: nil, bounds: nil, appID: app?.bundleIdentifier, pid: app?.processIdentifier ?? 0)
+        lastProblem = nil
+        toolbar.show(actions: actions, config: config, anchor: nil, pointer: pointer) { [weak self] action in
+            guard let self, let snapshot = self.snapshot else { return }
+            self.runner.run(action, on: snapshot, pointer: self.pointer)
+        }
+    }
+
     // MARK: Finding the selection
 
     private func check(manual: Bool, retriesLeft: Int = 0) {
@@ -409,7 +430,8 @@ final class SelectionService: ObservableObject {
             }
             if self?.generation != started { return }
             guard let snapshot = found, selectionLengthOk(config: config, text: snapshot.text) else {
-                if manual { DispatchQueue.main.async { self?.lastProblem = "Nothing is selected, or this app does not share its selection." } }
+                // Nothing to act on, so offer what still makes sense there: pasting.
+                if manual { DispatchQueue.main.async { self?.lastProblem = "Nothing is selected, or this app does not share its selection."; self?.showPasteBar() } }
                 return
             }
             let ids = selectionActionsFor(actions: actions, config: config, appId: snapshot.appID, editable: snapshot.editable, text: snapshot.text)

@@ -29,7 +29,7 @@ struct SelectionPane: View {
     @State private var confirmReset = false
 
     enum Tab: String, CaseIterable, Identifiable {
-        case actions = "Actions", appearance = "Appearance", apps = "Apps", sharing = "Sharing"
+        case actions = "Actions", appearance = "Appearance", apps = "Apps", sharing = "Import & Approvals"
         var id: String { rawValue }
     }
 
@@ -458,6 +458,12 @@ private struct SharingTab: View {
     var body: some View {
         Form {
             Section {
+                Text("This tab is for moving your actions between Macs and for scripts you have approved. It does not share anything over the network.").font(.callout).foregroundStyle(.secondary)
+            } header: { Text("What this tab is") } footer: {
+                Text("Nothing selected, such as blank space in a document? Give “Show paste actions here” a shortcut under Keyboard › Shortcuts, or run it from the launcher. It shows Paste and Paste without formatting next to the pointer. Showing the bar by shortcut with nothing selected does the same.")
+            }
+
+            Section {
                 ForEach(store.actions) { action in
                     Toggle(action.title, isOn: Binding(get: { chosen.contains(action.id) }, set: { on in if on { chosen.insert(action.id) } else { chosen.remove(action.id) } }))
                 }
@@ -466,7 +472,7 @@ private struct SharingTab: View {
                     Button("Import Actions…") { importPackage() }
                     if let message { Text(message).font(.caption).foregroundStyle(.secondary).transition(.opacity) }
                 }
-            } header: { Text("Share your actions") } footer: {
+            } header: { Text("Export and import actions") } footer: {
                 Text("An exported file holds the actions you tick. Imported actions are checked first, are added at the end, and any script in them asks for your approval before it first runs. Only import files from people you trust.")
             }
 

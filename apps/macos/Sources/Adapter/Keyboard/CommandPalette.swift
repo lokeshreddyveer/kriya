@@ -170,6 +170,19 @@ final class PaletteModel: ObservableObject {
         }
         let byID = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var list = order.compactMap { byID[$0] }
+        if typed, token == nil {
+            // "Search with" rows rank low by design, which left them below a long list or cut off altogether. They are always
+            // present, a few rows down, so the web search is where you can see it.
+            let hidden = Set(prefs.data.hidden)
+            let shown = Set(list.map(\.id))
+            let missing = dynamic.filter { $0.isFallback && !shown.contains($0.id) && prefs.data.isEnabled($0.category) && !hidden.contains($0.id) }
+            let fallbacks = list.filter(\.isFallback) + missing
+            if !fallbacks.isEmpty {
+                var rest = list.filter { !$0.isFallback }
+                rest.insert(contentsOf: fallbacks, at: min(rest.count, 4))
+                list = rest
+            }
+        }
         var headings: [String] = []
 
         if !typed, held.isEmpty {
@@ -344,8 +357,8 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         var target = CGRect.zero
         if !visible.isEmpty {
             target = PaletteLayout.frame(height: wantedHeight(), in: visible, placement: placement, pointer: mouse, saved: PaletteLayout.Remembered.saved)
-            // It starts a little higher and settles into place as it fades in.
-            panel.setFrame(target.offsetBy(dx: 0, dy: 10), display: false)
+            // It starts a little off its edge and settles into place as it fades in: from above, or from below when it grows up.
+            panel.setFrame(target.offsetBy(dx: 0, dy: placement.growsUp ? -10 : 10), display: false)
         }
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
@@ -366,10 +379,10 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         PaletteLayout.height(sections: model.sections, typed: !model.query.trimmingCharacters(in: .whitespaces).isEmpty)
     }
 
-    /// Grows or shrinks the window as results come and go, keeping its top where it is.
+    /// Grows or shrinks the window as results come and go, keeping its top where it is (its bottom, for the bottom placements).
     private func resize(animated: Bool = true) {
         guard let panel, panel.isVisible, !visible.isEmpty else { return }
-        let target = PaletteLayout.resized(panel.frame, toHeight: wantedHeight(), in: visible)
+        let target = PaletteLayout.resized(panel.frame, toHeight: wantedHeight(), in: visible, growsUp: PaletteLayout.Placement.current.growsUp)
         guard abs(target.height - panel.frame.height) > 0.5 else { return }
         placing = true
         if animated {
@@ -556,6 +569,7 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         })
         list.append(PaletteEntry(id: "clipboard:strip", title: "Remove formatting from the clipboard", subtitle: "Clipboard", symbol: "textformat") { clipboard.paster.removeFormattingFromClipboard() })
         list.append(PaletteEntry(id: "selection:show", title: "Show selection actions", subtitle: "Selection", symbol: "text.cursor") { context.selection.showManually() })
+        list.append(PaletteEntry(id: "selection:paste", title: "Show paste actions here", subtitle: "Selection · when nothing is selected", symbol: "doc.on.clipboard", keywords: ["paste", "empty", "blank"]) { context.selection.showPasteBar() })
         list.append(PaletteEntry(id: "finder:launcher", title: "Finder actions for the selected files", subtitle: "Finder", symbol: "contextualmenu.and.cursorarrow") { context.finder.launcher.show() })
         for provider in providers { list.append(contentsOf: provider()) }
         return list
@@ -618,6 +632,10 @@ private struct PaletteView: View {
     @Environment(\.colorScheme) private var scheme
     @AppStorage("launcherTheme") private var themeRaw = LauncherTheme.glass.rawValue
     @AppStorage("launcherAccent") private var accentRaw = LauncherAccent.neutral.rawValue
+    @AppStorage(PaletteLayout.Placement.key) private var placementRaw = PaletteLayout.Placement.top.rawValue
+
+    /// At the bottom of the screen the results sit above the search bar and the window grows upward.
+    private var growsUp: Bool { PaletteLayout.Placement(rawValue: placementRaw)?.growsUp ?? false }
 
     private var theme: LauncherTheme { LauncherTheme(rawValue: themeRaw) ?? .glass }
     private var accentColor: Color? { LauncherAccent(rawValue: accentRaw)?.rgb.map { Color(red: $0.r, green: $0.g, blue: $0.b) } }
@@ -635,16 +653,17 @@ private struct PaletteView: View {
 
     var body: some View {
         VStack(spacing: PaletteLayout.gap) {
-            searchPill
+            if !growsUp { searchPill }
             if !model.results.isEmpty {
                 resultsPanel
             } else {
                 emptyPanel
             }
+            if growsUp { searchPill }
         }
         .padding(PaletteLayout.shadowInset)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .scaleEffect(pop ? 1 : 0.96, anchor: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: growsUp ? .bottom : .top)
+        .scaleEffect(pop ? 1 : 0.96, anchor: growsUp ? .bottom : .top)
         .opacity(pop ? 1 : 0)
         .onAppear { focused = true; settle() }
         .onChange(of: model.openTick) { _, _ in settle() }

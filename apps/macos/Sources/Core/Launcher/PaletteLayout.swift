@@ -35,18 +35,26 @@ enum PaletteLayout {
 
     /// Where the launcher opens.
     enum Placement: String, CaseIterable, Identifiable {
-        case top, center, pointer, remembered
+        case topLeft, top, topRight, center, bottomLeft, bottom, bottomRight, pointer, remembered
         var id: String { rawValue }
         var title: String {
             switch self {
+            case .topLeft: return "Top left"
             case .top: return "Near the top"
+            case .topRight: return "Top right"
             case .center: return "In the middle"
+            case .bottomLeft: return "Bottom left"
+            case .bottom: return "Near the bottom"
+            case .bottomRight: return "Bottom right"
             case .pointer: return "At the pointer"
             case .remembered: return "Where I left it"
             }
         }
 
-        private static let key = "launcherPlacement"
+        /// Placements along the bottom keep the search bar's bottom edge still and grow upward, with results above the bar.
+        var growsUp: Bool { [.bottomLeft, .bottom, .bottomRight].contains(self) }
+
+        static let key = "launcherPlacement"
         static var current: Placement {
             get { UserDefaults.standard.string(forKey: key).flatMap(Placement.init(rawValue:)) ?? .top }
             set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
@@ -69,27 +77,38 @@ enum PaletteLayout {
         }
     }
 
-    /// Where the window goes for a placement. Always completely inside the usable area of the screen it lands on; the window
-    /// grows downward from its top edge.
+    /// Where the window goes for a placement. Always completely inside the usable area of the screen it lands on. Most
+    /// placements grow downward from their top edge; the bottom ones grow upward from their bottom edge.
     static func frame(height: CGFloat, in visible: CGRect, placement: Placement, pointer: CGPoint, saved: CGPoint?) -> CGRect {
         let w = min(width + shadowInset * 2, visible.width - 24)
         let h = min(height, visible.height - 24)
-        var centerX = visible.midX
+        let left = visible.minX + 12
+        let right = visible.maxX - w - 12
+        var x = visible.midX - w / 2
         var top: CGFloat
         switch placement {
         case .top:
             return frame(height: height, in: visible)
+        case .topLeft, .topRight:
+            x = placement == .topLeft ? left : right
+            top = visible.maxY - 12
         case .center:
-            top = visible.midY + min(tallest, visible.height - 24) / 2
+            // The search bar itself sits in the middle of the screen; results open below it.
+            top = visible.midY + searchHeight / 2 + shadowInset
+        case .bottomLeft, .bottom, .bottomRight:
+            x = placement == .bottomLeft ? left : placement == .bottomRight ? right : x
+            let bottom = placement == .bottom ? visible.minY + visible.height * 0.12 : visible.minY + 12
+            let y = min(max(bottom, visible.minY + 12), visible.maxY - h - 8)
+            return CGRect(x: min(max(x, left), right), y: y, width: w, height: h)
         case .pointer:
-            centerX = pointer.x
+            x = pointer.x - w / 2
             top = pointer.y + 24
         case .remembered:
             guard let saved else { return frame(height: height, in: visible) }
-            centerX = saved.x
+            x = saved.x - w / 2
             top = saved.y
         }
-        let x = min(max(centerX - w / 2, visible.minX + 12), visible.maxX - w - 12)
+        x = min(max(x, left), right)
         top = min(top, visible.maxY - 8)
         let y = max(top - h, visible.minY + 12)
         return CGRect(x: x, y: y, width: w, height: h)
@@ -105,10 +124,15 @@ enum PaletteLayout {
         return CGRect(x: visible.midX - w / 2, y: y, width: w, height: min(height, visible.height - 24))
     }
 
-    /// The same window after its height changed: the top edge stays put.
-    static func resized(_ current: CGRect, toHeight height: CGFloat, in visible: CGRect) -> CGRect {
+    /// The same window after its height changed: the top edge stays put, or the bottom edge when it grows upward.
+    static func resized(_ current: CGRect, toHeight height: CGFloat, in visible: CGRect, growsUp: Bool = false) -> CGRect {
+        let h = min(height, visible.height - 24)
+        if growsUp {
+            let y = min(current.minY, visible.maxY - h - 8)
+            return CGRect(x: current.minX, y: y, width: current.width, height: h)
+        }
         var y = current.maxY - height
         y = max(y, visible.minY + 12)
-        return CGRect(x: current.minX, y: y, width: current.width, height: min(height, visible.height - 24))
+        return CGRect(x: current.minX, y: y, width: current.width, height: h)
     }
 }

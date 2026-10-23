@@ -435,7 +435,7 @@ final class LauncherSources {
         }
         if data.isEnabled(.intelligence), let question = Self.question(in: text), let intelligence, intelligence.service.isAvailable, intelligence.service.settings.inLauncher {
             found.append(PaletteEntry(
-                id: "ai:ask:\(question)", title: "Ask Apple Intelligence: \(Self.oneLine(question))", subtitle: "Answered on this Mac, in a small window", symbol: "sparkles",
+                id: "ai:ask:\(question)", title: "Ask Apple Intelligence: \(Self.oneLine(question))", subtitle: "On this Mac, offline: it cannot look things up", symbol: "sparkles",
                 category: .intelligence, rememberable: false, queryScore: 900
             ) { [weak intelligence] in intelligence?.ask(question) })
         }
@@ -497,7 +497,7 @@ final class LauncherSources {
                 web(WebSearch.engine(id: String(id.dropFirst("engine:".count))))
             } else if id == "ai", let intelligence, intelligence.service.isAvailable, intelligence.service.settings.inLauncher {
                 var entry = PaletteEntry(
-                    id: "fallback:ai:\(text)", title: "Ask Apple Intelligence: \(short)", subtitle: "Answered on this Mac, in a small window", symbol: "sparkles",
+                    id: "fallback:ai:\(text)", title: "Ask Apple Intelligence: \(short)", subtitle: "On this Mac, offline: it cannot look things up", symbol: "sparkles",
                     category: .intelligence, rememberable: false, queryScore: score
                 ) { [weak intelligence] in intelligence?.ask(text) }
                 entry.isFallback = true
