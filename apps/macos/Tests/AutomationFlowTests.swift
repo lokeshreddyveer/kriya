@@ -124,10 +124,11 @@ final class AutomationFlowTests: XCTestCase {
         let w = try save(engine, [first, second, third])
         let debugger = WorkflowDebugger(stepping: true)
         let finished = expectation(description: "the run ended")
-        var status: RunStatus?
+        final class Outcome { var status: RunStatus? }
+        let outcome = Outcome()
         Task {
             let run = await engine.execute(w, source: "Test", input: "", depth: 0, test: true, dryRun: false, approvedForTest: true, progress: nil, debugger: debugger)
-            status = run.status
+            outcome.status = run.status
             finished.fulfill()
         }
         let waitingAtFirst = await waitUntil { debugger.isWaiting }
@@ -139,7 +140,7 @@ final class AutomationFlowTests: XCTestCase {
         XCTAssertTrue(sawA, "after one step the variable is there, and it waits again")
         debugger.stop()
         await fulfillment(of: [finished], timeout: 5)
-        XCTAssertEqual(status, .cancelled)
+        XCTAssertEqual(outcome.status, .cancelled)
     }
 
     func testABreakpointLetsTheRunGoOnUntilItIsReached() async throws {
