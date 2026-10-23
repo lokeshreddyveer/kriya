@@ -85,6 +85,7 @@ final class AppInventory: ObservableObject {
     private var watchers: [DispatchSourceFileSystemObject] = []
     private var rescanWork: DispatchWorkItem?
     private var updateTimer: Timer?
+    private var retryTimer: Timer?
     private var started = false
     /// The Homebrew apps being upgraded right now, so the list can show it.
     @Published private(set) var upgrading = Set<String>()
@@ -117,6 +118,7 @@ final class AppInventory: ObservableObject {
         }
         let timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.checkUpdates() }
         updateTimer = timer
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.retryDueUpgrades() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in self?.checkUpdates() }
     }
 
@@ -126,6 +128,8 @@ final class AppInventory: ObservableObject {
         watchers.removeAll()
         updateTimer?.invalidate()
         updateTimer = nil
+        retryTimer?.invalidate()
+        retryTimer = nil
         rescanWork?.cancel()
         started = false
     }
@@ -466,7 +470,24 @@ final class AppInventory: ObservableObject {
             } catch {
                 result = error.localizedDescription
             }
-            DispatchQueue.main.async { self.upgrading.remove(token); done(result); self.scan() }
+            DispatchQueue.main.async {
+                self.upgrading.remove(token)
+                let ok = result.hasPrefix("Updated ")
+                let update = self.updates.first { if case .brew(let t) = $0.action { return t == token } else { return false } }
+                UpdateHistoryStore.shared.add(.init(app: update?.appName ?? token, from: update?.installed ?? "", to: update?.latest ?? "", source: "Homebrew", at: Date(), ok: ok, note: ok ? "" : String(result.prefix(200))))
+                if ok { UpdateHistoryStore.shared.queueSucceeded(token) } else { UpdateHistoryStore.shared.queueFailed(token, error: String(result.prefix(200))) }
+                done(result)
+                self.scan()
+            }
+        }
+    }
+
+    /// Tries failed upgrades again when their time comes. Called by a timer while the app runs.
+    func retryDueUpgrades() {
+        guard !LocalOnly.isOn else { return }
+        for item in UpdateHistoryStore.shared.dueRetries() where !upgrading.contains(item.token) {
+            note("Trying \(item.token) again (try \(item.attempts + 1))…")
+            runBrewUpgrade(item.token) { [weak self] result in self?.note(result) }
         }
     }
 }
@@ -507,4 +528,31 @@ private final class AppcastReader: NSObject, XMLParserDelegate {
         if name == "link", link == nil { link = URL(string: value) }
         if name == "item" { inFirstItem = false }
     }
+}
+
+
+/// The update history and the retry queue, kept in preferences.
+final class UpdateHistoryStore: ObservableObject {
+    static let shared = UpdateHistoryStore()
+    private let historyKey = "appUpdateHistory.v1"
+    private let queueKey = "appUpdateRetry.v1"
+    @Published private(set) var history: UpdateHistory
+    @Published private(set) var queue = UpdateRetryQueue()
+
+    private init() {
+        history = UserDefaults.standard.data(forKey: historyKey).flatMap { try? JSONDecoder().decode(UpdateHistory.self, from: $0) } ?? UpdateHistory()
+        // The queue is not kept across launches: a retry that is hours old is better started by hand.
+    }
+
+    func add(_ entry: UpdateHistory.Entry) {
+        history.add(entry)
+        if let data = try? JSONEncoder().encode(history) { UserDefaults.standard.set(data, forKey: historyKey) }
+    }
+
+    func queueFailed(_ token: String, error: String) { queue.fail(token, error: error, now: Date()) }
+    func queueSucceeded(_ token: String) { queue.succeed(token) }
+    func dueRetries() -> [UpdateRetryQueue.Item] { queue.due(now: Date()) }
+    func retryNow(_ token: String) { queue.retryNow(token, now: Date()) }
+    func retryAll() { queue.retryAll(now: Date()) }
+    func clearHistory() { history = UpdateHistory(); UserDefaults.standard.removeObject(forKey: historyKey) }
 }

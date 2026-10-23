@@ -932,3 +932,54 @@ final class RestoreRetryQueueTests: XCTestCase {
         XCTAssertTrue(q.items.isEmpty)
     }
 }
+
+final class AppUpdateTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_760_000_000)
+
+    func testFailedUpgradesWaitLongerEachTimeThenGiveUpUntilToldToRetry() {
+        var q = UpdateRetryQueue()
+        q.fail("firefox", error: "network", now: now)
+        XCTAssertTrue(q.due(now: now).isEmpty)
+        XCTAssertEqual(q.due(now: now.addingTimeInterval(61)).map(\.token), ["firefox"])
+        q.fail("firefox", error: "network", now: now.addingTimeInterval(61))
+        XCTAssertEqual(q.items[0].nextAttempt, now.addingTimeInterval(61 + 120))
+        XCTAssertEqual([1, 2, 3, 4, 8, 20].map { UpdateRetryQueue.backoff(attempts: $0) }, [60, 120, 240, 480, 3600, 3600])
+        for _ in 0..<5 { q.fail("firefox", error: "network", now: now) }
+        XCTAssertTrue(q.due(now: now.addingTimeInterval(100_000)).isEmpty)
+        XCTAssertEqual(q.gaveUp().count, 1)
+        q.retryNow("firefox", now: now)
+        XCTAssertEqual(q.due(now: now).count, 1)
+        q.succeed("firefox")
+        XCTAssertTrue(q.items.isEmpty)
+    }
+
+    func testRetryAllMakesEveryItemDue() {
+        var q = UpdateRetryQueue()
+        q.fail("a", error: "x", now: now); q.fail("b", error: "x", now: now)
+        q.retryAll(now: now)
+        XCTAssertEqual(q.due(now: now).count, 2)
+    }
+
+    func testHistoryIsCappedAndFilteredByApp() {
+        var h = UpdateHistory()
+        for i in 0..<250 { h.add(.init(app: i % 2 == 0 ? "A" : "B", from: "1", to: "2", source: "Homebrew", at: now, ok: true, note: "")) }
+        XCTAssertEqual(h.entries.count, UpdateHistory.limit)
+        XCTAssertEqual(h.entries(for: "A").count, 100)
+    }
+
+    func testOnlyAListGetsAProgressFraction() {
+        XCTAssertNil(UpdateProgress.fraction(done: 0, total: 1))
+        XCTAssertEqual(UpdateProgress.fraction(done: 2, total: 4), 0.5)
+        XCTAssertEqual(UpdateProgress.label(done: 1, total: 5, current: "firefox"), "2 of 5: firefox")
+        XCTAssertEqual(UpdateProgress.label(done: 0, total: 1, current: "firefox"), "firefox")
+        XCTAssertEqual(UpdateProgress.label(done: 5, total: 5, current: nil), "5 of 5 done")
+    }
+
+    func testRemovalZipNamesAreSafeAndHugeOnesAreNotZipped() {
+        XCTAssertTrue(RemovalArchive.fileName(appName: "My/App:1", at: now).hasPrefix("My App 1 "))
+        XCTAssertTrue(RemovalArchive.fileName(appName: "", at: now).hasPrefix("App "))
+        XCTAssertTrue(RemovalArchive.verdict(sizes: [1_000]).archive)
+        XCTAssertFalse(RemovalArchive.verdict(sizes: []).archive)
+        XCTAssertFalse(RemovalArchive.verdict(sizes: [600_000_000, 600_000_000]).archive)
+    }
+}

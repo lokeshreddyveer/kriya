@@ -16,6 +16,7 @@ extension InstalledApp.Source {
 /// Installed apps: remove one with the files it leaves behind, find leftovers of apps that are gone, and check for updates.
 struct AppsPane: View {
     @EnvironmentObject private var inventory: AppInventory
+    @ObservedObject private var updateStore = UpdateHistoryStore.shared
     #if DEBUG
     // For the screenshot harness: KRIYA_SHOT_TAB=install opens this pane on its Install tab.
     @State private var tab: Tab = ProcessInfo.processInfo.environment["KRIYA_SHOT_TAB"] == "install" ? .install : .installed
@@ -210,6 +211,38 @@ struct AppsPane: View {
                     ForEach(Array(inventory.activity.enumerated()), id: \.offset) { _, line in Text(line).font(.caption.monospaced()).foregroundStyle(.secondary) }
                 }
             }
+            if !updateStore.queue.items.isEmpty {
+                Section {
+                    ForEach(updateStore.queue.items) { item in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.token)
+                                Text(item.attempts >= UpdateRetryQueue.maxAttempts ? "Gave up after \(item.attempts) tries: \(item.lastError)" : "Try \(item.attempts + 1) at \(item.nextAttempt.formatted(date: .omitted, time: .shortened)). \(item.lastError)")
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            Spacer()
+                            Button("Retry") { updateStore.retryNow(item.token); inventory.retryDueUpgrades() }.controlSize(.small)
+                        }
+                    }
+                    Button("Retry All") { updateStore.retryAll(); inventory.retryDueUpgrades() }.controlSize(.small)
+                } header: { Text("Waiting to try again") } footer: { Text("Each failed upgrade is tried again after 1, 2, 4, 8 minutes, then gives up. Retry starts it now. If it needs your password, use Run in Terminal on the Install tab.") }
+            }
+            if !updateStore.history.entries.isEmpty {
+                Section {
+                    ForEach(updateStore.history.entries.prefix(10)) { entry in
+                        HStack {
+                            Image(systemName: entry.ok ? "checkmark.circle" : "xmark.circle").foregroundStyle(entry.ok ? Theme.ok : Theme.danger)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(entry.app)
+                                Text("\(entry.from.isEmpty ? "" : "\(entry.from) → ")\(entry.to) · \(entry.source)\(entry.note.isEmpty ? "" : " · \(entry.note)")").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                            Text(entry.at.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Button("Clear History") { updateStore.clearHistory() }.controlSize(.small)
+                } header: { Text("Update history") }
+            }
             let visible = inventory.updates.filter { !inventory.ignoredUpdates.contains($0.appName) }
             Section("Updates available") {
                 if visible.isEmpty { Text(inventory.isCheckingUpdates ? "Checking…" : "Everything that could be checked is up to date.").foregroundStyle(.secondary) }
@@ -279,14 +312,32 @@ private struct LeftoverList: View {
     }
 }
 
+extension RemoveSheet {
+    /// Zips the support files into Documents/Kriya Removed Apps. Returns a line to show; nothing is removed here.
+    static func archive(app: InstalledApp, leftovers: [Leftover]) -> [String] {
+        let verdict = RemovalArchive.verdict(sizes: leftovers.map(\.bytes))
+        guard verdict.archive else { return [verdict.reason ?? "Nothing was zipped."] }
+        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Kriya Removed Apps", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let target = folder.appendingPathComponent(RemovalArchive.fileName(appName: app.name, at: Date()))
+        do {
+            _ = try ToolRunner.run("/usr/bin/zip", ["-r", "-q", target.path] + leftovers.map(\.url.path), timeout: 300)
+            return ["Kept a zip of its support files: \(target.lastPathComponent) in Documents/Kriya Removed Apps."]
+        } catch {
+            return ["Could not make the zip, so nothing was zipped: \((error as? FileActionError)?.message ?? error.localizedDescription)"]
+        }
+    }
+}
+
 /// The preview before an app is removed: the app and every file found for it, each with a tick.
-private struct RemoveSheet: View {
+struct RemoveSheet: View {
     let app: InstalledApp
     let onDone: ([String]) -> Void
     @EnvironmentObject private var inventory: AppInventory
     @State private var items: [Leftover] = []
     @State private var chosen = Set<String>()
     @State private var loaded = false
+    @State private var keepZip = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -320,11 +371,19 @@ private struct RemoveSheet: View {
             }
             Divider()
             HStack {
+                Toggle("Keep a zip of the ticked support files in Documents first", isOn: $keepZip).font(.caption)
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.top, 8)
+            HStack {
                 Text("\(chosen.count) file\(chosen.count == 1 ? "" : "s") + the app").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { onDone(["Nothing was removed."]) }.keyboardShortcut(.cancelAction)
                 Button("Move to Trash", role: .destructive) {
-                    onDone(inventory.trash(app: app, leftovers: items.filter { chosen.contains($0.id) }))
+                    let picked = items.filter { chosen.contains($0.id) }
+                    var notes: [String] = []
+                    if keepZip { notes += Self.archive(app: app, leftovers: picked) }
+                    onDone(notes + inventory.trash(app: app, leftovers: picked))
                 }
                 .keyboardShortcut(.defaultAction)
             }
