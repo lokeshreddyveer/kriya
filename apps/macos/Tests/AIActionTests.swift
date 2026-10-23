@@ -19,8 +19,9 @@ final class RenameSuggestionTests: XCTestCase {
 
     func testAFileCannotBeNamedAfterAProgramByChangingItsExtension() {
         let result = RenameSuggestions.validate(#"{"renames":[{"from":"report.pdf","to":"report.sh"}]}"#, files: ["report.pdf"], existing: ["report.pdf"])
-        XCTAssertEqual(result.renames.first?.to, "report.pdf.pdf".replacingOccurrences(of: ".pdf.pdf", with: ".pdf"), "the extension is put back, which leaves the name as it was")
-        XCTAssertTrue(result.renames.isEmpty || result.renames[0].to.hasSuffix(".pdf"))
+        XCTAssertTrue(result.renames.isEmpty, "the extension is put back, which leaves the name as it was, so there is nothing to rename")
+        let other = RenameSuggestions.validate(#"{"renames":[{"from":"report.pdf","to":"summary.sh"}]}"#, files: ["report.pdf"], existing: ["report.pdf"])
+        XCTAssertEqual(other.renames.first?.to, "summary.pdf", "a different name keeps the file's own extension")
     }
 
     func testRubbishAndTooManyAreRefused() {
@@ -33,7 +34,7 @@ final class RenameSuggestionTests: XCTestCase {
 
 final class SuggestionCleaningTests: XCTestCase {
     func testTagsAreShortFewAndUnique() {
-        XCTAssertEqual(TagSuggestions.fromReply(#"{"tags":["Work","work","#Taxes","a very long tag that goes on and on and on and on","","Receipts","One","Two","Three"]}"#), ["Work", "Taxes", "Receipts", "One", "Two"])
+        XCTAssertEqual(TagSuggestions.fromReply(##"{"tags":["Work","work","#Taxes","a very long tag that goes on and on and on and on","","Receipts","One","Two","Three"]}"##), ["Work", "Taxes", "Receipts", "One", "Two"])
         XCTAssertEqual(TagSuggestions.fromReply("invoices, 2024, tax"), ["invoices", "2024", "tax"])
         XCTAssertEqual(TagSuggestions.clean(["a\0b"]), [])
     }
@@ -251,6 +252,8 @@ final class AgentLoopInjectionTests: XCTestCase {
         var provider = AIProviderConfig(id: "r1", name: "R", kind: .openAICompatible, baseURL: "https://llm.example.com/v1", model: "m", supportsTools: true, enabledFeatures: [.launcher])
         provider.enabled = true
         store.update(provider)
+        // The on-device provider is listed first and would otherwise be chosen; this test is about a provider that can use tools.
+        store.featureProvider["launcher"] = "r1"
         store.toolSettings.toolsByFeature["launcher"] = ["kriya.list_windows", "kriya.set_audio_profile"]
         store.toolSettings.perTool["kriya.set_audio_profile"] = .always
         _ = KeychainSecrets.set("k", for: provider.keyAccount)

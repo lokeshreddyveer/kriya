@@ -173,7 +173,8 @@ final class NativeHostInstallerTests: XCTestCase {
         XCTAssertEqual(gecko?["id"] as? String, NativeHostInstaller.firefoxExtensionID)
         for name in ["chromium", "firefox"] {
             let m = try manifest(name)
-            XCTAssertEqual(Set(m["permissions"] as? [String] ?? []), ["contextMenus", "nativeMessaging", "activeTab"])
+            // "scripting" with "activeTab" lets the extension read the one page you ask it to save as Markdown or PDF, and only then.
+            XCTAssertEqual(Set(m["permissions"] as? [String] ?? []), ["contextMenus", "nativeMessaging", "activeTab", "scripting"])
             XCTAssertNil(m["host_permissions"]); XCTAssertNil(m["content_scripts"]); XCTAssertNil(m["externally_connectable"])
             let script = try String(contentsOf: folder.appendingPathComponent("\(name)/background.js"), encoding: .utf8)
             for forbidden in ["fetch(", "XMLHttpRequest", "eval(", "new Function", "importScripts", "WebSocket"] {

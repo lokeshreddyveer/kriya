@@ -81,8 +81,9 @@ struct NoteTemplate: Equatable, Identifiable {
     /// A template file name safe to use, from the name the person gave.
     static func fileName(for name: String) -> String {
         let bad = CharacterSet(charactersIn: "/:\\?%*|\"<>.").union(.controlCharacters)
-        let clean = name.components(separatedBy: bad).joined(separator: " ").trimmingCharacters(in: .whitespaces)
-        return (clean.isEmpty ? "Template" : String(clean.prefix(50))) + ".md"
+        // Each removed character leaves a space; runs of spaces become one.
+        let clean = name.components(separatedBy: bad).joined(separator: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return (clean.isEmpty ? "Template" : String(clean.prefix(50)).trimmingCharacters(in: .whitespaces)) + ".md"
     }
 }
 

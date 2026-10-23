@@ -58,7 +58,7 @@ final class LauncherWhy {
         self.query = query; self.items = items; self.prefs = prefs
     }
 
-    func explainAll(limit: Int = 8) -> (query: String, rows: [Explanation]) {
+    func explainAll(limit: Int = 8) -> (query: String, rows: [LauncherEngine.Explanation]) {
         lock.lock(); defer { lock.unlock() }
         guard let prefs else { return ("", []) }
         let all = items.map { LauncherEngine.explain($0, query: query, prefs: prefs) }

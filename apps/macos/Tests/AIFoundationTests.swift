@@ -162,7 +162,7 @@ final class AIPolicyTests: XCTestCase {
 
     func testDailyBudgets() {
         var config = provider(); config.dailyTokenLimit = 1000; config.dailyCostLimit = 1
-        XCTAssertEqual(AIPolicy.check(input(config, day: .init(tokens: 990, cost: 0, requests: 1), chars: 400)), .budgetExceeded("token"))
+        XCTAssertEqual(AIPolicy.check(input(config, chars: 400, day: .init(tokens: 990, cost: 0, requests: 1))), .budgetExceeded("token"))
         XCTAssertEqual(AIPolicy.check(input(config, day: .init(tokens: 0, cost: 1.0, requests: 1))), .budgetExceeded("cost"))
         XCTAssertNil(AIPolicy.check(input(config, day: .init(tokens: 10, cost: 0.1, requests: 1))))
     }
@@ -185,7 +185,8 @@ final class AIPolicyTests: XCTestCase {
         let t = Date()
         for i in 0..<3 { limiter.record(now: t.addingTimeInterval(Double(i))) }
         XCTAssertEqual(limiter.count(now: t.addingTimeInterval(10)), 3)
-        XCTAssertEqual(limiter.count(now: t.addingTimeInterval(65)), 1, "only the newest is still inside the minute")
+        XCTAssertEqual(limiter.count(now: t.addingTimeInterval(61.5)), 1, "only the newest is still inside the minute")
+        XCTAssertEqual(limiter.count(now: t.addingTimeInterval(65)), 0, "a minute later none is left")
     }
 }
 

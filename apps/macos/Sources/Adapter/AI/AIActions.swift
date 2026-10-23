@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers

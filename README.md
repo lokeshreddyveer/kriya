@@ -346,8 +346,10 @@ an optional delay, and copy or save the result.
 - **Cleaning:** removes tracking parameters (utm_*, fbclid, gclid and others) and replaces known redirect wrappers (Google, Facebook,
   LinkedIn, Slack, YouTube, DuckDuckGo, Outlook) with the real address. Nothing is fetched.
 - **Log and test:** the last 200 links and what was done, and a box to try a link without opening it.
-- **Browsers tab:** extensions for Chromium browsers and Firefox that send a link, page or selected text to Kriya. They ask for three
-  permissions only, read no pages and use no network. Chromium needs “Load unpacked”; Firefox loads it temporarily. Safari is not covered.
+- **Browsers tab:** extensions for Chromium browsers and Firefox (and a Safari Web Extension) that send a link, page or selected text to
+  Kriya, or save the page you are on as Markdown or PDF. They ask for four permissions: to talk to Kriya, a right-click menu, the tab you
+  are using, and reading that one page, which they do only when you ask for such an action. They use no network. Chromium needs “Load
+  unpacked”; Firefox loads it temporarily; Safari's is switched on in Safari's settings.
 
 # File shelf
 
@@ -489,7 +491,8 @@ Nothing else changes your files or apps by itself: removing an app, installing f
 
 # Not available
 
-Moving windows between Spaces and always-on-top (macOS allows them only through private APIs), multi-finger trackpad gestures,
-a Safari extension, Logitech-specific device features, brightness of external displays (macOS keeps that private), and running JavaScript extensions from a catalog.
+Moving other apps' windows between Spaces and keeping them always on top (macOS allows them only through private APIs), multi-finger
+trackpad gestures, Logitech-specific device features, and an extension catalog. Brightness and input of external monitors by DDC is
+included but depends on the monitor and has not been tested on every one.
 
 Building the app from source is described in `DEVELOPING.md`.

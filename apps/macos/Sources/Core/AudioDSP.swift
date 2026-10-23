@@ -165,7 +165,7 @@ struct AppAudioSettings: Codable, Equatable {
 }
 
 /// A named set of settings that can be given to any app.
-struct AudioProfile: Codable, Equatable, Identifiable {
+struct AppAudioProfile: Codable, Equatable, Identifiable {
     var id = UUID().uuidString
     var name: String
     var settings: AppAudioSettings

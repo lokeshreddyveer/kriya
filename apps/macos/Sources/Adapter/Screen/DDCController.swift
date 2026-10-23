@@ -96,9 +96,9 @@ final class DDCController: ObservableObject {
         wakeObserver = center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                 guard let self else { return }
-                let restore = DisplayInsight.brightnessToRestore(saved: beforeSleep, connected: Set(monitors.map(\.id)))
-                beforeSleep = [:]
-                for (id, percent) in restore { setBrightness(id, percent: percent) }
+                let restore = DisplayInsight.brightnessToRestore(saved: self.beforeSleep, connected: Set(self.monitors.map(\.id)))
+                self.beforeSleep = [:]
+                for (id, percent) in restore { self.setBrightness(id, percent: percent) }
             }
         }
     }

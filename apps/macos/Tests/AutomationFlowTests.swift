@@ -193,16 +193,24 @@ final class AutomationFlowTests: XCTestCase {
         let world = try TestWorld()
         defer { world.cleanUp() }
         let store = WorkflowStore(core: world.core)
+        // A workflow can only be saved while the one it starts exists; the package then travels without it.
+        var helper = store.newWorkflow()
+        helper.name = "Helper"
+        helper.steps = [store.newStep(.script(language: .shell, source: "ls"))]
+        let savedHelper = try XCTUnwrap(store.save(helper), store.lastError ?? "no reason given")
         var w = store.newWorkflow()
         w.name = "Calls a helper"
-        w.steps = [store.newStep(.runWorkflow(workflowId: "helper")), store.newStep(.script(language: .shell, source: "ls"))]
-        let saved = try XCTUnwrap(store.save(w))
+        w.steps = [store.newStep(.runWorkflow(workflowId: savedHelper.id)), store.newStep(.script(language: .shell, source: "ls"))]
+        let saved = try XCTUnwrap(store.save(w), store.lastError ?? "no reason given")
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-pkg-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
         try store.export([saved.id], to: file)
-        let report = store.report(for: file)
+        // Read on another Mac, which does not have the helper.
+        let other = try TestWorld()
+        defer { other.cleanUp() }
+        let report = WorkflowStore(core: other.core).report(for: file)
         XCTAssertEqual(report.workflows, ["Calls a helper"])
-        XCTAssertEqual(report.missingWorkflows, ["helper"])
+        XCTAssertEqual(report.missingWorkflows, [savedHelper.id])
         XCTAssertFalse(report.riskySteps.isEmpty)
         XCTAssertFalse(store.report(for: FileManager.default.temporaryDirectory.appendingPathComponent("nothing-here.json")).problems.isEmpty)
     }

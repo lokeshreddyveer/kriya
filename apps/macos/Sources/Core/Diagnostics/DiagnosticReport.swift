@@ -1,7 +1,7 @@
 import Foundation
 
 /// One block of text to paste into a bug report: build, permissions, features and conflicts, with personal details taken out.
-enum DiagnosticReport {
+enum BugReportText {
     struct Section: Equatable {
         let title: String
         let lines: [String]

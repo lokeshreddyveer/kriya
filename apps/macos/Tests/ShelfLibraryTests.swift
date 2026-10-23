@@ -64,7 +64,7 @@ final class ShelfLibraryTests: XCTestCase {
         XCTAssertEqual(Set(library.history.map(\.value)), ["/old", "old.png"])
         // Long after, the history lets go too, and says which picture files are free to delete.
         let freed = library.expire(now: now.addingTimeInterval(60 * day))
-        XCTAssertTrue(library.history.isEmpty)
+        XCTAssertEqual(library.history.map(\.value), ["/new"], "the old ones are forgotten; /new has only just expired itself")
         XCTAssertEqual(freed, ["old.png"])
     }
 

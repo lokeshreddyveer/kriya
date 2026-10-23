@@ -28,9 +28,9 @@ enum FinderMetadata {
         var failures: [String] = []
         var changed = 0
         for url in urls {
-            var values = URLResourceValues()
-            values.tagNames = merged(existing: tags(of: url), adding: names)
-            do { var target = url; try target.setResourceValues(values); changed += 1 } catch { failures.append("\(url.lastPathComponent): \(error.localizedDescription)") }
+            let all = merged(existing: tags(of: url), adding: names)
+            // The tag list is set through NSURL: URLResourceValues only lets it be written on the newest macOS.
+            do { try (url as NSURL).setResourceValue(all, forKey: .tagNamesKey); changed += 1 } catch { failures.append("\(url.lastPathComponent): \(error.localizedDescription)") }
         }
         let message = failures.isEmpty ? "Tagged \(changed) item\(changed == 1 ? "" : "s")" : "Tagged \(changed), \(failures.count) could not be tagged"
         return FileActionRunner.Outcome(message: message, reveal: [], steps: [], failures: failures, isError: changed == 0)

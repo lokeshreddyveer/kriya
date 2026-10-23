@@ -31,7 +31,7 @@ enum TrafficInsight {
             guard binding.action != .native else { return nil }
             let keys = binding.modifiers == 0 ? "A plain click" : "\(KeyModifiers.glyphs(for: binding.modifiers)) click"
             let native = nativeBehavior(binding.button, modifiers: binding.modifiers)
-            let now = binding.action == .doNothing ? "does nothing" : binding.action.title().lowercased()
+            let now = binding.action == .doNothing ? "does nothing" : binding.action.title.lowercased()
             return Note(id: "\(binding.button)|\(binding.modifiers)", text: "\(keys) on the \(buttonName(binding.button)) button now \(now). macOS \(native).", replacesNative: true)
         }
     }
@@ -49,6 +49,6 @@ enum TrafficInsight {
 
     /// What a double-click on the title bar does now, against macOS's own.
     static func titleBarNote(_ action: TrafficAction) -> String? {
-        action == .native ? nil : "Double-clicking a title bar now: \(action.title().lowercased()). macOS would zoom or minimize, as set in System Settings."
+        action == .native ? nil : "Double-clicking a title bar now: \(action.title.lowercased()). macOS would zoom or minimize, as set in System Settings."
     }
 }

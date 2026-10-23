@@ -80,9 +80,9 @@ private struct EverythingTab: View {
                         Button("Export Report…") { exportReport(allClashes) }.controlSize(.small)
                     }
                     if let exportNote { Text(exportNote).font(.caption).foregroundStyle(.secondary) }
-                    if let fixNote {
+                    if let shownNote = fixNote {
                         HStack {
-                            Text(fixNote).font(.caption).foregroundStyle(.secondary)
+                            Text(shownNote).font(.caption).foregroundStyle(.secondary)
                             if !undo.isEmpty { Button("Undo") { undo.popLast()?(); fixNote = "Put back." }.controlSize(.small) }
                         }
                     }

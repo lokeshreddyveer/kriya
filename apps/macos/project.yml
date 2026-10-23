@@ -11,8 +11,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.5.0"
-    CURRENT_PROJECT_VERSION: "25"
+    MARKETING_VERSION: "0.6.0"
+    CURRENT_PROJECT_VERSION: "26"
     ENABLE_HARDENED_RUNTIME: YES
     GENERATE_INFOPLIST_FILE: NO
     # One binary for Apple Silicon and Intel.
@@ -142,6 +142,9 @@ targets:
       properties:
         com.apple.security.automation.apple-events: true
         com.apple.security.device.audio-input: true
+        com.apple.security.device.camera: true
+        com.apple.security.device.bluetooth: true
+        com.apple.security.personal-information.location: true
     settings:
       base:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

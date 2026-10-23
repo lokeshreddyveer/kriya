@@ -44,7 +44,7 @@ final class MCPClientManager: ObservableObject {
     func callTool(exposedName: String, arguments: [String: JSONValue]) async throws -> String {
         guard let (config, tool) = servers.lazy.compactMap({ s -> (MCPServerConfig, AITool)? in
             guard s.enabled else { return nil }
-            return (listed[s.id] ?? []).first(where: { s.isToolAllowed($0.name) && MCPServerConfig.exposedName(slug: s.slug, tool: $0.name) == exposedName }).map { (s, $0) }
+            return (self.listed[s.id] ?? []).first(where: { s.isToolAllowed($0.name) && MCPServerConfig.exposedName(slug: s.slug, tool: $0.name) == exposedName }).map { (s, $0) }
         }).first else { throw ToolUnavailable(name: exposedName) }
         let result = try await request(config, method: "tools/call", params: .object(["name": .string(tool.name), "arguments": .object(arguments)]))
         let parsed = MCPClientRules.text(from: result)

@@ -151,7 +151,7 @@ final class AppAudioEngine: ObservableObject {
 
     @Published private(set) var apps: [AudioApp] = []
     @Published private(set) var settings: [String: AppAudioSettings]
-    @Published var profiles: [AudioProfile] { didSet { saveProfiles() } }
+    @Published var profiles: [AppAudioProfile] { didSet { saveProfiles() } }
     @Published private(set) var problems: [String: String] = [:]
 
     private let defaults: UserDefaults
@@ -179,7 +179,7 @@ final class AppAudioEngine: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         settings = (defaults.data(forKey: Self.storeKey).flatMap { try? JSONDecoder().decode([String: AppAudioSettings].self, from: $0) }) ?? [:]
-        profiles = (defaults.data(forKey: Self.profilesKey).flatMap { try? JSONDecoder().decode([AudioProfile].self, from: $0) }) ?? []
+        profiles = (defaults.data(forKey: Self.profilesKey).flatMap { try? JSONDecoder().decode([AppAudioProfile].self, from: $0) }) ?? []
     }
 
     deinit { stopAll() }
@@ -222,10 +222,10 @@ final class AppAudioEngine: ObservableObject {
 
     func reset(_ key: String) { update(key) { $0 = AppAudioSettings() } }
 
-    func apply(profile: AudioProfile, to key: String) { update(key) { $0 = profile.settings } }
+    func apply(profile: AppAudioProfile, to key: String) { update(key) { $0 = profile.settings } }
 
     func saveProfile(named name: String, from key: String) {
-        profiles.append(AudioProfile(name: name, settings: current(key)))
+        profiles.append(AppAudioProfile(name: name, settings: current(key)))
     }
 
     private func save() { if let data = try? JSONEncoder().encode(settings) { defaults.set(data, forKey: Self.storeKey) } }

@@ -671,6 +671,7 @@ private struct PaletteView: View {
 
     @State private var pop = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("launcherTheme") private var themeRaw = LauncherTheme.glass.rawValue
     @AppStorage("launcherAccent") private var accentRaw = LauncherAccent.neutral.rawValue
     @AppStorage(PaletteLayout.Placement.key) private var placementRaw = PaletteLayout.Placement.top.rawValue

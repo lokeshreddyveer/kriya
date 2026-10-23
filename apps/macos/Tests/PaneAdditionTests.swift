@@ -249,7 +249,10 @@ final class ActionInsightTests: XCTestCase {
         XCTAssertEqual(ActionInsight.duplicates([a, b, c]).map { $0.map(\.id) }, [["1", "2"]])
         XCTAssertEqual(ActionInsight.search([a, b, c], text: "open mail", describe: { _ in "" }).map(\.id), ["2"])
         XCTAssertEqual(ActionInsight.search([a, b, c], text: "", describe: { _ in "" }).count, 3)
-        XCTAssertEqual(ActionInsight.search([a, b, c], text: "safari", describe: { _ in "Open com.apple.Safari" }).map(\.id), ["3"])
+        XCTAssertEqual(ActionInsight.search([a, b, c], text: "safari", describe: { action in
+            if case .openApplication(let target) = action { return "Open " + target }
+            return ""
+        }).map(\.id), ["3"])
     }
 }
 
@@ -444,7 +447,7 @@ final class WindowToolsTests: XCTestCase {
         let open = [("com.a", "Doc"), ("com.d", "x"), ("com.e", "Secret"), ("com.c", "other")]
         let matches: [Int?] = [0, 3, 4, nil]
         let rows = LayoutPreview.rows(entries: entries, launchMissing: true, open: open, matches: matches, runningApps: ["com.a", "com.c", "com.d", "com.e"],
-                                      displayIDs: ["d1"], isLocked: { $0 == "com.e" })
+                                      displayIDs: ["d1"], isLocked: { app, _ in app == "com.e" })
         XCTAssertEqual(rows.map(\.result), [.moves(windowTitle: "Doc"), .appMissing(willOpen: true), .noMatchingWindow, .displayAbsent, .lockedWindow])
         XCTAssertTrue(rows[0].willMove)
         XCTAssertFalse(rows[4].willMove)
@@ -653,7 +656,7 @@ final class ShelfCareTests: XCTestCase {
         XCTAssertEqual(Set(dupes[0].compactMap(\.shelf)), ["Shelf", "Second"])
         let ids = lib.missingFiles(exists: { _ in false }).map(\.id)
         lib.remove(ids, now: now)
-        XCTAssertEqual(lib.history.count, 2)
+        XCTAssertEqual(lib.history.count, 3, "/here and /gone on the first shelf and /here on the second")
     }
 
     func testGroupsKeepRelatedItemsTogetherAndLooseOnesLast() {
@@ -829,11 +832,11 @@ final class LicenseAndBackupSizeTests: XCTestCase {
 
 final class DiagnosticReportTests: XCTestCase {
     func testTheReportLeadsWithProblemsSkipsEmptySectionsAndIsScrubbed() {
-        let features = DiagnosticReport.featureLines([("Mouse", true, "Running"), ("Windows", true, "Needs permission"), ("Notes", false, "Off")])
+        let features = BugReportText.featureLines([("Mouse", true, "Running"), ("Windows", true, "Needs permission"), ("Notes", false, "Off")])
         XCTAssertEqual(features, ["Windows: on, needs permission", "Mouse: running", "Off: Notes"])
-        let text = DiagnosticReport.assemble([
+        let text = BugReportText.assemble([
             .init(title: "Build", lines: ["Kriya 1.0"]), .init(title: "Empty", lines: []),
-            .init(title: "Permissions", lines: DiagnosticReport.permissionLines([("Accessibility", true), ("Microphone", false)])),
+            .init(title: "Permissions", lines: BugReportText.permissionLines([("Accessibility", true), ("Microphone", false)])),
         ], generated: Date(timeIntervalSince1970: 0), scrub: { $0.replacingOccurrences(of: "Kriya 1.0", with: "SCRUBBED") })
         XCTAssertTrue(text.contains("== Build ==\nSCRUBBED"))
         XCTAssertFalse(text.contains("Empty"))
@@ -863,7 +866,7 @@ final class ShelfGroupAndReminderTests: XCTestCase {
         var lib = ShelfLibrary()
         lib.expiryDays = 1
         let a = ShelfRecord(kind: .file, value: "/a.pdf", added: now.addingTimeInterval(-23.5 * 3600))
-        let b = ShelfRecord(kind: .file, value: "/b.pdf", added: now.addingTimeInterval(-23 * 3600))
+        let b = ShelfRecord(kind: .file, value: "/b.pdf", added: now.addingTimeInterval(-22.5 * 3600))
         lib.shelves[0].items = [a, b]
         let due = lib.dueReminders(leadHours: 1, notified: [], now: now)
         XCTAssertEqual(due.count, 1, "only the one inside the last hour")

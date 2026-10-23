@@ -37,20 +37,26 @@ final class MCPServerCoreTests: XCTestCase {
         return JSONValue.parse(String(decoding: data, as: UTF8.self))
     }
 
+    /// A reply that must exist. Kept apart because an async call cannot sit inside XCTUnwrap or an assertion.
+    private func answer(_ json: String, call: @escaping (AIToolCall) async -> MCPToolResult = { _ in MCPToolResult(text: "ok", isError: false) }) async throws -> JSONValue {
+        let result = await send(json, call: call)
+        return try XCTUnwrap(result)
+    }
+
     func testTheHandshakeNegotiatesAVersionAndOnlyOffersTools() async throws {
-        let reply = try XCTUnwrap(await send(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#))
+        let reply = try await answer(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#)
         XCTAssertEqual(reply["result"]?["protocolVersion"]?.stringValue, "2024-11-05")
         XCTAssertNotNil(reply["result"]?["capabilities"]?["tools"])
         XCTAssertNil(reply["result"]?["capabilities"]?["resources"])
         XCTAssertEqual(reply["result"]?["serverInfo"]?["version"]?.stringValue, "1.2.3")
-        let unknown = try XCTUnwrap(await send(#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#))
+        let unknown = try await answer(#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#)
         XCTAssertEqual(unknown["result"]?["protocolVersion"]?.stringValue, MCPServerCore.supportedVersions[0])
         let nilReply = await send(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
         XCTAssertNil(nilReply, "a notification gets no answer")
     }
 
     func testToolsAreListedWithTheirHints() async throws {
-        let reply = try XCTUnwrap(await send(#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#))
+        let reply = try await answer(#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#)
         let list = try XCTUnwrap(reply["result"]?["tools"]?.arrayValue)
         XCTAssertEqual(list.count, 2)
         XCTAssertEqual(list[0]["annotations"]?["readOnlyHint"], .bool(true))
@@ -60,7 +66,7 @@ final class MCPServerCoreTests: XCTestCase {
 
     func testCallsGoToTheCallbackAndItsAnswerIsWrapped() async throws {
         var seen: AIToolCall?
-        let reply = try XCTUnwrap(await send(#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kriya.delete_file","arguments":{"path":"/Users/me/x"}}}"#) { call in seen = call; return MCPToolResult(text: "refused", isError: true) })
+        let reply = try await answer(#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kriya.delete_file","arguments":{"path":"/Users/me/x"}}}"#) { call in seen = call; return MCPToolResult(text: "refused", isError: true) }
         XCTAssertEqual(seen?.name, "kriya.delete_file")
         XCTAssertEqual(seen?.arguments["path"], .string("/Users/me/x"))
         XCTAssertEqual(reply["result"]?["isError"], .bool(true))
@@ -68,15 +74,21 @@ final class MCPServerCoreTests: XCTestCase {
     }
 
     func testBadInputGetsStandardErrors() async throws {
-        XCTAssertEqual(try XCTUnwrap(await send("{not json"))["error"]?["code"], .number(-32700))
-        XCTAssertEqual(try XCTUnwrap(await send(#"{"jsonrpc":"2.0","id":5,"method":"nope"}"#))["error"]?["code"], .number(-32601))
-        XCTAssertEqual(try XCTUnwrap(await send(#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{}}"#))["error"]?["code"], .number(-32602))
-        XCTAssertEqual(try XCTUnwrap(await send(#"{"id":7,"method":"ping"}"#))["error"]?["code"], .number(-32600), "not JSON-RPC 2.0")
-        XCTAssertEqual(try XCTUnwrap(await send("[]"))["error"]?["code"], .number(-32600))
-        let batch = try XCTUnwrap(await send(#"[{"jsonrpc":"2.0","id":8,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"}]"#))
+        let e1 = try await answer("{not json")
+        XCTAssertEqual(e1["error"]?["code"], .number(-32700))
+        let e2 = try await answer(#"{"jsonrpc":"2.0","id":5,"method":"nope"}"#)
+        XCTAssertEqual(e2["error"]?["code"], .number(-32601))
+        let e3 = try await answer(#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{}}"#)
+        XCTAssertEqual(e3["error"]?["code"], .number(-32602))
+        let e4 = try await answer(#"{"id":7,"method":"ping"}"#)
+        XCTAssertEqual(e4["error"]?["code"], .number(-32600), "not JSON-RPC 2.0")
+        let e5 = try await answer("[]")
+        XCTAssertEqual(e5["error"]?["code"], .number(-32600))
+        let batch = try await answer(#"[{"jsonrpc":"2.0","id":8,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"}]"#)
         XCTAssertEqual(batch.arrayValue?.count, 1)
         let huge = String(repeating: " ", count: MCPServerCore.maxRequestBytes + 1)
-        XCTAssertNotNil(try XCTUnwrap(await send(huge))["error"])
+        let tooBig = try await answer(huge)
+        XCTAssertNotNil(tooBig["error"])
     }
 }
 

@@ -502,7 +502,7 @@ final class PreviousAreaTests: XCTestCase {
 
     func testTooSmallOrNonsenseRectanglesAreRefused() {
         XCTAssertNil(PreviousArea(rect: CGRect(x: 0, y: 0, width: 3, height: 300), layout: "a"))
-        XCTAssertNil(PreviousArea(rect: CGRect(x: .infinity, y: 0, width: 100, height: 100), layout: "a"))
+        XCTAssertNil(PreviousArea(rect: CGRect(x: CGFloat.infinity, y: 0, width: 100, height: 100), layout: "a"))
     }
 
     func testAppKitCoordinatesBecomeTopLeftOnes() {

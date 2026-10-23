@@ -50,8 +50,8 @@ final class SemanticSearchTests: XCTestCase {
         XCTAssertEqual(HybridRanker.ftsQuery("a\" OR \"b"), "\"a\"* \"or\"* \"b\"*", "OR is just a quoted word, and quotes in the text cannot break out")
     }
 
-    private func doc(_ text: String, source: IndexSource = .notes, target: String = "/Users/me/n.md", sensitivity: AISensitivity = .normal, excluded: Bool = false) -> IndexDocument {
-        IndexDocument(id: "d", source: source, title: "T", text: text, target: target, sensitivity: sensitivity, updated: Date(), favorite: false, fromExcludedApp: excluded)
+    private func doc(_ text: String, title: String = "T", source: IndexSource = .notes, target: String = "/Users/me/n.md", sensitivity: AISensitivity = .normal, excluded: Bool = false) -> IndexDocument {
+        IndexDocument(id: "d", source: source, title: title, text: text, target: target, sensitivity: sensitivity, updated: Date(), favorite: false, fromExcludedApp: excluded)
     }
 
     func testThePolicyKeepsSecretsAndOffSourcesOut() {
@@ -61,7 +61,8 @@ final class SemanticSearchTests: XCTestCase {
         XCTAssertNil(IndexPolicy.prepare(doc("x", excluded: true), enabled: on))
         XCTAssertNil(IndexPolicy.prepare(doc("x", target: "/Users/me/.ssh/notes.md"), enabled: on))
         XCTAssertNil(IndexPolicy.prepare(doc("x", target: "/Users/me/Library/Keychains/x"), enabled: on))
-        XCTAssertNil(IndexPolicy.prepare(doc("   "), enabled: on), "nothing to index")
+        XCTAssertNil(IndexPolicy.prepare(doc("   ", title: ""), enabled: on), "no title and no text: nothing to index")
+        XCTAssertNotNil(IndexPolicy.prepare(doc("   ", title: "Receipts"), enabled: on), "a title alone can still be found")
         let kept = IndexPolicy.prepare(doc("my key is sk-abcdefghijklmnopqrstuvwxyz and password = swordfish99"), enabled: on)
         XCTAssertFalse(kept?.text.contains("sk-abcdefgh") ?? true)
         XCTAssertFalse(kept?.text.contains("swordfish99") ?? true)
