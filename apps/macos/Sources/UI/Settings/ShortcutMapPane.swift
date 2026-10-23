@@ -46,6 +46,9 @@ private struct EverythingTab: View {
     @State private var shown: Set<InteractionEntry.Kind> = Set(InteractionEntry.Kind.allCases)
     @State private var severities: Set<InteractionMap.Severity> = Set(InteractionMap.Severity.allCases)
     @State private var exportNote: String?
+    @State private var fixing: [InteractionEntry]?
+    @State private var undo: [() -> Void] = []
+    @State private var fixNote: String?
 
     private var entries: [InteractionEntry] {
         InteractionMap.entries(InteractionMap.Inputs(
@@ -77,6 +80,12 @@ private struct EverythingTab: View {
                         Button("Export Report…") { exportReport(allClashes) }.controlSize(.small)
                     }
                     if let exportNote { Text(exportNote).font(.caption).foregroundStyle(.secondary) }
+                    if let fixNote {
+                        HStack {
+                            Text(fixNote).font(.caption).foregroundStyle(.secondary)
+                            if !undo.isEmpty { Button("Undo") { undo.popLast()?(); fixNote = "Put back." }.controlSize(.small) }
+                        }
+                    }
                     ForEach(Array(clashes.enumerated()), id: \.offset) { _, group in
                         VStack(alignment: .leading, spacing: 4) {
                             Label("\(group[0].trigger) · \(InteractionMap.severity(of: group).title)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(InteractionMap.severity(of: group) == .blocks ? Theme.danger : Theme.warn)
@@ -88,6 +97,7 @@ private struct EverythingTab: View {
                                 }
                             }
                             Text(InteractionMap.explanation(for: group)).font(.caption).foregroundStyle(.tertiary)
+                            Button("Fix This…") { fixing = group }.controlSize(.small)
                         }
                         .padding(.vertical, 2)
                     }
@@ -154,6 +164,28 @@ private struct EverythingTab: View {
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.2), value: shown)
+        .sheet(isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } })) {
+            if let group = fixing {
+                ConflictFixSheet(group: group, usedKeys: Set(all.compactMap(\.key)), apply: { turnOff($0) }, open: { navigator.pane = $0.pane; fixing = nil }, close: { fixing = nil })
+            }
+        }
+    }
+
+    /// Switches one off and keeps what is needed to switch it back on.
+    private func turnOff(_ entry: InteractionEntry) {
+        if entry.kind == .remap, let rule = remap.config.rules.first(where: { $0.name == entry.title && $0.enabled }) {
+            remap.update { config in
+                if let i = config.rules.firstIndex(where: { $0.id == rule.id }) { config.rules[i].enabled = false }
+            }
+            undo.append { remap.update { config in if let i = config.rules.firstIndex(where: { $0.id == rule.id }) { config.rules[i].enabled = true } } }
+            fixNote = "Turned off “\(entry.title)”."
+        } else if entry.owner == "Automation", let workflow = workflows.workflows.first(where: { $0.name == entry.title && $0.enabled }) {
+            workflows.setEnabled(workflow.id, false)
+            undo.append { workflows.setEnabled(workflow.id, true) }
+            fixNote = "Turned off “\(entry.title)”."
+        } else {
+            fixNote = "“\(entry.title)” could not be found to turn off. Open its pane instead."
+        }
     }
 
     private func exportReport(_ groups: [[InteractionEntry]]) {
@@ -292,5 +324,52 @@ private struct KeysTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Walks through one clash: what each side is, which to keep, and what is free to use instead.
+private struct ConflictFixSheet: View {
+    let group: [InteractionEntry]
+    let usedKeys: Set<String>
+    let apply: (InteractionEntry) -> Void
+    let open: (InteractionEntry) -> Void
+    let close: () -> Void
+    @State private var keeper: String?
+
+    var body: some View {
+        let options = ConflictFix.options(for: group)
+        let free = ConflictFix.freeShortcuts(usedKeys: usedKeys)
+        VStack(alignment: .leading, spacing: 14) {
+            Label("\(group[0].trigger) is wanted by \(group.count) things", systemImage: "exclamationmark.triangle.fill").font(.headline)
+            Text(InteractionMap.explanation(for: group)).font(.callout).foregroundStyle(.secondary)
+
+            Text("Which one should keep it?").font(.subheadline.weight(.semibold))
+            Picker("", selection: Binding(get: { keeper ?? ConflictFix.suggestedKeeper(in: group)?.id ?? group[0].id }, set: { keeper = $0 })) {
+                ForEach(group) { Text("\($0.owner) › \($0.title)").tag($0.id) }
+            }
+            .pickerStyle(.radioGroup).labelsHidden()
+
+            let chosen = group.first { $0.id == (keeper ?? ConflictFix.suggestedKeeper(in: group)?.id ?? group[0].id) } ?? group[0]
+            ForEach(group.filter { $0.id != chosen.id }) { other in
+                HStack {
+                    Text("\(other.owner) › \(other.title)").font(.callout)
+                    Spacer()
+                    ForEach(options.filter { $0.entry.id == other.id }) { option in
+                        Button(option.action == .turnOff ? "Turn It Off" : "Change It…") {
+                            if option.action == .turnOff { apply(other) } else { open(other) }
+                        }.controlSize(.small)
+                    }
+                }
+            }
+
+            if !free.isEmpty {
+                Text("Free to use instead").font(.subheadline.weight(.semibold))
+                Text(free.map(\.text).joined(separator: "   ")).font(.system(.callout, design: .rounded)).foregroundStyle(.secondary)
+                Text("Nothing in Kriya uses these. Other apps might.").font(.caption).foregroundStyle(.tertiary)
+            }
+            HStack { Spacer(); Button("Done", action: close).keyboardShortcut(.defaultAction) }
+        }
+        .padding(20)
+        .frame(width: 460)
     }
 }
