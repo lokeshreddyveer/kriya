@@ -3,7 +3,17 @@ import SwiftUI
 
 /// Runs a script file from a script folder, away from the main thread, and shows what it printed as its mode says.
 enum ScriptFileRunner {
+    /// Asks first (once per file content) if the person wants that, then runs it.
     static func run(_ script: ScriptFile, argument: String, toast: Toast) {
+        let go = {
+            let content = (try? String(contentsOfFile: script.path, encoding: .utf8)) ?? script.path
+            guard LauncherApprovals.shared.ensureApproved(kind: "script file", label: script.title, content: content, detail: "This script file runs with your access to this Mac. Read it first. Kriya runs it again without asking until it changes.") else { return }
+            execute(script, argument: argument, toast: toast)
+        }
+        if Thread.isMainThread { go() } else { DispatchQueue.main.async(execute: go) }
+    }
+
+    private static func execute(_ script: ScriptFile, argument: String, toast: Toast) {
         let args = ScriptFileParser.split(argument, into: script.arguments.count)
         let missing = zip(script.arguments, args + Array(repeating: "", count: max(0, script.arguments.count - args.count))).contains { !$0.optional && $1.isEmpty }
         if missing {

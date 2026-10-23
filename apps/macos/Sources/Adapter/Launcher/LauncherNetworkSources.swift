@@ -15,6 +15,9 @@ enum APICommandRunner {
     /// Runs the request and reports the outcome in a toast. Only the words typed go into it.
     static func run(_ command: APICommand, query: String, toast: Toast, session: URLSession = .shared) {
         guard !LocalOnly.isOn else { toast.show(LocalOnly.blockedMessage, isError: true); return }
+        // Asks first (once for this exact request) if the person wants that.
+        let summary = "\(command.method.rawValue) \(command.url)\nHeaders: \(command.headerNames.isEmpty ? "none" : command.headerNames.joined(separator: ", "))" + (command.body.isEmpty ? "" : "\nBody:\n\(command.body)")
+        guard LauncherApprovals.shared.ensureApproved(kind: "api", label: command.name, content: summary, detail: "This command sends your typed words to \(command.host ?? "a web address"). Check where it goes. Kriya sends it again without asking until it changes.") else { return }
         guard let request = command.request(for: query, headerValues: headerValues(for: command)) else {
             toast.show("“\(command.name)”: the address could not be built from those words.", isError: true)
             return

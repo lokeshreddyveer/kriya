@@ -174,6 +174,10 @@ struct LauncherPrefsData: Codable, Equatable {
     /// Open browser tabs show up in results, once the person turned them on. Nil is off: asking a browser for its tabs makes
     /// macOS ask for permission.
     var searchBrowserTabs: Bool?
+    /// Logins from the 1Password command-line tool show up in results, once the person turned them on.
+    var searchPasswords: Bool?
+    /// Folders the launcher's file search leaves out. Nil is none.
+    var fileSearchExcluded: [String]?
     /// Results kept out of the launcher by the person's choice.
     var hidden: [String] = []
     /// A key for a result, by its id. The special id "@selection" opens the actions for the selected text.
@@ -363,6 +367,8 @@ final class LauncherPrefs: ObservableObject {
     func setCurrencyRates(_ on: Bool) { change { $0.currencyRates = on } }
     func setShowMeeting(_ on: Bool) { change { $0.showMeeting = on } }
     func setSearchBrowserTabs(_ on: Bool) { change { $0.searchBrowserTabs = on ? true : nil } }
+    func setSearchPasswords(_ on: Bool) { change { $0.searchPasswords = on ? true : nil } }
+    func setFileSearchExcluded(_ folders: [String]) { change { $0.fileSearchExcluded = folders.isEmpty ? nil : Array(folders.prefix(40)) } }
 
     func setWebEngine(_ id: String) {
         change { $0.webEngine = id == WebSearch.defaultEngineID ? nil : id }

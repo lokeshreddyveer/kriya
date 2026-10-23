@@ -171,12 +171,12 @@ final class LauncherSources {
     private let files = LauncherFileSearch()
     private weak var inventory: AppInventory?
     private let clipboard: ClipboardService
-    private let prefs: LauncherPrefs
+    let prefs: LauncherPrefs
     private let queue = DispatchQueue(label: "app.kriya.launcher.windows", qos: .userInitiated)
     private let lock = NSLock()
     private var windows: [OpenWindow] = []
     private var systemApps: (list: [(name: String, id: String, url: URL)], at: Date)?
-    private weak var palette: CommandPalette?
+    weak var palette: CommandPalette?
 
     init(inventory: AppInventory, clipboard: ClipboardService, prefs: LauncherPrefs) {
         self.inventory = inventory
@@ -192,11 +192,13 @@ final class LauncherSources {
         palette.addProvider { [weak self] in self?.systemEntries() ?? [] }
         palette.addProvider { [weak self] in self?.runningTimerEntries() ?? [] }
         palette.addProvider { [weak self] in self?.intelligenceEntries() ?? [] }
+        palette.addProvider { [weak self] in self?.musicEntries() ?? [] }
+        RecentAppsTracker.shared.start()
         palette.addProvider { [weak self] in (self?.tools?.staticEntries() ?? []) + (self?.tools?.meetingEntries() ?? []) }
         palette.addQueryProvider { [weak self] text in self?.queryEntries(text) ?? [] }
         palette.addQueryProvider { [weak self] text in self?.navigationEntries(text) ?? [] }
         palette.addQueryProvider { [weak self] text in self?.argumentEntries(text) ?? [] }
-        palette.addQueryProvider { [weak self] text in (self?.soundEntries(text) ?? []) + (self?.addressEntries(text) ?? []) + (self?.noteEntries(text) ?? []) + (self?.jobEntries(text) ?? []) + (self?.focusEntries(text) ?? []) + (self?.sharedClipboardEntries(text) ?? []) + (self?.bookmarkEntries(text) ?? []) + (self?.menuBarItemEntries(text) ?? []) + (self?.terminalEntries(text) ?? []) + (self?.colorPickerEntries(text) ?? []) }
+        palette.addQueryProvider { [weak self] text in (self?.soundEntries(text) ?? []) + (self?.addressEntries(text) ?? []) + (self?.noteEntries(text) ?? []) + (self?.jobEntries(text) ?? []) + (self?.focusEntries(text) ?? []) + (self?.sharedClipboardEntries(text) ?? []) + (self?.bookmarkEntries(text) ?? []) + (self?.menuBarItemEntries(text) ?? []) + (self?.passwordEntries(text) ?? []) + (self?.terminalEntries(text) ?? []) + (self?.colorPickerEntries(text) ?? []) }
         palette.addQueryProvider { [weak self] text in (self?.quitEntries(text) ?? []) + (self?.menuEntries(text) ?? []) + (self?.contactEntries(text) ?? []) }
         palette.model.tokenProvider = { [weak self] word in self?.token(for: word) }
         palette.model.startProvider = { [weak self] in self?.startEntries() ?? [] }
@@ -258,7 +260,7 @@ final class LauncherSources {
         return Array(byID.values)
     }
 
-    private func appEntry(name: String, id: String, url: URL, running: Bool) -> PaletteEntry {
+    func appEntry(name: String, id: String, url: URL, running: Bool) -> PaletteEntry {
         var actions = [
             PaletteAction(title: "Show in Finder", symbol: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) },
             PaletteAction(title: "Copy Path", symbol: "doc.on.doc") { Self.copy(url.path) },
@@ -554,7 +556,8 @@ final class LauncherSources {
 
     private func fileEntries(_ text: String) -> [PaletteEntry] {
         files.search(text)
-        return files.results(for: text).map { url in
+        let excluded = prefs.data.fileSearchExcluded ?? []
+        return files.results(for: text).filter { !FileSearchFilter.isExcluded($0.path, folders: excluded) }.map { url in
             let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             let score = 150 + min(100, (FuzzyMatcher.score(text, in: url.lastPathComponent) ?? 0) / 10)
             return fileEntry(url, isFolder: isFolder, score: score, prefix: "file")
@@ -615,6 +618,8 @@ final class LauncherSources {
             if entry.appBundleID == nil {
                 list.append(PaletteAction(title: "Open With…", symbol: "arrow.up.forward.app") { Self.openWith(url) })
                 if !entry.isDirectory { list.append(PaletteAction(title: "Quick Look", symbol: "eye") { Self.quickLook(url) }) }
+                list.append(PaletteAction(title: "Get Info", symbol: "info.circle") { ScriptOutputWindow.show(title: url.lastPathComponent, text: FileMetadata.describe(url)) })
+                list.append(PaletteAction(title: "Share…", symbol: "square.and.arrow.up") { FinderMetadata.share([url]) })
                 list.append(PaletteAction(title: "Add to the File Buffer", symbol: "tray.and.arrow.down", keepsOpen: true) { [weak self] in self?.fileBuffer.add(url) })
                 list.append(PaletteAction(title: "Move to the Trash", symbol: "trash", destructive: true) { [weak self] in self?.trash(url) })
             } else if let id = entry.appBundleID {
@@ -680,6 +685,7 @@ final class LauncherSources {
         var list: [(entry: PaletteEntry, section: String)] = []
         if let buffer = bufferEntry() { list.append((buffer, "File buffer")) }
         if prefs.data.showTodayEvents != false, let tools { list += tools.todayEntries().map { ($0, "Today") } }
+        list += recentAppEntries()
         if prefs.data.showRecentFiles != false, prefs.data.isEnabled(.file) {
             for url in recentFiles {
                 // Files only: the folders in the home folder are always "recent" and would crowd the list.

@@ -85,7 +85,16 @@ final class CurrencyRates {
 
 /// Runs a script the person wrote, away from the main thread, and reports what it printed as they chose.
 enum ScriptRunner {
+    /// Asks first (once per script content) if the person wants that, then runs it.
     static func run(_ script: ScriptCommand, argument: String, toast: Toast) {
+        let go = {
+            guard LauncherApprovals.shared.ensureApproved(kind: "script", label: script.name, content: script.source, detail: "This shell script runs with your access to this Mac. Read it first. Kriya runs it again without asking until it changes.") else { return }
+            execute(script, argument: argument, toast: toast)
+        }
+        if Thread.isMainThread { go() } else { DispatchQueue.main.async(execute: go) }
+    }
+
+    private static func execute(_ script: ScriptCommand, argument: String, toast: Toast) {
         AuditLog.shared.record(.script, "Launcher script “\(script.name)” run")
         DispatchQueue.global(qos: .userInitiated).async {
             let environment = ["PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "KRIYA_ARGUMENT": argument]

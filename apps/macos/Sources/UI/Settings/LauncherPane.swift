@@ -10,6 +10,8 @@ struct LauncherPane: View {
     @State private var editingLink: Quicklink?
     @State private var editingScript: ScriptCommand?
     @State private var editingAPI: APICommand?
+    @ObservedObject private var approvals = LauncherApprovals.shared
+    @State private var spotlightStatus = "Checking the Spotlight index…"
     @ObservedObject private var history = SearchHistoryStore.shared
     @State private var calendarMessage: String?
     @State private var hotkeyProblem: String?
@@ -233,6 +235,57 @@ struct LauncherPane: View {
             }
 
             Section {
+                Toggle("Search 1Password logins", isOn: Binding(get: { prefs.data.searchPasswords == true }, set: { prefs.setSearchPasswords($0) }))
+                    .disabled(!OnePasswordIndex.shared.isInstalled)
+                if !OnePasswordIndex.shared.isInstalled { Text("Needs the 1Password command-line tool: brew install 1password-cli, then turn on “Integrate with 1Password CLI” in 1Password › Settings › Developer.").font(.caption).foregroundStyle(.secondary) }
+                if let problem = OnePasswordIndex.shared.lastProblem { Text(problem).font(.caption).foregroundStyle(Theme.warn) }
+            } header: { Text("Password manager") } footer: {
+                Text("Finds logins by name, user name or address. Return copies the password; ⌘K offers the user name, the one-time code and the website. Kriya only ever holds the list of names. A password is fetched when you copy it, 1Password asks for Touch ID itself, the copy is marked secret and leaves the clipboard after 30 seconds.")
+            }
+
+            Section {
+                ForEach(prefs.data.fileSearchExcluded ?? [], id: \.self) { folder in
+                    HStack {
+                        Text((folder as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button(role: .destructive) { prefs.setFileSearchExcluded((prefs.data.fileSearchExcluded ?? []).filter { $0 != folder }) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    }
+                }
+                Button {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = false
+                    panel.canChooseDirectories = true
+                    panel.prompt = "Leave Out"
+                    if panel.runModal() == .OK, let url = panel.url { prefs.setFileSearchExcluded((prefs.data.fileSearchExcluded ?? []) + [url.path]) }
+                } label: { Label("Leave a Folder Out of File Search…", systemImage: "plus") }
+                HStack {
+                    Text(spotlightStatus).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                    Spacer()
+                    Button("Spotlight Settings…") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Spotlight-Settings.extension")!) }.controlSize(.small)
+                }
+            } header: { Text("File search") } footer: {
+                Text("File results come from the Spotlight index. Folders left out here never show in the launcher, even when Spotlight has them. To change what Spotlight indexes at all, use its own settings.")
+            }
+            .onAppear { loadSpotlightStatus() }
+
+            Section {
+                Toggle("Ask before a script or API command runs for the first time", isOn: $approvals.asksFirst)
+                ForEach(approvals.approved) { item in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.label)
+                            Text("\(item.kind) · approved \(item.at.shortDescription)").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Revoke") { approvals.revoke(item.fingerprint) }.controlSize(.small)
+                    }
+                }
+                if !approvals.approved.isEmpty { Button("Revoke All", role: .destructive) { approvals.revokeAll() }.controlSize(.small) }
+            } header: { Text("Approvals") } footer: {
+                Text("A script or API command is shown to you, exactly as it will run, the first time. If it changes, you are asked again. Nothing the launcher shows ever runs by itself.")
+            }
+
+            Section {
                 Toggle("Search open browser tabs", isOn: Binding(get: { prefs.data.searchBrowserTabs == true }, set: { prefs.setSearchBrowserTabs($0) }))
             } header: { Text("Browser tabs") } footer: {
                 Text("Finds tabs by title or address in Safari, Chrome, Brave, Edge and Arc, and brings the one you choose to the front. It asks each running browser for its tab list with AppleScript, so macOS asks you to allow Kriya to control each browser the first time. Only titles and addresses are read, only while the launcher is open, and nothing is stored.")
@@ -333,6 +386,24 @@ struct LauncherPane: View {
         } message: {
             Text("Pins, short names, what you chose before and which kinds are searched go back to how they started.")
         }
+    }
+}
+
+extension LauncherPane {
+    /// What `mdutil` says about the index of the main volume, in a line. Reading it needs no administrator.
+    fileprivate func loadSpotlightStatus() {
+        DispatchQueue.global(qos: .utility).async {
+            let output = (try? ToolRunner.run("/usr/bin/mdutil", ["-s", "/System/Volumes/Data"], timeout: 6)) ?? ""
+            let line = Self.describeSpotlight(output)
+            DispatchQueue.main.async { spotlightStatus = line }
+        }
+    }
+
+    static func describeSpotlight(_ output: String) -> String {
+        let lower = output.lowercased()
+        if lower.contains("indexing enabled") { return "Spotlight indexing is on for this Mac." }
+        if lower.contains("indexing disabled") { return "Spotlight indexing is off for this Mac, so file results will be missing. Turn it on in Spotlight settings." }
+        return "The Spotlight index could not be read."
     }
 }
 

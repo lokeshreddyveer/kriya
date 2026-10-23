@@ -146,7 +146,18 @@ final class PaletteModel: ObservableObject {
     }
 
     private func rank(resetSelection: Bool) {
-        let text = effectiveQuery.trimmingCharacters(in: .whitespaces)
+        let full = effectiveQuery.trimmingCharacters(in: .whitespaces)
+        // "apps: saf" limits the results to apps; "apps:" alone lists them.
+        let parsed = token == nil ? LauncherFilter.parse(full) : nil
+        let text = parsed?.rest ?? full
+        let filter = parsed?.category
+        if let filter, text.isEmpty {
+            let items = all.filter { $0.category == filter }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }.prefix(60)
+            results = Array(items)
+            sections = items.map { _ in filter.title }
+            if resetSelection { selected = 0; showingActions = false } else { selected = min(selected, max(items.count - 1, 0)) }
+            return
+        }
         var heldBack: [PaletteEntry] = []
         var dynamic: [PaletteEntry] = text.isEmpty ? [] : queryProviders.flatMap { $0(text) }
         // A chip has already chosen what the words are for, so nothing else is offered them.
@@ -175,6 +186,7 @@ final class PaletteModel: ObservableObject {
         }
         let byID = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var list = order.compactMap { byID[$0] }
+        if let filter { list = list.filter { $0.category == filter } }
         if typed, token == nil {
             // "Search with" rows rank low by design, which left them below a long list or cut off altogether. They are always
             // present, a few rows down, so the web search is where you can see it.
