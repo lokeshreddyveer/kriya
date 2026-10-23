@@ -1484,3 +1484,86 @@ mod tests {
         );
     }
 }
+
+/// One earlier saved version of a layout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct LayoutVersion {
+    pub layout_id: String,
+    pub seq: u32,
+    pub saved_at: i64,
+    /// A name the person gave it; empty when it has none.
+    pub label: String,
+    pub windows: u32,
+    /// What differs from the layout as it is now, in words.
+    pub change: String,
+}
+
+/// How `old` differs from `new`, in words: windows added or removed, windows moved, a new name.
+pub fn describe_layout_change(old: &SavedLayout, new: &SavedLayout) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if old.name != new.name {
+        parts.push(format!("was called “{}”", old.name));
+    }
+    let count = |l: &SavedLayout, app: &str| l.entries.iter().filter(|e| e.app_id == app).count();
+    let mut apps: Vec<&str> = old
+        .entries
+        .iter()
+        .chain(new.entries.iter())
+        .map(|e| e.app_id.as_str())
+        .collect();
+    apps.sort_unstable();
+    apps.dedup();
+    let (mut added, mut removed, mut moved) = (0, 0, 0);
+    for app in apps {
+        let (a, b) = (count(old, app), count(new, app));
+        if b > a {
+            added += b - a;
+        } else if a > b {
+            removed += a - b;
+        }
+        let old_frames: Vec<&Rect> = old
+            .entries
+            .iter()
+            .filter(|e| e.app_id == app)
+            .map(|e| &e.frame)
+            .collect();
+        let new_frames: Vec<&Rect> = new
+            .entries
+            .iter()
+            .filter(|e| e.app_id == app)
+            .map(|e| &e.frame)
+            .collect();
+        for (o, n) in old_frames.iter().zip(new_frames.iter()) {
+            if (o.x - n.x).abs() > 0.01
+                || (o.y - n.y).abs() > 0.01
+                || (o.width - n.width).abs() > 0.01
+                || (o.height - n.height).abs() > 0.01
+            {
+                moved += 1;
+            }
+        }
+    }
+    if removed > 0 {
+        parts.push(format!(
+            "has {removed} window{} the current one does not",
+            if removed == 1 { "" } else { "s" }
+        ));
+    }
+    if added > 0 {
+        parts.push(format!(
+            "lacks {added} window{} the current one has",
+            if added == 1 { "" } else { "s" }
+        ));
+    }
+    if moved > 0 {
+        parts.push(format!(
+            "{moved} window{} in another place",
+            if moved == 1 { "" } else { "s" }
+        ));
+    }
+    if parts.is_empty() {
+        "the same as now".to_string()
+    } else {
+        parts.join(", ")
+    }
+}

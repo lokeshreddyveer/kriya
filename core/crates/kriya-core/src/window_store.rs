@@ -11,8 +11,8 @@ use crate::error::CoreError;
 use crate::store::Store;
 use crate::windows::{
     added_default_shortcuts, check_shortcuts, default_shortcuts, CustomSize, LayoutEntry,
-    PlacementRule, SavedLayout, ShortcutBinding, UnplacedPolicy, WindowConfig, CUSTOM_PREFIX,
-    LAYOUT_PREFIX, SHORTCUT_LIST_VERSION,
+    LayoutVersion, PlacementRule, SavedLayout, ShortcutBinding, UnplacedPolicy, WindowConfig,
+    CUSTOM_PREFIX, LAYOUT_PREFIX, SHORTCUT_LIST_VERSION,
 };
 
 const MAX_LAYOUT_ENTRIES: usize = 300;
@@ -92,7 +92,87 @@ impl Store {
         check_layout(layout)?;
         let mut clean = layout.clone();
         clean.is_auto = false;
-        write_layout(&self.conn(), &clean)
+        let conn = self.conn();
+        // What was there is kept before it is replaced, so an earlier version can be brought back.
+        if let Some(existing) = read_layouts(&conn, true)?
+            .into_iter()
+            .find(|l| l.id == clean.id)
+        {
+            if existing != clean {
+                keep_layout_version(&conn, &existing, "")?;
+            }
+        }
+        write_layout(&conn, &clean)
+    }
+
+    /// Earlier versions of a layout, newest first.
+    pub fn layout_versions(&self, id: &str) -> Result<Vec<LayoutVersion>, CoreError> {
+        let conn = self.conn();
+        let current = read_layouts(&conn, true)?.into_iter().find(|l| l.id == id);
+        let mut stmt = conn.prepare(
+            "SELECT seq, saved_at, label, layout_json FROM layout_versions WHERE layout_id = ?1 ORDER BY seq DESC",
+        )?;
+        let rows: Vec<(u32, i64, String, String)> = stmt
+            .query_map(params![id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows
+            .into_iter()
+            .filter_map(|(seq, saved_at, label, json)| {
+                let old: SavedLayout = serde_json::from_str(&json).ok()?;
+                Some(LayoutVersion {
+                    layout_id: id.to_string(),
+                    seq,
+                    saved_at,
+                    label,
+                    windows: old.entries.len() as u32,
+                    change: current.as_ref().map_or_else(String::new, |c| {
+                        crate::windows::describe_layout_change(&old, c)
+                    }),
+                })
+            })
+            .collect())
+    }
+
+    /// Brings an earlier version back. The layout as it is now is kept first, so this can be undone.
+    pub fn restore_layout_version(&self, id: &str, seq: u32) -> Result<SavedLayout, CoreError> {
+        let conn = self.conn();
+        let json: String = conn
+            .query_row(
+                "SELECT layout_json FROM layout_versions WHERE layout_id = ?1 AND seq = ?2",
+                params![id, seq],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or(CoreError::NotFound)?;
+        let old: SavedLayout = serde_json::from_str(&json)?;
+        check_layout(&old)?;
+        if let Some(current) = read_layouts(&conn, true)?.into_iter().find(|l| l.id == id) {
+            if current != old {
+                keep_layout_version(&conn, &current, "before going back")?;
+            }
+        }
+        write_layout(&conn, &old)?;
+        Ok(old)
+    }
+
+    pub fn delete_layout_version(&self, id: &str, seq: u32) -> Result<(), CoreError> {
+        self.conn().execute(
+            "DELETE FROM layout_versions WHERE layout_id = ?1 AND seq = ?2",
+            params![id, seq],
+        )?;
+        Ok(())
+    }
+
+    pub fn name_layout_version(&self, id: &str, seq: u32, label: &str) -> Result<(), CoreError> {
+        let clean: String = label.trim().chars().take(60).collect();
+        self.conn().execute(
+            "UPDATE layout_versions SET label = ?3 WHERE layout_id = ?1 AND seq = ?2",
+            params![id, seq, clean],
+        )?;
+        Ok(())
     }
 
     /// The chosen saved layouts as a file to share.
@@ -155,6 +235,10 @@ impl Store {
     pub fn delete_layout(&self, id: &str) -> Result<(), CoreError> {
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM layout_versions WHERE layout_id = ?1",
+            params![id],
+        )?;
         tx.execute("DELETE FROM window_layouts WHERE id = ?1", params![id])?;
         drop_shortcut(&tx, &format!("{LAYOUT_PREFIX}{}", id.to_lowercase()))?;
         tx.commit()?;
@@ -428,6 +512,33 @@ fn check_name(id: &str, name: &str, what: &str) -> Result<(), CoreError> {
             "{what} needs a name of up to {MAX_NAME} characters"
         )));
     }
+    Ok(())
+}
+
+const MAX_LAYOUT_VERSIONS: i64 = 20;
+
+fn keep_layout_version(
+    conn: &Connection,
+    layout: &SavedLayout,
+    label: &str,
+) -> Result<(), CoreError> {
+    let seq: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM layout_versions WHERE layout_id = ?1",
+        params![layout.id],
+        |r| r.get(0),
+    )?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    conn.execute(
+        "INSERT INTO layout_versions (layout_id, seq, saved_at, label, layout_json) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![layout.id, seq, now, label, serde_json::to_string(layout)?],
+    )?;
+    conn.execute(
+        "DELETE FROM layout_versions WHERE layout_id = ?1 AND seq NOT IN
+         (SELECT seq FROM layout_versions WHERE layout_id = ?1 ORDER BY seq DESC LIMIT ?2)",
+        params![layout.id, MAX_LAYOUT_VERSIONS],
+    )?;
     Ok(())
 }
 
@@ -1045,5 +1156,75 @@ mod tests {
         assert!(s
             .import_layouts(r#"{"format":"x","version":1,"layouts":[]}"#, 1)
             .is_err());
+    }
+
+    #[test]
+    fn each_overwrite_keeps_the_old_layout_and_going_back_is_itself_undoable() {
+        use crate::windows::Rect;
+        let s = Store::open_in_memory().unwrap();
+        let entry = |x: f64| LayoutEntry {
+            app_id: "com.a".into(),
+            title: "".into(),
+            display_id: "d".into(),
+            frame: Rect::new(x, 0.0, 0.5, 0.5),
+        };
+        let mut layout = SavedLayout {
+            id: "l".into(),
+            name: "Work".into(),
+            display_key: "d".into(),
+            is_auto: false,
+            created_at: 1,
+            entries: vec![entry(0.0)],
+            unplaced: Default::default(),
+            launch_missing: false,
+            is_group: false,
+        };
+        s.save_layout(&layout).unwrap();
+        assert!(
+            s.layout_versions("l").unwrap().is_empty(),
+            "the first save has nothing before it"
+        );
+        layout.entries = vec![entry(0.5), entry(0.0)];
+        s.save_layout(&layout).unwrap();
+        let versions = s.layout_versions("l").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].windows, 1);
+        assert!(versions[0].change.contains("lacks 1 window"));
+        s.name_layout_version("l", versions[0].seq, " Before the split ")
+            .unwrap();
+        assert_eq!(s.layout_versions("l").unwrap()[0].label, "Before the split");
+        let back = s.restore_layout_version("l", versions[0].seq).unwrap();
+        assert_eq!(back.entries.len(), 1);
+        let after = s.layout_versions("l").unwrap();
+        assert_eq!(after.len(), 2);
+        assert!(after
+            .iter()
+            .any(|v| v.label == "before going back" && v.windows == 2));
+        s.delete_layout_version("l", after[0].seq).unwrap();
+        assert_eq!(s.layout_versions("l").unwrap().len(), 1);
+        assert!(s.restore_layout_version("l", 99).is_err());
+        s.delete_layout("l").unwrap();
+        assert!(s.layout_versions("l").unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_twenty_layout_versions_are_kept() {
+        let s = Store::open_in_memory().unwrap();
+        let mut layout = SavedLayout {
+            id: "l".into(),
+            name: "N0".into(),
+            display_key: "d".into(),
+            is_auto: false,
+            created_at: 1,
+            entries: vec![],
+            unplaced: Default::default(),
+            launch_missing: false,
+            is_group: false,
+        };
+        for i in 0..30 {
+            layout.name = format!("N{i}");
+            s.save_layout(&layout).unwrap();
+        }
+        assert_eq!(s.layout_versions("l").unwrap().len(), 20);
     }
 }

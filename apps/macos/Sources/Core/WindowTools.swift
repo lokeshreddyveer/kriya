@@ -114,3 +114,68 @@ enum LayoutPreview {
         }
     }
 }
+
+/// Layout entries that found no window when a layout was restored, kept so they can be placed when the window turns up.
+struct RestoreRetryQueue: Equatable {
+    struct Item: Equatable, Identifiable {
+        var id: String { "\(layoutID)#\(entryIndex)" }
+        let layoutID: String
+        let layoutName: String
+        let entryIndex: Int
+        let appID: String
+        let title: String
+        var attempts = 0
+        let addedAt: Date
+    }
+
+    struct OpenWindow: Equatable {
+        let appID: String
+        let title: String
+        let role: String?
+        let key: String
+    }
+
+    private(set) var items: [Item] = []
+    static let maxAge: TimeInterval = 600
+    static let maxAttempts = 40
+    static let maxItems = 50
+
+    /// Adds entries (by index) of a layout; one already waiting is not added twice.
+    mutating func add(layoutID: String, layoutName: String, entries: [(index: Int, appID: String, title: String)], now: Date) {
+        for e in entries where !items.contains(where: { $0.layoutID == layoutID && $0.entryIndex == e.index }) && items.count < Self.maxItems {
+            items.append(Item(layoutID: layoutID, layoutName: layoutName, entryIndex: e.index, appID: e.appID, title: e.title, addedAt: now))
+        }
+    }
+
+    /// The best window for an item: same app, an ordinary window, the same title first, then any window of the app not already
+    /// taken by another item.
+    static func match(_ item: Item, among windows: [OpenWindow], taken: Set<String>) -> OpenWindow? {
+        let candidates = windows.filter { $0.appID == item.appID && !taken.contains($0.key) && ($0.role == nil || $0.role == "AXStandardWindow") }
+        if !item.title.isEmpty, let exact = candidates.first(where: { $0.title == item.title }) { return exact }
+        if !item.title.isEmpty, let near = candidates.first(where: { $0.title.localizedCaseInsensitiveContains(item.title) }) { return near }
+        return item.title.isEmpty ? candidates.first : nil
+    }
+
+    /// One pass: pairs each waiting item with a window if there is one, drops the old and the worn out, and counts an attempt
+    /// for the rest. Returns the pairs to place; those items leave the queue.
+    mutating func pass(windows: [OpenWindow], now: Date) -> [(item: Item, window: OpenWindow)] {
+        var taken = Set<String>()
+        var placed: [(Item, OpenWindow)] = []
+        var remaining: [Item] = []
+        for var item in items {
+            if now.timeIntervalSince(item.addedAt) > Self.maxAge || item.attempts >= Self.maxAttempts { continue }
+            if let window = Self.match(item, among: windows, taken: taken) {
+                taken.insert(window.key)
+                placed.append((item, window))
+            } else {
+                item.attempts += 1
+                remaining.append(item)
+            }
+        }
+        items = remaining
+        return placed
+    }
+
+    mutating func cancel(_ id: String) { items.removeAll { $0.id == id } }
+    mutating func clear() { items = [] }
+}

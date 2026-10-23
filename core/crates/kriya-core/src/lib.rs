@@ -100,7 +100,7 @@ pub use traffic::{
 };
 pub use window_extras::{Direction, FocusCandidate, GridBlock, StashEdge};
 pub use windows::{
-    CustomSize, FrameHistory, LayoutEntry, PlacementRule, Point, Rect, SavedLayout,
+    CustomSize, FrameHistory, LayoutEntry, LayoutVersion, PlacementRule, Point, Rect, SavedLayout,
     ShortcutBinding, SwitcherItem, UnplacedPolicy, WindowConfig, WindowLayout,
 };
 pub use workflow::{
@@ -1316,6 +1316,27 @@ impl KriyaCore {
 
     pub fn save_layout(&self, layout: SavedLayout) -> Result<(), CoreError> {
         self.store.save_layout(&layout)
+    }
+
+    pub fn layout_versions(&self, id: String) -> Result<Vec<LayoutVersion>, CoreError> {
+        self.store.layout_versions(&id)
+    }
+
+    pub fn restore_layout_version(&self, id: String, seq: u32) -> Result<SavedLayout, CoreError> {
+        self.store.restore_layout_version(&id, seq)
+    }
+
+    pub fn delete_layout_version(&self, id: String, seq: u32) -> Result<(), CoreError> {
+        self.store.delete_layout_version(&id, seq)
+    }
+
+    pub fn name_layout_version(
+        &self,
+        id: String,
+        seq: u32,
+        label: String,
+    ) -> Result<(), CoreError> {
+        self.store.name_layout_version(&id, seq, &label)
     }
 
     pub fn export_layouts(&self, ids: Vec<String>) -> Result<String, CoreError> {

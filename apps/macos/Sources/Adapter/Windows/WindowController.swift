@@ -342,6 +342,9 @@ final class WindowController: ObservableObject {
 
     // MARK: Windows of every app
 
+    /// Windows a restore could not find yet, tried again as apps and windows appear.
+    var retry: RestoreRetry { RestoreRetry.shared(for: self) }
+
     struct OpenWindow {
         let window: AXWindow
         let appID: String
@@ -454,6 +457,7 @@ final class WindowController: ObservableObject {
 
             // Apps that are not running are opened, and their windows placed as they appear.
             let toOpen = layout.launchMissing ? layout.entries.indices.filter { !matchedEntries.contains($0) } : []
+            let unresolved = layout.entries.indices.filter { !matchedEntries.contains($0) }.map { (index: $0, appID: layout.entries[$0].appId, title: layout.entries[$0].title) }
             DispatchQueue.main.async {
                 guard let self else { return }
                 var opened = Set<Int>()
@@ -466,6 +470,7 @@ final class WindowController: ObservableObject {
                     NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
                     self.placeWhenWindowAppears(entry: entry, displays: known)
                 }
+                if RestoreRetry.enabled, !unresolved.isEmpty { self.retry.enqueue(layout: layout, entries: unresolved) }
                 // A group comes to the front together, in the order it was saved.
                 for window in raised { window.raise() }
                 let report = RestoreDiagnosis.build(
@@ -755,5 +760,70 @@ extension WindowController {
             open: open.map { ($0.appID, $0.title) }, matches: matches.map { $0.map(Int.init) }, runningApps: running,
             displayIDs: Set(known.map(\.id)), isLocked: { WindowLockStore.shared.isLocked(appID: $0, title: $1) }
         )
+    }
+}
+
+
+/// Runs the retry queue: every few seconds, and when an app launches, looks for the windows that were missing.
+final class RestoreRetry: ObservableObject {
+    private static var instance: RestoreRetry?
+    static func shared(for controller: WindowController) -> RestoreRetry {
+        if let instance { return instance }
+        let made = RestoreRetry(controller: controller)
+        instance = made
+        return made
+    }
+
+    static let key = "windows.retryUnresolved"
+    static var enabled: Bool {
+        get { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+
+    @Published private(set) var queue = RestoreRetryQueue()
+    private weak var controller: WindowController?
+    private var timer: Timer?
+    private var observer: NSObjectProtocol?
+
+    private init(controller: WindowController) { self.controller = controller }
+
+    func enqueue(layout: SavedLayout, entries: [(index: Int, appID: String, title: String)]) {
+        queue.add(layoutID: layout.id, layoutName: layout.name, entries: entries, now: Date())
+        startIfNeeded()
+    }
+
+    func cancel(_ id: String) { queue.cancel(id) }
+    func clear() { queue.clear(); stop() }
+
+    private func startIfNeeded() {
+        guard timer == nil else { return }
+        let t = Timer(timeInterval: 4, repeats: true) { [weak self] _ in self?.pass() }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+        observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self?.pass() }
+        }
+    }
+
+    private func stop() {
+        timer?.invalidate(); timer = nil
+        if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        observer = nil
+    }
+
+    private func pass() {
+        guard let controller, !queue.items.isEmpty else { stop(); return }
+        let open = WindowController.openWindows(excluding: controller.store.currentConfig)
+        let windows = open.map { RestoreRetryQueue.OpenWindow(appID: $0.appID, title: $0.title, role: $0.window.subrole, key: $0.window.key) }
+        let pairs = queue.pass(windows: windows, now: Date())
+        for pair in pairs {
+            guard let layout = controller.store.layouts.first(where: { $0.id == pair.item.layoutID }), layout.entries.indices.contains(pair.item.entryIndex),
+                  let target = open.first(where: { $0.window.key == pair.window.key }),
+                  !WindowLockStore.shared.isLocked(appID: target.appID, title: target.title),
+                  let frame = WindowController.target(for: layout.entries[pair.item.entryIndex], displays: controller.displays.displays) else { continue }
+            _ = AXWindow.withoutEnhancedInterface(pid: target.window.pid) { target.window.setFrame(frame) }
+        }
+        objectWillChange.send()
+        if queue.items.isEmpty { stop() }
     }
 }

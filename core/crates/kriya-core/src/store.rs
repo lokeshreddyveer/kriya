@@ -108,6 +108,16 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (workflow_id, revision)
     );
 "#,
+    r#"
+    CREATE TABLE layout_versions (
+        layout_id   TEXT NOT NULL,
+        seq         INTEGER NOT NULL,
+        saved_at    INTEGER NOT NULL,
+        label       TEXT NOT NULL DEFAULT '',
+        layout_json TEXT NOT NULL,
+        PRIMARY KEY (layout_id, seq)
+    );
+"#,
 ];
 
 pub struct Store {

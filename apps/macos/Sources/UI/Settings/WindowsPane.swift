@@ -419,6 +419,8 @@ private struct LayoutsTab: View {
     @State private var showingReport = false
     @State private var makingGroup = false
     @State private var preview: (name: String, rows: [LayoutPreviewRow])?
+    @State private var historyOf: SavedLayout?
+    @State private var retryTick = 0
     @ObservedObject private var locks = WindowLockStore.shared
 
     private struct DesignerTarget: Identifiable {
@@ -432,6 +434,19 @@ private struct LayoutsTab: View {
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Keep trying for windows that were not there", isOn: Binding(get: { RestoreRetry.enabled }, set: { RestoreRetry.enabled = $0; retryTick += 1 }))
+                let waiting = controller.retry.queue.items
+                ForEach(waiting) { item in
+                    HStack {
+                        Text("\(AppChoice.name(for: item.appID))\(item.title.isEmpty ? "" : " “\(item.title)”") for “\(item.layoutName)”").font(.callout)
+                        Spacer()
+                        Button("Stop Waiting") { controller.retry.cancel(item.id); retryTick += 1 }.controlSize(.small)
+                    }
+                }
+                if !waiting.isEmpty { Button("Stop Waiting for All") { controller.retry.clear(); retryTick += 1 }.controlSize(.small) }
+            } header: { Text("Windows still to place") } footer: { Text("When a restore cannot find a window, Kriya looks again for ten minutes and places it when it appears. It matches by app, then window title, and never moves a locked window.") }
+            .id(retryTick)
             Section {
                 ForEach(locks.locks) { lock in
                     HStack {
@@ -504,6 +519,8 @@ private struct LayoutsTab: View {
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.layouts)
+        .sheet(item: $historyOf) { layout in LayoutHistorySheet(layout: layout) { historyOf = nil } }
+        .onReceive(controller.retry.objectWillChange) { retryTick += 1 }
         .sheet(isPresented: Binding(get: { preview != nil }, set: { if !$0 { preview = nil } })) {
             if let preview {
                 VStack(alignment: .leading, spacing: 10) {
@@ -565,6 +582,7 @@ private struct LayoutsTab: View {
             .buttonStyle(.borderless).id(bindingTick)
             .help(bindings.isBound(layout: layout.id, to: layout.displayKey) ? "Comes back by itself whenever the displays it was made for are connected. Click to stop." : "Bring this layout back by itself whenever the displays it was made for are connected")
             Button("Edit") { designing = DesignerTarget(layout: layout) }.controlSize(.small)
+            Button("History") { historyOf = layout }.controlSize(.small).help("Earlier versions of this layout")
             Button("Preview") { preview = (layout.name, controller.previewRestore(layout)) }.controlSize(.small).help("Shows what Restore would do, without moving anything")
             Button("Restore") { restore(layout) }.controlSize(.small)
             Button(role: .destructive) { store.deleteLayout(layout.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
@@ -934,5 +952,45 @@ private struct AppsTab: View {
     private func addExcluded() {
         guard let id = AppChoice.choose(prompt: "Exclude"), !store.config.excludedAppIds.contains(id) else { return }
         store.updateConfig { $0.excludedAppIds.append(id) }
+    }
+}
+
+
+/// Earlier versions of one layout: see how each differs from now, name it, go back to it, or delete it.
+private struct LayoutHistorySheet: View {
+    let layout: SavedLayout
+    let close: () -> Void
+    @EnvironmentObject private var store: WindowStore
+    @State private var versions: [LayoutVersion] = []
+    @State private var naming: LayoutVersion?
+    @State private var label = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("History of “\(layout.name)”").font(.headline)
+            Text("The layout as it was before each change. Going back keeps the current one as a version too.").font(.callout).foregroundStyle(.secondary)
+            if versions.isEmpty { Text("No earlier versions yet.").foregroundStyle(.secondary) }
+            List(versions, id: \.seq) { version in
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(version.label.isEmpty ? Date(timeIntervalSince1970: TimeInterval(version.savedAt)).formatted(date: .abbreviated, time: .shortened) : version.label)
+                        Text("\(version.windows) window\(version.windows == 1 ? "" : "s") · compared with now: \(version.change)").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Name…") { naming = version; label = version.label }.controlSize(.small)
+                    Button("Go Back") { store.restoreLayoutVersion(layout.id, seq: version.seq); versions = store.layoutVersions(of: layout.id) }.controlSize(.small)
+                    Button(role: .destructive) { store.deleteLayoutVersion(layout.id, seq: version.seq); versions = store.layoutVersions(of: layout.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete this version")
+                }
+            }
+            .frame(minHeight: 220)
+            HStack { Spacer(); Button("Done", action: close).keyboardShortcut(.defaultAction) }
+        }
+        .padding(20).frame(width: 560)
+        .onAppear { versions = store.layoutVersions(of: layout.id) }
+        .alert("Name This Version", isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
+            TextField("Name", text: $label)
+            Button("OK") { if let v = naming { store.nameLayoutVersion(layout.id, seq: v.seq, label: label); versions = store.layoutVersions(of: layout.id) }; naming = nil }
+            Button("Cancel", role: .cancel) { naming = nil }
+        }
     }
 }

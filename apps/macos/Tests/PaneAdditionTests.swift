@@ -893,3 +893,42 @@ final class WorkspaceSoundTests: XCTestCase {
         XCTAssertNil(log.entries[0].soundModeApplied)
     }
 }
+
+final class RestoreRetryQueueTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_760_000_000)
+    private func win(_ app: String, _ title: String, key: String, role: String? = "AXStandardWindow") -> RestoreRetryQueue.OpenWindow { .init(appID: app, title: title, role: role, key: key) }
+
+    func testAWindowThatAppearsLaterIsPlacedByTitleThenLeavesTheQueue() {
+        var q = RestoreRetryQueue()
+        q.add(layoutID: "l", layoutName: "Work", entries: [(0, "com.a", "Doc"), (1, "com.b", "")], now: now)
+        q.add(layoutID: "l", layoutName: "Work", entries: [(0, "com.a", "Doc")], now: now)
+        XCTAssertEqual(q.items.count, 2, "not added twice")
+        let first = q.pass(windows: [win("com.a", "Other", key: "1")], now: now.addingTimeInterval(4))
+        XCTAssertTrue(first.isEmpty)
+        XCTAssertEqual(q.items.first?.attempts, 1)
+        let second = q.pass(windows: [win("com.a", "Doc", key: "2"), win("com.b", "Whatever", key: "3")], now: now.addingTimeInterval(8))
+        XCTAssertEqual(second.map { $0.window.key }.sorted(), ["2", "3"])
+        XCTAssertTrue(q.items.isEmpty)
+    }
+
+    func testOneWindowIsNotGivenToTwoItemsAndSheetsAreIgnored() {
+        var q = RestoreRetryQueue()
+        q.add(layoutID: "l", layoutName: "W", entries: [(0, "com.a", ""), (1, "com.a", "")], now: now)
+        let placed = q.pass(windows: [win("com.a", "x", key: "1"), win("com.a", "sheet", key: "2", role: "AXSheet")], now: now)
+        XCTAssertEqual(placed.count, 1)
+        XCTAssertEqual(q.items.count, 1, "the second still waits")
+    }
+
+    func testOldAndWornOutItemsAreDropped() {
+        var q = RestoreRetryQueue()
+        q.add(layoutID: "l", layoutName: "W", entries: [(0, "com.a", "T")], now: now)
+        XCTAssertTrue(q.pass(windows: [], now: now.addingTimeInterval(RestoreRetryQueue.maxAge + 1)).isEmpty)
+        XCTAssertTrue(q.items.isEmpty)
+        q.add(layoutID: "l", layoutName: "W", entries: [(0, "com.a", "T")], now: now)
+        for _ in 0..<(RestoreRetryQueue.maxAttempts + 1) { _ = q.pass(windows: [], now: now) }
+        XCTAssertTrue(q.items.isEmpty)
+        q.add(layoutID: "l", layoutName: "W", entries: [(0, "com.a", "T")], now: now)
+        q.cancel("l#0")
+        XCTAssertTrue(q.items.isEmpty)
+    }
+}

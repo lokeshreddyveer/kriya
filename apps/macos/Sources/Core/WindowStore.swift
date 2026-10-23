@@ -124,6 +124,11 @@ final class WindowStore: ObservableObject {
         perform { try core.saveLayout(layout: layout) }
     }
 
+    func layoutVersions(of id: String) -> [LayoutVersion] { (try? core.layoutVersions(id: id)) ?? [] }
+    func restoreLayoutVersion(_ id: String, seq: UInt32) { perform { _ = try core.restoreLayoutVersion(id: id, seq: seq) } }
+    func deleteLayoutVersion(_ id: String, seq: UInt32) { perform { try core.deleteLayoutVersion(id: id, seq: seq) } }
+    func nameLayoutVersion(_ id: String, seq: UInt32, label: String) { perform { try core.nameLayoutVersion(id: id, seq: seq, label: label) } }
+
     func exportLayouts(to url: URL) throws {
         try core.exportLayouts(ids: []).write(to: url, atomically: true, encoding: .utf8)
     }
