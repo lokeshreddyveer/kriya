@@ -482,6 +482,9 @@ private struct InstallTab: View {
                     Text("What Homebrew said").foregroundStyle(.secondary)
                 }
                 Spacer()
+                if !brew.isRunning, !brew.log.isEmpty {
+                    Button("Show Log File") { NSWorkspace.shared.activateFileViewerSelecting([HomebrewManager.logFileURL]) }.controlSize(.small)
+                }
                 if brew.isRunning, let cask = brew.currentCask {
                     Button("Run in Terminal") { HomebrewManager.runInTerminal(install: cask) }.controlSize(.small)
                         .help("Opens Terminal with the install command, for apps that need your password")

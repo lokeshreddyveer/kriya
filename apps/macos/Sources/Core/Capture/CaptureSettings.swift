@@ -47,6 +47,8 @@ enum CaptureAction: String, CaseIterable, Identifiable, Codable {
     case pauseRecording, stopRecording
     /// A floating live copy of the window in front.
     case mirror
+    /// A capture of the whole screen after a countdown, so a menu can be opened first. It opens in the editor to be cropped.
+    case menu
     var id: String { rawValue }
 }
 
@@ -97,6 +99,7 @@ struct CaptureSettings: Codable, Equatable {
         ("capture.rec.pause", "Pause or resume the recording", .screen, .pauseRecording),
         ("capture.rec.stop", "Stop and save the recording", .screen, .stopRecording),
         ("capture.mirror", "Float a live copy of the window in front", .window, .mirror),
+        ("capture.menu", "Capture a menu (5 seconds to open it, then crop)", .screen, .menu),
     ]
 
     static var defaultFolder: URL {

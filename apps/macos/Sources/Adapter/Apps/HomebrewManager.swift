@@ -315,7 +315,25 @@ final class HomebrewManager: ObservableObject {
         ["PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOMEBREW_NO_ENV_HINTS": "1", "NONINTERACTIVE": "1"]
     }
 
+    /// The install log kept on disk, so what Homebrew said is still there after Kriya closes. Trimmed when it grows large.
+    static var logFileURL: URL { AppPaths.live.logs.appendingPathComponent("homebrew-install.log") }
+    private static let logQueue = DispatchQueue(label: "app.kriya.homebrew.log", qos: .utility)
+
     private func append(_ text: String) {
+        Self.logQueue.async {
+            let url = Self.logFileURL
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int, size > 500_000 {
+                try? FileManager.default.removeItem(at: url)
+            }
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile()
+                handle.write(Data(text.utf8))
+                try? handle.close()
+            } else {
+                try? Data(text.utf8).write(to: url)
+            }
+        }
         DispatchQueue.main.async {
             self.log += text
             // The log keeps the end of a long install, not all of it.

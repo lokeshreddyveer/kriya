@@ -87,7 +87,16 @@ final class ScreenCaptureService: ObservableObject {
         }
         isCapturing = true
         frontApp = NSWorkspace.shared.frontmostApplication?.localizedName
-        let current = settings.settings
+        var current = settings.settings
+        // A menu closes when you click, so the screen is taken after a countdown, with nothing to click. It opens in the editor to be
+        // cropped to the menu.
+        var action = action
+        if action == .menu {
+            current.delaySeconds = max(current.delaySeconds, 5)
+            current.openEditor = true
+            action = .normal
+            toast.show("Open the menu now. Capturing in \(current.delaySeconds) seconds…")
+        }
         if action == .recordScreen || action == .recordWindow || action == .recordApp {
             var options = current.recording
             options.source = action == .recordWindow ? .window : action == .recordApp ? .app : .screen
@@ -187,7 +196,7 @@ final class ScreenCaptureService: ObservableObject {
                 self.pasteboard.setString(first, forType: .string)
                 self.toast.show(found.count > 1 ? "Copied the first of \(found.count) codes: \(String(first.prefix(60)))" : "Copied: \(String(first.prefix(60)))")
             }
-        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror:
+        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror, .menu:
             DispatchQueue.main.async { self.isCapturing = false }
         case .normal, .redacted:
             var picture = image
