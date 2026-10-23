@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Kriya",
-  "version": "0.1.0",
-  "description": "Send links, the page you are on, and selected text to Kriya on this Mac.",
+  "version": "0.2.0",
+  "description": "Send links, the page you are on, its readable text, and selected text to Kriya on this Mac.",
   "browser_specific_settings": { "gecko": { "id": "kriya-bridge@kriya.app", "strict_min_version": "115.0" } },
-  "permissions": ["contextMenus", "nativeMessaging", "activeTab"],
+  "permissions": ["contextMenus", "nativeMessaging", "activeTab", "scripting"],
   "background": { "scripts": ["background.js"] },
   "action": { "default_title": "Open this page through Kriya" }
 }

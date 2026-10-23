@@ -15,6 +15,9 @@ enum NativeHost {
         }
     }
 
+    /// A message with a whole page in it may be this big; every other kind stays within `maxMessageBytes`.
+    static var maxPageMessageBytes: Int { PageCapture.maxMessageBytes }
+
     static func run() -> Never {
         let support = AppPaths.live.support
         while let body = readMessage(from: FileHandle.standardInput) {
@@ -45,7 +48,7 @@ enum NativeHost {
         let header = handle.readData(ofLength: 4)
         guard header.count == 4 else { return nil }
         let length = Int(header.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
-        guard length > 0, length <= maxMessageBytes else { return nil }
+        guard length > 0, length <= maxPageMessageBytes else { return nil }
         let body = handle.readData(ofLength: length)
         return body.count == length ? body : nil
     }
@@ -68,11 +71,38 @@ enum NativeHost {
         guard let token = BridgeToken.read(in: support) else {
             return answer(false, "Open Kriya once on this Mac first.")
         }
+        if (message["type"] as? String) == "page" {
+            return page(message, support: support, token: token, open: open, answer: answer)
+        }
+        // Only a page may be big.
+        guard body.count <= maxMessageBytes else { return answer(false, "The message was too big.") }
         switch BridgeProtocol.address(for: message, token: token) {
         case .failure(let error):
             return answer(false, error.localizedDescription)
         case .success(let address):
             return open(address) ? answer(true) : answer(false, "Kriya could not be started.")
+        }
+    }
+
+    /// A page: the text is put in a file only this user can read, in the inbox, and the app is told its name. The text never
+    /// travels in an address.
+    private static func page(_ message: [String: Any], support: URL, token: String, open: (URL) -> Bool, answer: (Bool, String?) -> Data) -> Data {
+        switch PageCapture.clip(from: message) {
+        case .failure(let error):
+            return answer(false, error.localizedDescription)
+        case .success(let result):
+            let inbox = support.appendingPathComponent("Inbox", isDirectory: true)
+            let name = PageCapture.inboxName()
+            do {
+                try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                let file = inbox.appendingPathComponent(name)
+                try JSONEncoder().encode(result.clip).write(to: file, options: .atomic)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            } catch {
+                return answer(false, "Kriya could not keep the page.")
+            }
+            guard let address = BridgeProtocol.pageAddress(file: name, action: result.action, token: token) else { return answer(false, "The request could not be built.") }
+            return open(address) ? answer(true, nil) : answer(false, "Kriya could not be started.")
         }
     }
 

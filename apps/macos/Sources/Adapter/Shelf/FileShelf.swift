@@ -222,6 +222,12 @@ final class FileShelf: NSObject, NSWindowDelegate, ObservableObject {
         return panel
     }
 
+    /// Puts a file on the current shelf and shows the shelf.
+    func add(file url: URL) {
+        model.addFile(url)
+        show()
+    }
+
     func addClipboard() {
         let board = NSPasteboard.general
         if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {

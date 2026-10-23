@@ -39,6 +39,7 @@ final class AppEnvironment {
     let appAudio = AppAudioEngine()
     let soundMixer = SoundMixerModel()
     let soundRules = SoundRuleRunner()
+    private var pageCapture: PageCaptureService?
     private var soundModeSub: AnyCancellable?
     private var dialogJumpObserver: NSObjectProtocol?
     private var soundModeCommands: Set<String> = []
@@ -258,6 +259,9 @@ final class AppEnvironment {
 
         // Workflows can be reached from everywhere that runs commands, text, or files.
         automation.setFeature = { feature, enabled in services.setFeature(feature, enabled: enabled) }
+        let pages = PageCaptureService(support: paths.support, shelf: fileShelf)
+        pageCapture = pages
+        bridge.savePage = { [weak pages] file, action in DispatchQueue.main.async { pages?.handle(file: file, action: action) } }
         bridge.openLink = { [weak links] url in DispatchQueue.main.async { links?.open(url, sourceAppID: nil) } }
         bridge.showSelection = { [weak selection] text in DispatchQueue.main.async { selection?.showText(text) } }
         selection.runner.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "Selection bar", input: text) }

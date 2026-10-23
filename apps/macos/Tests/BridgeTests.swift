@@ -182,3 +182,106 @@ final class NativeHostInstallerTests: XCTestCase {
         }
     }
 }
+
+final class PageCaptureTests: XCTestCase {
+    private func message(markdown: String = "# Title\n\nSome text.", as action: String = "markdown", url: String = "https://example.com/post") -> [String: Any] {
+        ["type": "page", "as": action, "title": "A Post", "url": url, "site": "Example", "byline": "Ann", "markdown": markdown, "truncated": false]
+    }
+
+    func testAGoodPageMessageBecomesAClip() throws {
+        let result = try PageCapture.clip(from: message()).get()
+        XCTAssertEqual(result.action, .markdown)
+        XCTAssertEqual(result.clip.title, "A Post")
+        XCTAssertEqual(result.clip.url, "https://example.com/post")
+    }
+
+    func testBadPageMessagesAreRefused() {
+        XCTAssertThrowsError(try PageCapture.clip(from: message(as: "delete")).get())
+        XCTAssertThrowsError(try PageCapture.clip(from: message(markdown: "   ")).get())
+        XCTAssertThrowsError(try PageCapture.clip(from: message(url: "file:///etc/passwd")).get())
+        XCTAssertThrowsError(try PageCapture.clip(from: message(url: "javascript:alert(1)")).get())
+        XCTAssertThrowsError(try PageCapture.clip(from: message(markdown: String(repeating: "x", count: PageCapture.maxMarkdownBytes + 1))).get())
+    }
+
+    func testThePageAddressCarriesOnlyAFileNameAndTheAppChecksIt() throws {
+        let token = String(repeating: "a", count: 64)
+        let name = PageCapture.inboxName()
+        XCTAssertTrue(PageCapture.isInboxName(name))
+        let address = try XCTUnwrap(BridgeProtocol.pageAddress(file: name, action: .pdf, token: token))
+        XCTAssertLessThan(address.absoluteString.count, 200, "the text never travels in the address")
+        XCTAssertEqual(try BridgeProtocol.request(from: address, token: token).get(), .page(file: name, action: .pdf))
+        XCTAssertThrowsError(try BridgeProtocol.request(from: address, token: String(repeating: "b", count: 64)).get(), "a wrong secret is refused")
+        for bad in ["../../etc/passwd", "page-123.json", "page-" + String(repeating: "g", count: 32) + ".json", "/tmp/page-" + String(repeating: "a", count: 32) + ".json", name + "x"] {
+            XCTAssertFalse(PageCapture.isInboxName(bad), bad)
+            let forged = try XCTUnwrap(BridgeProtocol.pageAddress(file: bad, action: .markdown, token: token))
+            XCTAssertThrowsError(try BridgeProtocol.request(from: forged, token: token).get(), bad)
+        }
+    }
+
+    func testTheNativeHostKeepsAPageInTheInboxAndAsksTheAppToTakeIt() throws {
+        let support = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-host-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: support) }
+        let token = BridgeToken.loadOrCreate(in: support)
+        var opened: URL?
+        let body = try JSONSerialization.data(withJSONObject: message(markdown: String(repeating: "word ", count: 30_000)))
+        XCTAssertGreaterThan(body.count, NativeHost.maxMessageBytes, "bigger than an ordinary message")
+        let reply = NativeHost.reply(to: body, support: support) { opened = $0; return true }
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: reply) as? [String: Any])?["ok"] as? Bool, true)
+        let address = try XCTUnwrap(opened)
+        guard case .page(let file, _) = try BridgeProtocol.request(from: address, token: token).get() else { return XCTFail("a page request") }
+        let saved = try Data(contentsOf: support.appendingPathComponent("Inbox").appendingPathComponent(file))
+        XCTAssertEqual(try JSONDecoder().decode(PageClip.self, from: saved).title, "A Post")
+        // An ordinary message may not be big.
+        let big = try JSONSerialization.data(withJSONObject: ["type": "selection", "text": String(repeating: "x", count: NativeHost.maxMessageBytes + 10)])
+        let refused = NativeHost.reply(to: big, support: support) { _ in true }
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: refused) as? [String: Any])?["ok"] as? Bool, false)
+    }
+
+    func testTheMarkdownFileHasATitleAndSourceAndFileNamesAreSafe() {
+        let clip = PageClip(title: "A: Post/Name", url: "https://example.com/a", site: "Example", byline: "Ann", markdown: "# A: Post/Name\n\nBody text.", truncated: true)
+        let text = PageCapture.document(for: clip)
+        XCTAssertTrue(text.hasPrefix("# A: Post/Name\n\nBy Ann · Example · <https://example.com/a>"))
+        XCTAssertEqual(text.components(separatedBy: "# A: Post/Name").count, 2, "the page's own repeated title is dropped")
+        XCTAssertTrue(text.contains("Body text.") && text.contains("first part"))
+        XCTAssertEqual(PageCapture.fileStem(for: "A: Post/Name"), "A- Post-Name")
+        XCTAssertEqual(PageCapture.fileStem(for: "..."), "Page")
+        XCTAssertLessThanOrEqual(PageCapture.fileStem(for: String(repeating: "long ", count: 60)).count, 80)
+    }
+
+    func testMarkdownBecomesSafePlainHTML() {
+        let html = PageMarkdown.html("""
+        # Heading
+
+        A paragraph with **bold**, *italic*, `code` and [a link](https://example.com/x) and [bad](javascript:alert(1)) and <script>alert(1)</script>.
+
+        - One
+          - Nested
+        - Two
+
+        1. First
+
+        > Quote
+
+        ```
+        <b>not bold</b>
+        ```
+
+        | A | B |
+        | --- | --- |
+        | 1 | 2 |
+
+        ![alt text](https://example.com/p.png)
+        """, title: "T")
+        XCTAssertTrue(html.contains("<h1>Heading</h1>"))
+        XCTAssertTrue(html.contains("<strong>bold</strong>") && html.contains("<em>italic</em>") && html.contains("<code>code</code>"))
+        XCTAssertTrue(html.contains("<a href=\"https://example.com/x\">a link</a>"))
+        XCTAssertFalse(html.contains("href=\"javascript"), "only web addresses become links")
+        XCTAssertFalse(html.contains("<script>alert"), "page text is escaped")
+        XCTAssertTrue(html.contains("<ul>") && html.contains("<ol>") && html.contains("<blockquote>") && html.contains("<table>"))
+        XCTAssertTrue(html.contains("&lt;b&gt;not bold&lt;/b&gt;"), "code is escaped")
+        XCTAssertFalse(html.contains("<img"), "nothing is loaded from the web")
+        XCTAssertTrue(html.contains("[image: alt text]"))
+        XCTAssertEqual(html.components(separatedBy: "<ul>").count, 3, "a nested list opens a second ul")
+    }
+}

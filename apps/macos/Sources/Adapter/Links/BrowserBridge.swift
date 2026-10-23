@@ -23,6 +23,8 @@ enum BridgeError: Error, Equatable, LocalizedError {
 enum BridgeRequest: Equatable {
     case open(URL, title: String?)
     case selection(text: String, page: URL?)
+    /// A page the browser read, waiting in the inbox folder under this file name.
+    case page(file: String, action: PageAction)
 }
 
 enum BridgeProtocol {
@@ -72,6 +74,16 @@ enum BridgeProtocol {
         return .success(url)
     }
 
+    /// The host's side, for a page: the address that tells the app which file in the inbox to take, and what to do with it.
+    static func pageAddress(file: String, action: PageAction, token: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "kriya"
+        components.host = "browser"
+        components.path = "/page"
+        components.queryItems = [URLQueryItem(name: "t", value: token), URLQueryItem(name: "f", value: file), URLQueryItem(name: "a", value: action.rawValue)]
+        return components.url
+    }
+
     /// The app's side: checks an address and its secret, and says what was asked.
     static func request(from url: URL, token: String) -> Result<BridgeRequest, BridgeError> {
         guard url.scheme?.lowercased() == "kriya", url.host?.lowercased() == "browser",
@@ -88,6 +100,11 @@ enum BridgeProtocol {
         case "/selection":
             guard let text = clipped(query["x"], maxTextLength) else { return .failure(.invalid("There was no text to show.")) }
             return .success(.selection(text: text, page: webURL(query["u"])))
+        case "/page":
+            guard let file = query["f"], PageCapture.isInboxName(file), let action = query["a"].flatMap(PageAction.init(rawValue:)) else {
+                return .failure(.invalid("That page request was not understood."))
+            }
+            return .success(.page(file: file, action: action))
         default:
             return .failure(.invalid("Kriya does not know that request."))
         }
@@ -137,6 +154,8 @@ final class BrowserBridge: ObservableObject {
     private let token: String
     var openLink: (URL) -> Void = { _ in }
     var showSelection: (String) -> Void = { _ in }
+    /// Takes the page waiting under this file name in the inbox and does the action with it.
+    var savePage: (String, PageAction) -> Void = { _, _ in }
 
     init(support: URL) {
         token = BridgeToken.loadOrCreate(in: support)
@@ -155,6 +174,7 @@ final class BrowserBridge: ObservableObject {
             switch request {
             case .open(let link, _): openLink(link)
             case .selection(let text, _): showSelection(text)
+            case .page(let file, let action): savePage(file, action)
             }
             return true
         }
