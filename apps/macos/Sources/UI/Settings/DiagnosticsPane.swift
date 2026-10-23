@@ -297,6 +297,7 @@ private struct DiagnosticsOverviewTab: View {
     @State private var autoRefresh = true
     @State private var message: String?
     @State private var resetting: ResettableArea?
+    @State private var explaining = false
     @ObservedObject private var timings = FeatureTimings.shared
 
     private let ticker = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
@@ -346,6 +347,8 @@ private struct DiagnosticsOverviewTab: View {
                 HStack {
                     Button("Show Log Folder") { NSWorkspace.shared.open(paths.logs) }
                     Button("Save Diagnostic Report…") { saveReport() }
+                    Button("Explain with AI") { explain() }.disabled(explaining || !AIGateway.shared.isAvailable(for: .diagnostics))
+                        .help("Sends the report, with names, paths, addresses and keys removed, to the provider you chose for Diagnostics")
                     Spacer()
                 }
                 if let message {
@@ -478,6 +481,19 @@ private struct DiagnosticsOverviewTab: View {
             FeatureReset.restore(values, to: area)
             undo.clear()
             message = "Kriya could not restart, so \(area.title) was put back as it was."
+        }
+    }
+
+    private func explain() {
+        explaining = true
+        let report = DiagnosticReport.make(config: config, devices: devices, services: services, events: events, permissions: permissions, intelligence: intelligence)
+        Task {
+            do {
+                let text = try await AIDiagnosticsExplainer.explain(report: report, question: "")
+                await MainActor.run { explaining = false; ScriptOutputWindow.show(title: "What the report suggests", text: text) }
+            } catch {
+                await MainActor.run { explaining = false; message = (error as? AIError)?.errorDescription ?? error.localizedDescription }
+            }
         }
     }
 

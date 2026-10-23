@@ -19,6 +19,7 @@ struct IntelligencePane: View {
         Form {
             AIProvidersSection()
             AIToolsSection()
+            AISearchSection()
 
             Section {
                 HStack(alignment: .top, spacing: 12) {

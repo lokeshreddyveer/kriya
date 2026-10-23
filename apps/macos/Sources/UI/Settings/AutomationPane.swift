@@ -57,6 +57,7 @@ private struct WorkflowsTab: View {
     @State private var editing: Workflow?
     @State private var selected: Set<String> = []
     @State private var message: String?
+    @State private var drafting = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -105,6 +106,7 @@ private struct WorkflowsTab: View {
                 } label: { Label("New Workflow", systemImage: "plus") }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
                 Menu {
                     Button("Duplicate") { selected.forEach(store.duplicate) }.disabled(selected.isEmpty)
+                    Button("Draft with AI…") { drafting = true }
                     Button("Import Workflows…") { importWorkflows() }
                     Button("Export Selected…") { export() }.disabled(selected.isEmpty)
                     Divider()
@@ -118,6 +120,7 @@ private struct WorkflowsTab: View {
         .animation(.smooth(duration: 0.25), value: store.workflows)
         .animation(.smooth(duration: 0.2), value: message)
         .sheet(item: $editing) { WorkflowEditor(workflow: $0) }
+        .sheet(isPresented: $drafting) { AIWorkflowDraftSheet { draft in drafting = false; if let draft { editing = draft } } }
     }
 
     private func importWorkflows() {
@@ -1024,6 +1027,49 @@ private struct MIDITriggersSection: View {
             }
         } header: { Text("MIDI triggers") } footer: {
             Text("Press “Learn a Control”, then play a note or turn a knob on your device; it becomes a trigger you point at a workflow or command. A workflow still needs your authorization before it will run. Only notes, knobs and program changes are read, and nothing you play is kept.")
+        }
+    }
+}
+
+
+/// Describe an automation in words; the AI drafts it from a short list of safe step types, and it opens in the editor to be checked.
+private struct AIWorkflowDraftSheet: View {
+    let done: (Workflow?) -> Void
+    @State private var text = ""
+    @State private var working = false
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Draft a workflow with AI").font(.headline)
+            Text("Say what it should do. The draft can only use safe steps: show a message, wait, copy text, keep a value, ask you, open an address or an app. It opens in the editor, switched off, for you to check. Anything that runs code or presses keys you add yourself.")
+                .font(.callout).foregroundStyle(.secondary)
+            TextEditor(text: $text).frame(height: 110).font(.body).overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+            if let problem { Text(problem).font(.callout).foregroundStyle(Theme.warn) }
+            HStack {
+                if working { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel") { done(nil) }.keyboardShortcut(.cancelAction)
+                Button("Draft") { run() }.keyboardShortcut(.defaultAction).disabled(working || text.trimmingCharacters(in: .whitespacesAndNewlines).count < 8)
+            }
+        }
+        .padding(18).frame(width: 480)
+    }
+
+    private func run() {
+        working = true
+        problem = nil
+        let description = text
+        Task {
+            do {
+                let draft = try await AIWorkflowDrafter.draft(from: description)
+                await MainActor.run { working = false; done(draft) }
+            } catch {
+                await MainActor.run {
+                    working = false
+                    problem = (error as? AIError)?.errorDescription ?? (error as? CoreError).map { "The draft could not be used: \($0.userMessage)" } ?? error.localizedDescription
+                }
+            }
         }
     }
 }

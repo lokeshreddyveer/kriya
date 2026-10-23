@@ -606,6 +606,56 @@ extension AppEnvironment {
             }
         }
         host.openLauncher = { [weak keyboard] query in keyboard?.palette.show(prefill: query) }
+        configureAIIndex()
         host.runWorkflow = { [weak automation] id in automation?.fire(id, source: "AI tool") }
+    }
+}
+
+
+extension AppEnvironment {
+    /// Tells the AI index where each source's text comes from. Each is called on the main thread when the index is updated.
+    fileprivate func configureAIIndex() {
+        let indexer = AIIndexer.shared
+        indexer.providers[.notes] = {
+            let path = UserDefaults.standard.string(forKey: NotesModel.folderKey)
+            let store = NoteStore(folder: path.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? NoteStore.defaultFolder)
+            return store.list().prefix(500).map { note in
+                IndexDocument(id: "note:" + note.url.path, source: .notes, title: note.title, text: store.read(note.url), target: note.url.path, updated: note.modified)
+            }
+        }
+        indexer.providers[.workflows] = { [weak self] in
+            (self?.automation.store.workflows ?? []).map { workflow in
+                let steps = workflow.steps.map { workflowStepSummary(step: $0) }.joined(separator: "\n")
+                return IndexDocument(id: "workflow:" + workflow.id, source: .workflows, title: workflow.name, text: [workflow.notes ?? "", workflow.trigger.title, steps].joined(separator: "\n"), target: workflow.id,
+                                     updated: Date(timeIntervalSince1970: TimeInterval(workflow.updatedAt)))
+            }
+        }
+        indexer.providers[.actions] = {
+            KeyboardCommands.all.map { IndexDocument(id: "command:" + $0.command, source: .actions, title: $0.title, text: $0.command.replacingOccurrences(of: ".", with: " "), target: $0.command, updated: Date(timeIntervalSince1970: 0)) }
+        }
+        indexer.providers[.clipboard] = { [weak self] in
+            guard let store = self?.clipboardStore else { return [] }
+            let filter = ClipFilter(kinds: [], pinnedOnly: false, favoritesOnly: false, collectionId: nil, tag: nil)
+            return store.search("", filter: filter, limit: 400).filter { ($0.favorite || $0.pinned) && !$0.sensitive && ($0.kind == .text || $0.kind == .url) }.map { clip in
+                IndexDocument(id: "clip:" + clip.id, source: .clipboard, title: clip.title ?? "", text: String(clip.preview.prefix(300)), target: clip.id, updated: Date(timeIntervalSince1970: TimeInterval(clip.lastUsedAt)), favorite: clip.favorite)
+            }
+        }
+        indexer.providers[.savedPages] = { [weak self] in
+            guard let folder = self?.pageCapture?.folder else { return [] }
+            let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            return urls.filter { $0.pathExtension == "md" }.prefix(300).compactMap { url in
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+                let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+                return IndexDocument(id: "page:" + url.path, source: .savedPages, title: url.deletingPathExtension().lastPathComponent, text: text, target: url.path, updated: date)
+            }
+        }
+        indexer.providers[.bookmarks] = { [weak self] in
+            (self?.launcherSources?.bookmarks.all ?? []).prefix(2000).map { IndexDocument(id: "bookmark:" + $0.url, source: .bookmarks, title: $0.title, text: $0.url, target: $0.url, updated: Date(timeIntervalSince1970: 0)) }
+        }
+        indexer.providers[.activity] = {
+            let entries = AuditLog.shared.entries.prefix(300)
+            return entries.map { IndexDocument(id: "audit:" + $0.id, source: .activity, title: $0.kind.title, text: $0.summary, target: "", updated: $0.at) }
+        }
+        indexer.start()
     }
 }

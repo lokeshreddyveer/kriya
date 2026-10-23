@@ -43,6 +43,7 @@ pub mod window_extras;
 mod window_store;
 pub mod windows;
 pub mod workflow;
+pub mod workflow_draft;
 mod workflow_store;
 pub mod workspace;
 
@@ -1016,6 +1017,18 @@ pub fn workflow_dependencies(
 }
 
 /// What importing a package would bring in, without importing it.
+/// The JSON schema an AI is asked to follow when it drafts a workflow. It can only describe steps that need no authorization.
+#[uniffi::export]
+pub fn workflow_draft_schema() -> String {
+    workflow_draft::schema()
+}
+
+/// Builds a switched-off, unauthorized, manual workflow from an AI's draft, or says what is wrong with it.
+#[uniffi::export]
+pub fn workflow_from_draft(json: String, id: String, now: i64) -> Result<Workflow, CoreError> {
+    workflow_draft::from_draft(&json, id, now)
+}
+
 #[uniffi::export]
 pub fn workflow_package_report(json: String, existing_ids: Vec<String>) -> PackageReport {
     workflow::package_report(&json, &existing_ids)

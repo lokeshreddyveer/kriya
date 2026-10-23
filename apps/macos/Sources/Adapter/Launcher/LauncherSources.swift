@@ -202,7 +202,7 @@ final class LauncherSources {
         palette.addQueryProvider { [weak self] text in self?.queryEntries(text) ?? [] }
         palette.addQueryProvider { [weak self] text in self?.navigationEntries(text) ?? [] }
         palette.addQueryProvider { [weak self] text in self?.argumentEntries(text) ?? [] }
-        palette.addQueryProvider { [weak self] text in (self?.soundEntries(text) ?? []) + (self?.addressEntries(text) ?? []) + (self?.noteEntries(text) ?? []) + (self?.jobEntries(text) ?? []) + (self?.focusEntries(text) ?? []) + (self?.sharedClipboardEntries(text) ?? []) + (self?.bookmarkEntries(text) ?? []) + (self?.menuBarItemEntries(text) ?? []) + (self?.passwordEntries(text) ?? []) + (self?.terminalEntries(text) ?? []) + (self?.colorPickerEntries(text) ?? []) }
+        palette.addQueryProvider { [weak self] text in (self?.soundEntries(text) ?? []) + (self?.addressEntries(text) ?? []) + (self?.noteEntries(text) ?? []) + (self?.jobEntries(text) ?? []) + (self?.focusEntries(text) ?? []) + (self?.sharedClipboardEntries(text) ?? []) + (self?.bookmarkEntries(text) ?? []) + (self?.menuBarItemEntries(text) ?? []) + (self?.passwordEntries(text) ?? []) + (self?.terminalEntries(text) ?? []) + (self?.colorPickerEntries(text) ?? []) + (self?.aiEntries(text) ?? []) }
         palette.addQueryProvider { [weak self] text in (self?.quitEntries(text) ?? []) + (self?.menuEntries(text) ?? []) + (self?.contactEntries(text) ?? []) }
         palette.model.tokenProvider = { [weak self] word in self?.token(for: word) }
         palette.model.startProvider = { [weak self] in self?.startEntries() ?? [] }
