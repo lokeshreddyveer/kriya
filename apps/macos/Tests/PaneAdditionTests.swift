@@ -1203,3 +1203,19 @@ final class NoteToolsTests: XCTestCase {
         XCTAssertTrue(pins.isEmpty, "same note, different ending")
     }
 }
+
+final class OCRLanguageTests: XCTestCase {
+    func testOnlySupportedLanguagesAreKeptInOrderWithoutRepeatsAndAtMostFive() {
+        let supported = ["en-US", "te-IN", "hi-IN", "fr-FR", "de-DE", "es-ES", "it-IT"]
+        XCTAssertEqual(OCRLanguages.resolve(chosen: ["te-IN", "xx-XX", "en-US", "te-IN"], supported: supported), ["te-IN", "en-US"])
+        XCTAssertEqual(OCRLanguages.resolve(chosen: supported, supported: supported).count, 5)
+        XCTAssertEqual(OCRLanguages.resolve(chosen: [], supported: supported), [])
+    }
+
+    func testStoredListsParseAndJoinAndTheSummarySaysAutomaticOrNames() {
+        XCTAssertEqual(OCRLanguages.parse(" te-IN , ,en-US"), ["te-IN", "en-US"])
+        XCTAssertEqual(OCRLanguages.join(["a", "b"]), "a,b")
+        XCTAssertTrue(OCRLanguages.summary(chosen: []).hasPrefix("Automatic"))
+        XCTAssertTrue(OCRLanguages.summary(chosen: ["fr-FR"], locale: Locale(identifier: "en_US")).contains("French"))
+    }
+}

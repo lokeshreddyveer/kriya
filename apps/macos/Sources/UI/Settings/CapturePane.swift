@@ -9,6 +9,7 @@ struct CapturePane: View {
     @State private var newWord = ""
     @StateObject private var profiles = CaptureProfileStore()
     @State private var profileName = ""
+    @AppStorage(OCRLanguages.defaultsKey) private var ocrLanguages = ""
 
     private var settings: CaptureSettings { store.settings }
 
@@ -51,6 +52,21 @@ struct CapturePane: View {
             RecordingSection(store: store)
 
             CaptureHistorySection()
+
+            Section {
+                let supported = TextRecognizer.supportedLanguages
+                let chosen = OCRLanguages.parse(ocrLanguages)
+                Text(OCRLanguages.summary(chosen: chosen)).font(.callout).foregroundStyle(.secondary)
+                Menu("Choose Languages") {
+                    Button("Automatic") { ocrLanguages = "" }
+                    Divider()
+                    ForEach(supported, id: \.self) { code in
+                        Button { ocrLanguages = OCRLanguages.join(chosen.contains(code) ? chosen.filter { $0 != code } : chosen + [code]) } label: {
+                            Label(OCRLanguages.name(of: code), systemImage: chosen.contains(code) ? "checkmark" : "")
+                        }
+                    }
+                }.fixedSize()
+            } header: { Text("Text in pictures (OCR)") } footer: { Text("Pick up to five languages if the automatic choice misreads. Reading happens on this Mac.") }
 
             Section {
                 ForEach(profiles.profiles) { profile in

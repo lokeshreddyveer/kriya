@@ -191,7 +191,8 @@ struct NoteStore {
     /// Copies a file into the note's attachment folder under a safe, unused name. Returns the Markdown link to put in the note.
     func attach(_ source: URL, to note: URL) -> String? {
         let size = (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 } ?? 0
-        guard Int64(size) <= NoteAttachments.maxBytes, !source.hasDirectoryPath else { return nil }
+        let isFolder = (try? source.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        guard Int64(size) <= NoteAttachments.maxBytes, !isFolder else { return nil }
         let dir = attachmentsFolder(for: note)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var name = NoteAttachments.safeName(source.lastPathComponent)

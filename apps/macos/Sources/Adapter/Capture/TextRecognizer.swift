@@ -4,11 +4,20 @@ import Vision
 
 /// Reading the text in a picture with the Mac's own recognizer. It runs on this Mac and nothing is sent anywhere.
 final class TextRecognizer {
+    /// The language codes the reader on this Mac understands.
+    static var supportedLanguages: [String] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        return (try? request.supportedRecognitionLanguages()) ?? []
+    }
+
     /// The lines of text in the picture, each with its words and where they are.
     func recognize(_ image: CGImage) throws -> [RecognizedLine] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
+        let chosen = OCRLanguages.resolve(chosen: OCRLanguages.parse(UserDefaults.standard.string(forKey: OCRLanguages.defaultsKey) ?? ""), supported: Self.supportedLanguages)
+        if chosen.isEmpty { request.automaticallyDetectsLanguage = true } else { request.recognitionLanguages = chosen; request.automaticallyDetectsLanguage = false }
         try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         var lines: [RecognizedLine] = []
         for observation in request.results ?? [] {
