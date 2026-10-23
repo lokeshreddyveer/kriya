@@ -88,6 +88,10 @@ final class MIDITriggerRunner: ObservableObject {
     func learn() { learning = true }
 
     private func handle(_ message: MIDIMessage) {
+        FeatureTimings.shared.measure("MIDI message") { handleNow(message) }
+    }
+
+    private func handleNow(_ message: MIDIMessage) {
         lastHeard = message
         if learning {
             learning = false

@@ -297,6 +297,7 @@ private struct DiagnosticsOverviewTab: View {
     @State private var autoRefresh = true
     @State private var message: String?
     @State private var resetting: ResettableArea?
+    @ObservedObject private var timings = FeatureTimings.shared
 
     private let ticker = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
@@ -354,6 +355,25 @@ private struct DiagnosticsOverviewTab: View {
                 Text("Log")
             } footer: {
                 Text("The log stays on this Mac. It records what Kriya did, never what you typed or selected. A report is a text file you can choose to share.")
+            }
+
+            Section {
+                Toggle("Measure how long Kriya's own work takes", isOn: $timings.enabled)
+                if let bytes = ProcessMemory.residentBytes() {
+                    LabeledContent("Memory held by Kriya", value: ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory))
+                }
+                if timings.enabled {
+                    ForEach(timings.table.ranked, id: \.name) { entry in
+                        LabeledContent(entry.name) {
+                            Text("\(entry.stat.count)× · avg \(entry.stat.averageMicroseconds) µs · worst \(entry.stat.worstMicroseconds) µs · total \(entry.stat.totalMicroseconds / 1000) ms")
+                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                    }
+                    if timings.table.stats.isEmpty { Text("Nothing has been measured yet.").font(.callout).foregroundStyle(.secondary) }
+                    Button("Clear") { timings.reset() }.controlSize(.small)
+                }
+            } header: { Text("Activity and memory (approximate)") } footer: {
+                Text("Off by default. These are Kriya's own clock readings for a few of its recurring jobs, kept in memory only and never written down or sent. They leave out time the system spends for Kriya, and they are not a substitute for Activity Monitor.")
             }
 
             Section {

@@ -516,3 +516,40 @@ final class PreviousAreaTests: XCTestCase {
         XCTAssertFalse(ScreenCaptureArguments.area(area, delay: 3, sound: true, output: out).contains("-i"), "no interactive selection")
     }
 }
+
+final class TimingTableTests: XCTestCase {
+    func testTotalsAverageAndWorstAreKept() {
+        var table = TimingTable()
+        table.record("a", microseconds: 100)
+        table.record("a", microseconds: 300)
+        table.record("b", microseconds: 1000)
+        let a = table.stats["a"]
+        XCTAssertEqual(a?.count, 2)
+        XCTAssertEqual(a?.averageMicroseconds, 200)
+        XCTAssertEqual(a?.worstMicroseconds, 300)
+        XCTAssertEqual(table.ranked.map(\.name), ["b", "a"], "busiest first")
+        table.record("c", microseconds: -5)
+        XCTAssertNil(table.stats["c"], "a negative reading is ignored")
+    }
+
+    func testTheNumberOfNamesIsBounded() {
+        var table = TimingTable()
+        for i in 0..<(TimingTable.maxNames + 20) { table.record("n\(i)", microseconds: 1) }
+        XCTAssertEqual(table.stats.count, TimingTable.maxNames)
+        table.record("n0", microseconds: 1)
+        XCTAssertEqual(table.stats["n0"]?.count, 2, "names already known keep counting")
+    }
+
+    func testMeasuringWhileOffJustRunsTheWork() {
+        let timings = FeatureTimings.shared
+        let was = timings.enabled
+        timings.enabled = false
+        XCTAssertEqual(timings.measure("x") { 41 + 1 }, 42)
+        XCTAssertTrue(timings.table.stats.isEmpty)
+        timings.enabled = was
+    }
+
+    func testMemoryCanBeRead() {
+        XCTAssertGreaterThan(ProcessMemory.residentBytes() ?? 0, 0)
+    }
+}

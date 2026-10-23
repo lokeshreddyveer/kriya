@@ -146,6 +146,10 @@ final class PaletteModel: ObservableObject {
     }
 
     private func rank(resetSelection: Bool) {
+        FeatureTimings.shared.measure("Launcher search") { rankNow(resetSelection: resetSelection) }
+    }
+
+    private func rankNow(resetSelection: Bool) {
         let full = effectiveQuery.trimmingCharacters(in: .whitespaces)
         // "apps: saf" limits the results to apps; "apps:" alone lists them.
         let parsed = token == nil ? LauncherFilter.parse(full) : nil

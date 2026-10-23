@@ -35,7 +35,7 @@ final class FinderWindowTracker: ObservableObject {
     private func poll() {
         guard enabled, NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.apple.finder" }) else { return }
         queue.async { [weak self] in
-            let (front, others) = DialogFolderHelper.finderFolders()
+            let (front, others) = FeatureTimings.shared.measure("Finder window check") { DialogFolderHelper.finderFolders() }
             let paths = (front.map { [$0] } ?? []) + others
             DispatchQueue.main.async { self?.observe(paths) }
         }

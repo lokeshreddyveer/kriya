@@ -84,6 +84,10 @@ final class SoundRuleRunner: ObservableObject {
     }
 
     private func checkDevices() {
+        FeatureTimings.shared.measure("Sound devices check") { checkDevicesNow() }
+    }
+
+    private func checkDevicesNow() {
         let now = Set(audio.devices().map(\.name))
         let change = SoundRules.difference(old: knownDevices, new: now)
         knownDevices = now
