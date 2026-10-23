@@ -207,12 +207,12 @@ struct BackupPane: View {
         }
         let alert = NSAlert()
         alert.messageText = "Restore these settings?"
-        alert.informativeText = """
-            Made \(Date(timeIntervalSince1970: TimeInterval(summary.createdAt)).shortDescription) with Kriya \(summary.appVersion).
-            It holds \(summary.profiles) profile\(summary.profiles == 1 ? "" : "s"), \(summary.actions) saved action\(summary.actions == 1 ? "" : "s") \(summary.rules) rule\(summary.rules == 1 ? "" : "s") and \(summary.mousePresets) mouse preset\(summary.mousePresets == 1 ? "" : "s").
-
-            Your current settings will be replaced. They are saved first, so you can undo this.
-            """
+        let madeAt = Date(timeIntervalSince1970: TimeInterval(summary.createdAt)).shortDescription
+        if let current = try? backup.currentSummary() {
+            alert.informativeText = BackupComparison.preview(now: current, backup: summary, madeAt: madeAt)
+        } else {
+            alert.informativeText = "Made \(madeAt) with Kriya \(summary.appVersion).\n\nYour current settings will be replaced. They are saved first, so you can undo this."
+        }
         alert.addButton(withTitle: "Restore")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }

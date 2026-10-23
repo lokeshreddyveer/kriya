@@ -177,6 +177,11 @@ final class BackupManager: ObservableObject {
         Log.info("Backup", "Settings backed up to \(url.lastPathComponent)\(isProtected ? " (protected)" : "")")
     }
 
+    /// What this Mac has now, counted the same way as a backup, to compare a restore against.
+    func currentSummary() throws -> BackupSummary {
+        try core.inspectBackup(json: try core.exportBackup(appVersion: SystemInfo.appVersion, now: SystemInfo.nowSeconds))
+    }
+
     /// `passphrase` is for a backup protected with a passphrase this Mac does not hold. Without it, the stored one is used.
     func inspect(_ url: URL, passphrase: String? = nil) throws -> BackupSummary {
         try core.inspectBackup(json: try read(url, passphrase: passphrase))

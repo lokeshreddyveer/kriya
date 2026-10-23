@@ -142,6 +142,9 @@ private struct ClipBrowser: View {
                     Button("Import Snippets…") { importSnippets() }
                     Button("Export Selected…") { exportSnippets(selected: true) }.disabled(selection == nil)
                     Button("Export All…") { exportSnippets(selected: false) }.disabled(items.isEmpty)
+                    Divider()
+                    Button("Export Selected, Encrypted…") { exportSnippets(selected: true, encrypted: true) }.disabled(selection == nil)
+                    Button("Export All, Encrypted…") { exportSnippets(selected: false, encrypted: true) }.disabled(items.isEmpty)
                 } label: { Image(systemName: "square.and.arrow.up.on.square") }.menuStyle(.borderlessButton).fixedSize()
             } else {
                 Button { service.setPaused(!clip.config.paused) } label: { Image(systemName: clip.config.paused ? "play.circle" : "pause.circle") }
@@ -172,23 +175,61 @@ private struct ClipBrowser: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        var phrase: String?
+        if ClipboardStore.needsPassphrase(url) {
+            guard let typed = Self.askPassphrase(title: "This file is encrypted", detail: "Type the passphrase it was exported with.", confirm: false) else { return }
+            phrase = typed
+        }
         do {
-            let s = try clip.importSnippets(from: url)
+            let s = try clip.importSnippets(from: url, passphrase: phrase)
             message = "Added \(s.added), updated \(s.updated)" + (s.skipped > 0 ? ", skipped \(s.skipped)" : "")
             refresh()
         } catch { clip.lastError = error.userMessage }
     }
 
-    private func exportSnippets(selected: Bool) {
+    private func exportSnippets(selected: Bool, encrypted: Bool = false) {
+        var phrase: String?
+        if encrypted {
+            guard let typed = Self.askPassphrase(title: "Encrypt the export", detail: "Choose a passphrase of at least \(BackupCrypto.minimumLength) characters. Without it the file cannot be opened, by anyone.", confirm: true) else { return }
+            phrase = typed
+        }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "Kriya snippets.json"
+        panel.nameFieldStringValue = encrypted ? "Kriya snippets (encrypted).json" : "Kriya snippets.json"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let ids = selected ? (selection.map { [$0] } ?? []) : items.map(\.id)
         do {
-            try clip.exportSnippets(ids, to: url)
-            message = "Exported \(ids.count)"
+            try clip.exportSnippets(ids, to: url, passphrase: phrase)
+            message = "Exported \(ids.count)" + (encrypted ? ", encrypted" : "")
         } catch { clip.lastError = error.userMessage }
+    }
+
+    /// Asks for a passphrase. When `confirm` is set it asks twice and refuses a short or mismatched one.
+    private static func askPassphrase(title: String, detail: String, confirm: Bool) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = detail
+        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 280, height: confirm ? 56 : 24))
+        stack.orientation = .vertical
+        stack.spacing = 8
+        let first = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        first.placeholderString = "Passphrase"
+        stack.addArrangedSubview(first)
+        let second = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        second.placeholderString = "Type it again"
+        if confirm { stack.addArrangedSubview(second) }
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = first
+        while alert.runModal() == .alertFirstButtonReturn {
+            if !confirm { return first.stringValue.isEmpty ? nil : first.stringValue }
+            if first.stringValue.count < BackupCrypto.minimumLength { alert.informativeText = "Use at least \(BackupCrypto.minimumLength) characters."; continue }
+            if first.stringValue != second.stringValue { alert.informativeText = "The two do not match."; continue }
+            return first.stringValue
+        }
+        return nil
     }
 }
 

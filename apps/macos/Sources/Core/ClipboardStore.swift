@@ -199,14 +199,33 @@ final class ClipboardStore: ObservableObject {
 
     // MARK: Sharing snippets
 
-    func exportSnippets(_ ids: [String], to url: URL) throws {
+    /// Writes the snippets to a file. With a passphrase the file is sealed (AES-256-GCM, key from the passphrase) and cannot be
+    /// read without it; without one it is plain JSON.
+    func exportSnippets(_ ids: [String], to url: URL, passphrase: String? = nil) throws {
         let json = try core.clipExportSnippets(ids: ids)
-        try json.write(to: url, atomically: true, encoding: .utf8)
+        if let passphrase, !passphrase.isEmpty {
+            try BackupCrypto.seal(json, passphrase: passphrase).write(to: url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } else {
+            try json.write(to: url, atomically: true, encoding: .utf8)
+        }
     }
 
-    func importSnippets(from url: URL) throws -> SnippetImportSummary {
+    /// Whether a snippet file is sealed and needs a passphrase to be read.
+    static func needsPassphrase(_ url: URL) -> Bool {
+        (try? Data(contentsOf: url)).map(BackupCrypto.isEncrypted) ?? false
+    }
+
+    func importSnippets(from url: URL, passphrase: String? = nil) throws -> SnippetImportSummary {
         let data = try Data(contentsOf: url)
-        guard let json = String(data: data, encoding: .utf8) else { throw CoreError.Backup(message: "the file is not a Kriya snippet file") }
+        let json: String
+        if BackupCrypto.isEncrypted(data) {
+            guard let passphrase, !passphrase.isEmpty else { throw BackupCryptoError.needsPassphrase }
+            json = try BackupCrypto.open(data, passphrase: passphrase)
+        } else {
+            guard let text = String(data: data, encoding: .utf8) else { throw CoreError.Backup(message: "the file is not a Kriya snippet file") }
+            json = text
+        }
         let summary = try core.clipImportSnippets(json: json, now: SystemInfo.nowSeconds)
         reload()
         return summary

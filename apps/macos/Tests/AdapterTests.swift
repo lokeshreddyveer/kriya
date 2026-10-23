@@ -1265,9 +1265,9 @@ final class AuditAndLocalOnlyTests: XCTestCase {
         let defaults = UserDefaults(suiteName: "kriya-audit-\(UUID().uuidString)")!
         let log = AuditLog(defaults: defaults)
         for index in 0..<(AuditLog.capacity + 5) { log.record(.network, "request \(index)") }
-        let wait = expectation(description: "published")
-        DispatchQueue.main.async { wait.fulfill() }
-        wait(for: [wait], timeout: 2)
+        let published = expectation(description: "published")
+        DispatchQueue.main.async { published.fulfill() }
+        wait(for: [published], timeout: 2)
         XCTAssertEqual(log.entries.count, AuditLog.capacity)
         XCTAssertEqual(log.entries.first?.summary, "request \(AuditLog.capacity + 4)")
         XCTAssertEqual(AuditLog(defaults: defaults).entries.count, AuditLog.capacity, "it survives a restart")
@@ -1294,5 +1294,45 @@ final class AuditAndLocalOnlyTests: XCTestCase {
         XCTAssertTrue(LocalOnly.isOn)
         XCTAssertTrue(LocalOnly.blockedMessage.contains("no network requests"))
         XCTAssertFalse(LocalOnly.stopped.isEmpty)
+    }
+}
+
+final class BackupComparisonTests: XCTestCase {
+    private func summary(profiles: UInt32, actions: UInt32 = 0, rules: UInt32 = 0) -> BackupSummary {
+        BackupSummary(createdAt: 0, appVersion: "0.5.0", profiles: profiles, actions: actions, rules: rules, devices: 0, mousePresets: 0, windowLayouts: 0)
+    }
+
+    func testTheRestorePreviewSaysWhatWouldBeAddedAndRemoved() {
+        let text = BackupComparison.preview(now: summary(profiles: 5, rules: 2), backup: summary(profiles: 3, actions: 4, rules: 2), madeAt: "yesterday")
+        XCTAssertTrue(text.contains("Profiles: 5 → 3 (2 removed)"))
+        XCTAssertTrue(text.contains("Saved actions: 0 → 4 (4 added)"))
+        XCTAssertTrue(text.contains("Rules: 2 (same count)"))
+        XCTAssertTrue(text.contains("Restoring would remove: 2 profiles."))
+        XCTAssertTrue(text.contains("saved first"))
+    }
+
+    func testNothingIsCalledOutWhenNothingWouldBeRemoved() {
+        let text = BackupComparison.preview(now: summary(profiles: 1), backup: summary(profiles: 4), madeAt: "today")
+        XCTAssertFalse(text.contains("Restoring would remove"))
+    }
+}
+
+final class EncryptedSnippetExportTests: XCTestCase {
+    func testASealedExportOpensOnlyWithItsPassphrase() throws {
+        let sealed = try BackupCrypto.seal("{\"snippets\":[]}", passphrase: "correct horse")
+        XCTAssertTrue(BackupCrypto.isEncrypted(sealed))
+        XCTAssertEqual(try BackupCrypto.open(sealed, passphrase: "correct horse"), "{\"snippets\":[]}")
+        XCTAssertThrowsError(try BackupCrypto.open(sealed, passphrase: "wrong phrase")) { XCTAssertEqual($0 as? BackupCryptoError, .wrongPassphrase) }
+        XCTAssertThrowsError(try BackupCrypto.seal("x", passphrase: "short")) { XCTAssertEqual($0 as? BackupCryptoError, .tooShort) }
+    }
+
+    func testTheStoreSeesWhichFilesNeedAPassphrase() throws {
+        let plain = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-\(UUID().uuidString).json")
+        let sealed = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-\(UUID().uuidString).json")
+        try Data("{}".utf8).write(to: plain)
+        try BackupCrypto.seal("{}", passphrase: "correct horse").write(to: sealed)
+        defer { try? FileManager.default.removeItem(at: plain); try? FileManager.default.removeItem(at: sealed) }
+        XCTAssertFalse(ClipboardStore.needsPassphrase(plain))
+        XCTAssertTrue(ClipboardStore.needsPassphrase(sealed))
     }
 }
