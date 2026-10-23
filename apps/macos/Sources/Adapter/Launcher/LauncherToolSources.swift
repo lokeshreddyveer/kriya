@@ -125,11 +125,13 @@ final class LauncherToolSources: ObservableObject {
     func requestContacts(_ done: @escaping (Bool) -> Void) { requestContactsAccess?(done) ?? done(false) }
     private let prefs: LauncherPrefs
     var onChange: () -> Void = {}
+    let browserTabs = BrowserTabIndex()
 
     init(extras: LauncherExtras, prefs: LauncherPrefs) {
         self.extras = extras
         self.prefs = prefs
         rates.onUpdate = { [weak self] in self?.onChange() }
+        browserTabs.onChange = { [weak self] in self?.onChange() }
     }
 
     private func copy(_ text: String, message: String = "Copied") {
@@ -209,6 +211,9 @@ final class LauncherToolSources: ObservableObject {
         if let link = extras.quicklinks.first(where: { $0.takesQuery && !$0.keyword.isEmpty && $0.keyword.lowercased() == word }) {
             return ArgumentToken(keyword: word, title: link.name, symbol: "link", placeholder: "Search \(link.name) for…")
         }
+        if let command = extras.apiCommands.first(where: { $0.takesQuery && $0.keyword.lowercased() == word }) {
+            return ArgumentToken(keyword: word, title: command.name, symbol: "network", placeholder: "Words to send to \(command.host ?? command.name)…")
+        }
         if let script = extras.scripts.first(where: { !$0.keyword.isEmpty && $0.keyword.lowercased() == word }) {
             return ArgumentToken(keyword: word, title: script.name, symbol: "terminal", placeholder: "Text for “\(script.name)”…")
         }
@@ -262,6 +267,24 @@ final class LauncherToolSources: ObservableObject {
                     id: "quicklink:\(link.id):vars", title: link.name, subtitle: link.template.contains("{selection}") && !sel.isEmpty ? "With the selected text" : "With the clipboard", symbol: "link",
                     category: .web, rememberable: false, queryScore: 990
                 ) { NSWorkspace.shared.open(url) })
+            }
+        }
+        if data.isEnabled(.web), let (command, query) = LauncherExtraMatch.apiCommand(in: text, among: extras.apiCommands) {
+            found.append(PaletteEntry(
+                id: "api:\(command.id):\(query)", title: query.isEmpty ? "Call “\(command.name)”" : "\(command.name): \(query.count > 60 ? String(query.prefix(60)) + "…" : query)",
+                subtitle: "Sends a \(command.method.rawValue) request to \(command.host ?? "the web")", symbol: "network", category: .web, rememberable: false, queryScore: 990
+            ) { [weak self] in
+                guard let self else { return }
+                APICommandRunner.run(command, query: query, toast: self.toast)
+            })
+        }
+        if data.isEnabled(.web), data.searchBrowserTabs == true, !text.contains("\n"), text.count >= 2 {
+            for tab in browserTabs.tabs(matching: text) {
+                found.append(PaletteEntry(
+                    id: "tab:\(tab.id)", title: tab.title.isEmpty ? tab.url : tab.title, subtitle: "\(tab.browser.rawValue) tab · \(URL(string: tab.url)?.host ?? tab.url)", symbol: "macwindow.on.rectangle",
+                    category: .web, rememberable: false, queryScore: 600,
+                    actions: [PaletteAction(title: "Copy the Address", symbol: "doc.on.doc") { [weak self] in self?.copy(tab.url) }]
+                ) { [weak self] in self?.browserTabs.activate(tab) })
             }
         }
         if let (script, argument) = LauncherExtraMatch.script(in: text, among: extras.scripts) {

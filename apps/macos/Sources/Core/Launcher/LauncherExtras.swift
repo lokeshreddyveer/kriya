@@ -110,6 +110,16 @@ enum LauncherExtraMatch {
         return links.first { !$0.keyword.isEmpty && $0.keyword.lowercased() == word && $0.usesVariables && !$0.takesQuery }
     }
 
+    /// An API command named by its keyword. One that takes words needs some after the keyword; one that does not runs on the
+    /// keyword alone.
+    static func apiCommand(in text: String, among commands: [APICommand]) -> (command: APICommand, query: String)? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if let (word, rest) = split(trimmed), !rest.isEmpty,
+           let command = commands.first(where: { $0.takesQuery && $0.keyword.lowercased() == word }) { return (command, rest) }
+        if let command = commands.first(where: { !$0.takesQuery && $0.keyword.lowercased() == trimmed.lowercased() }) { return (command, "") }
+        return nil
+    }
+
     static func script(in text: String, among scripts: [ScriptCommand]) -> (script: ScriptCommand, argument: String)? {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         if let (word, rest) = split(trimmed), let script = scripts.first(where: { !$0.keyword.isEmpty && $0.keyword.lowercased() == word }) {
@@ -126,6 +136,7 @@ final class LauncherExtras: ObservableObject {
 
     @Published private(set) var quicklinks: [Quicklink]
     @Published private(set) var scripts: [ScriptCommand]
+    @Published private(set) var apiCommands: [APICommand]
     /// Folders of script files (Raycast's format works as it is).
     @Published private(set) var scriptFolders: [String]
 
@@ -133,12 +144,14 @@ final class LauncherExtras: ObservableObject {
     private let foldersKey = "launcherScriptFolders.v1"
     private let linksKey = "launcherQuicklinks.v1"
     private let scriptsKey = "launcherScripts.v1"
+    private let apiKey = "launcherAPICommands.v1"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         quicklinks = defaults.data(forKey: linksKey).flatMap { try? JSONDecoder().decode([Quicklink].self, from: $0) } ?? Self.starterLinks
         scripts = defaults.data(forKey: scriptsKey).flatMap { try? JSONDecoder().decode([ScriptCommand].self, from: $0) } ?? []
         scriptFolders = defaults.stringArray(forKey: foldersKey) ?? []
+        apiCommands = defaults.data(forKey: apiKey).flatMap { try? JSONDecoder().decode([APICommand].self, from: $0) } ?? []
     }
 
     /// A few to begin with, so the feature is visible. They are ordinary quicklinks and can be changed or removed.
@@ -154,7 +167,7 @@ final class LauncherExtras: ObservableObject {
     func save(_ link: Quicklink) -> String? {
         if let problem = link.problem { return problem }
         let word = link.keyword.trimmingCharacters(in: .whitespaces).lowercased()
-        if !word.isEmpty, quicklinks.contains(where: { $0.id != link.id && $0.keyword.lowercased() == word }) || scripts.contains(where: { $0.keyword.lowercased() == word }) {
+        if !word.isEmpty, quicklinks.contains(where: { $0.id != link.id && $0.keyword.lowercased() == word }) || scripts.contains(where: { $0.keyword.lowercased() == word }) || apiCommands.contains(where: { $0.keyword.lowercased() == word }) {
             return "“\(word)” is already used."
         }
         var saved = link
@@ -174,7 +187,7 @@ final class LauncherExtras: ObservableObject {
     func save(_ script: ScriptCommand) -> String? {
         if let problem = script.problem { return problem }
         let word = script.keyword.trimmingCharacters(in: .whitespaces).lowercased()
-        if !word.isEmpty, scripts.contains(where: { $0.id != script.id && $0.keyword.lowercased() == word }) || quicklinks.contains(where: { $0.keyword.lowercased() == word }) {
+        if !word.isEmpty, scripts.contains(where: { $0.id != script.id && $0.keyword.lowercased() == word }) || quicklinks.contains(where: { $0.keyword.lowercased() == word }) || apiCommands.contains(where: { $0.keyword.lowercased() == word }) {
             return "“\(word)” is already used."
         }
         var saved = script
@@ -188,6 +201,36 @@ final class LauncherExtras: ObservableObject {
         }
         persist()
         return nil
+    }
+
+    @discardableResult
+    func save(_ command: APICommand) -> String? {
+        if let problem = command.problem { return problem }
+        let word = command.keyword.trimmingCharacters(in: .whitespaces).lowercased()
+        if apiCommands.contains(where: { $0.id != command.id && $0.keyword.lowercased() == word })
+            || quicklinks.contains(where: { $0.keyword.lowercased() == word }) || scripts.contains(where: { $0.keyword.lowercased() == word }) {
+            return "“\(word)” is already used."
+        }
+        var saved = command
+        saved.keyword = word
+        saved.name = command.name.trimmingCharacters(in: .whitespaces)
+        if let index = apiCommands.firstIndex(where: { $0.id == command.id }) {
+            apiCommands[index] = saved
+        } else {
+            guard apiCommands.count < Self.maxItems else { return "That is as many as can be kept." }
+            apiCommands.append(saved)
+        }
+        persist()
+        return nil
+    }
+
+    /// Removes a command and the keys kept for it.
+    func deleteAPICommand(_ id: String) {
+        if let command = apiCommands.first(where: { $0.id == id }) {
+            for name in command.headerNames { KeychainSecrets.delete(APICommandRunner.account(command, header: name)) }
+        }
+        apiCommands.removeAll { $0.id == id }
+        persist()
     }
 
     /// Adds a folder of scripts. Returns why it cannot be used, or nil.
@@ -214,5 +257,6 @@ final class LauncherExtras: ObservableObject {
     private func persist() {
         if let data = try? JSONEncoder().encode(quicklinks) { defaults.set(data, forKey: linksKey) }
         if let data = try? JSONEncoder().encode(scripts) { defaults.set(data, forKey: scriptsKey) }
+        if let data = try? JSONEncoder().encode(apiCommands) { defaults.set(data, forKey: apiKey) }
     }
 }

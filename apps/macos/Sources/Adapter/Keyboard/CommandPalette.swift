@@ -68,6 +68,7 @@ final class PaletteModel: ObservableObject {
     @Published var query = "" {
         didSet {
             guard query != oldValue else { return }
+            historyIndex = nil
             if token == nil, query.hasSuffix(" "), let word = Self.singleWord(query), let found = tokenProvider(word) {
                 // "gh " becomes a chip, and what is typed after it is the argument.
                 token = found
@@ -109,6 +110,10 @@ final class PaletteModel: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         return !trimmed.isEmpty && !trimmed.contains(" ") ? trimmed.lowercased() : nil
     }
+
+    /// Where ⌥↑ and ⌥↓ have stepped to in the past searches (nil is what was typed), and what was typed before stepping.
+    var historyIndex: Int?
+    var historyDraft = ""
 
     /// What the providers see: the chip's keyword and what was typed after it.
     var effectiveQuery: String {
@@ -400,6 +405,13 @@ final class CommandPalette: NSObject, NSWindowDelegate {
     func close() { panel?.orderOut(nil) }
 
     fileprivate func run(_ entry: PaletteEntry, action: PaletteAction? = nil) {
+        // A past search is put back in the box to be edited or run, not run itself.
+        if entry.id.hasPrefix("history:"), action == nil {
+            model.query = entry.title
+            return
+        }
+        // The words typed are remembered if the person keeps a search history. Never for clipboard items.
+        if entry.category != .clipboard { SearchHistoryStore.shared.record(model.effectiveQuery) }
         if entry.rememberable { prefs.record(entry.id) }
         close()
         // Let the panel go before the command runs, so a paste or a keystroke reaches the app underneath.
@@ -922,6 +934,18 @@ private struct PaletteView: View {
         }
     }
 
+    private func stepHistory(older: Bool) {
+        let store = SearchHistoryStore.shared
+        guard store.isEnabled else { return }
+        let recent = store.history.recent(30)
+        if model.historyIndex == nil { model.historyDraft = model.query }
+        let next = older ? SearchHistory.older(model.historyIndex, count: recent.count) : SearchHistory.newer(model.historyIndex)
+        model.historyIndex = next
+        model.query = next.flatMap { recent.indices.contains($0) ? recent[$0].text : nil } ?? model.historyDraft
+        // Setting the box would otherwise count as typing and end the stepping.
+        model.historyIndex = next
+    }
+
     private func runAction(_ action: PaletteAction, for entry: PaletteEntry) {
         model.showingActions = false
         // Favorites and hiding change the list in place; everything else acts on the result and closes the window.
@@ -953,6 +977,11 @@ private struct PaletteView: View {
     }
 
     private func handle(_ press: KeyPress) -> KeyPress.Result {
+        // ⌥↑ and ⌥↓ step back and forward through past searches, like the arrow keys in a shell.
+        if press.modifiers.contains(.option), press.key == .upArrow || press.key == .downArrow {
+            stepHistory(older: press.key == .upArrow)
+            return .handled
+        }
         switch press.key {
         case .downArrow: model.move(1); return .handled
         case .upArrow: model.move(-1); return .handled

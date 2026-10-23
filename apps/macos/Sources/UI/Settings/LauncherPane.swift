@@ -9,6 +9,8 @@ struct LauncherPane: View {
     @State private var confirmReset = false
     @State private var editingLink: Quicklink?
     @State private var editingScript: ScriptCommand?
+    @State private var editingAPI: APICommand?
+    @ObservedObject private var history = SearchHistoryStore.shared
     @State private var calendarMessage: String?
     @State private var hotkeyProblem: String?
     @State private var spotlightOn = SpotlightShortcut.currentlyEnabled()
@@ -208,6 +210,54 @@ struct LauncherPane: View {
             }
 
             Section {
+                if extras.apiCommands.isEmpty { Text("None. An API command sends a web request that you define and shows part of the answer, such as the weather for a city you type.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(extras.apiCommands) { command in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(command.name)
+                            Text("Type “\(command.keyword)\(command.takesQuery ? " …" : "")”  ·  \(command.method.rawValue) \(command.host ?? "")").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Button("Edit") { editingAPI = command }.controlSize(.small)
+                        Button(role: .destructive) { extras.deleteAPICommand(command.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("API commands")
+                    Spacer()
+                    Button { editingAPI = APICommand(name: "", keyword: "", url: "https://") } label: { Label("Add", systemImage: "plus") }.controlSize(.small)
+                }
+            } footer: {
+                Text("Type the keyword, then your words; they go into {query} in the address or body and nowhere else, and only when you press Return. Keys in headers are kept in the keychain. Only https:// addresses are used (http:// for localhost).")
+            }
+
+            Section {
+                Toggle("Search open browser tabs", isOn: Binding(get: { prefs.data.searchBrowserTabs == true }, set: { prefs.setSearchBrowserTabs($0) }))
+            } header: { Text("Browser tabs") } footer: {
+                Text("Finds tabs by title or address in Safari, Chrome, Brave, Edge and Arc, and brings the one you choose to the front. It asks each running browser for its tab list with AppleScript, so macOS asks you to allow Kriya to control each browser the first time. Only titles and addresses are read, only while the launcher is open, and nothing is stored.")
+            }
+
+            Section {
+                Toggle("Keep a history of what I search for", isOn: Binding(get: { history.isEnabled }, set: { history.isEnabled = $0 }))
+                if history.isEnabled {
+                    if history.history.entries.isEmpty { Text("Nothing yet.").font(.callout).foregroundStyle(.secondary) }
+                    ForEach(history.history.recent(30)) { item in
+                        HStack {
+                            Text(item.text).lineLimit(1)
+                            if item.count > 1 { Text("×\(item.count)").font(.caption).foregroundStyle(.tertiary) }
+                            Spacer()
+                            Text(RelativeDateTimeFormatter().localizedString(for: item.last, relativeTo: Date())).font(.caption).foregroundStyle(.secondary)
+                            Button(role: .destructive) { history.remove(item.id) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless)
+                        }
+                    }
+                    if !history.history.entries.isEmpty { Button("Clear the History", role: .destructive) { history.clear() } }
+                }
+            } header: { Text("Search history") } footer: {
+                Text("Off unless you turn it on, because it keeps the words you type. When on, the words are saved on this Mac after you choose a result, shown under “Recent searches” when the box is empty, and ⌥↑ and ⌥↓ step through them. Clipboard searches and anything that looks like a key are never saved. Turning it off erases it.")
+            }
+
+            Section {
                 Toggle("Convert currencies", isOn: Binding(get: { prefs.data.currencyRates == true }, set: { prefs.setCurrencyRates($0) }))
                 Toggle("Show my next meeting", isOn: Binding(get: { prefs.data.showMeeting == true }, set: { on in
                     prefs.setShowMeeting(on)
@@ -275,6 +325,7 @@ struct LauncherPane: View {
         .formStyle(.grouped)
         .sheet(item: $editingLink) { link in QuicklinkEditor(link: link) { editingLink = nil } }
         .sheet(item: $editingScript) { script in ScriptEditor(script: script) { editingScript = nil } }
+        .sheet(item: $editingAPI) { command in APICommandEditor(command: command) { editingAPI = nil } }
         .animation(.smooth(duration: 0.2), value: prefs.data)
         .confirmationDialog("Reset the launcher?", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("Reset", role: .destructive) { prefs.reset() }
@@ -427,6 +478,103 @@ extension LauncherPane {
             if folderMessage == "That folder is already added." { folderMessage = nil }
         } catch {
             folderMessage = "The example could not be made: \(error.localizedDescription)"
+        }
+    }
+}
+
+private struct APICommandEditor: View {
+    @EnvironmentObject private var extras: LauncherExtras
+    @State var command: APICommand
+    let onClose: () -> Void
+    @State private var problem: String?
+    @State private var headerValues: [String: String] = [:]
+    @State private var newHeader = ""
+    @State private var testing = false
+    @State private var testResult: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                TextField("Name", text: $command.name)
+                TextField("Keyword", text: $command.keyword)
+                Picker("Method", selection: $command.method) { ForEach(APICommand.Method.allCases) { Text($0.rawValue).tag($0) } }
+                TextField("Address", text: $command.url, prompt: Text("https://api.example.com/search?q={query}"))
+                Section("Headers") {
+                    ForEach(command.headerNames, id: \.self) { name in
+                        HStack {
+                            Text(name).frame(width: 130, alignment: .leading)
+                            if APICommand.looksSecret(name) {
+                                SecureField("Value", text: binding(for: name))
+                            } else {
+                                TextField("Value", text: binding(for: name))
+                            }
+                            Button(role: .destructive) { command.headerNames.removeAll { $0 == name }; headerValues[name] = nil } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                        }
+                    }
+                    HStack {
+                        TextField("Add a header, such as Authorization", text: $newHeader).onSubmit(addHeader)
+                        Button("Add", action: addHeader).disabled(!APICommand.isHeaderName(newHeader.trimmingCharacters(in: .whitespaces)))
+                    }
+                }
+                if command.method.sendsBody {
+                    VStack(alignment: .leading) {
+                        Text("Body (JSON). {query} is your words, escaped for JSON text.").font(.caption).foregroundStyle(.secondary)
+                        TextEditor(text: $command.body).font(.system(.callout, design: .monospaced)).frame(height: 70)
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.15)))
+                    }
+                }
+                TextField("Use this part of the answer", text: $command.resultPath, prompt: Text("data.items.0.name  (empty: all of it)"))
+                Picker("Then", selection: $command.output) { ForEach(APICommand.Output.allCases) { Text($0.title).tag($0) } }
+                if let problem { Text(problem).font(.callout).foregroundStyle(Theme.danger) }
+                if let testResult { Text(testResult).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(6) }
+            }
+            .formStyle(.grouped)
+            Divider()
+            HStack {
+                Button(testing ? "Calling…" : "Try It with “test”") { test() }.disabled(testing || command.problem != nil)
+                Spacer()
+                Button("Cancel", action: onClose).keyboardShortcut(.cancelAction)
+                Button("Save") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+            }
+            .padding(12)
+        }
+        .frame(width: 560, height: 640)
+        .onAppear { headerValues = APICommandRunner.headerValues(for: command) }
+    }
+
+    private func binding(for name: String) -> Binding<String> {
+        Binding(get: { headerValues[name] ?? "" }, set: { headerValues[name] = $0 })
+    }
+
+    private func addHeader() {
+        let name = newHeader.trimmingCharacters(in: .whitespaces)
+        guard APICommand.isHeaderName(name), !command.headerNames.contains(name), command.headerNames.count < APICommand.maxHeaders else { return }
+        command.headerNames.append(name)
+        newHeader = ""
+    }
+
+    private func save() {
+        problem = extras.save(command)
+        guard problem == nil else { return }
+        // The keys go to the keychain; only their names are kept with the command.
+        for name in command.headerNames { KeychainSecrets.set(headerValues[name] ?? "", for: APICommandRunner.account(command, header: name)) }
+        onClose()
+    }
+
+    private func test() {
+        guard let request = command.request(for: "test", headerValues: headerValues) else { testResult = "The address could not be built."; return }
+        testing = true
+        testResult = nil
+        let path = command.resultPath
+        Task {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let text = data.count > APICommand.maxResponseBytes ? "Too big." : (JSONResult.extract(data, path: path) ?? (path.isEmpty ? "No text in the answer." : "The answer has no “\(path)”."))
+                await MainActor.run { testResult = "\(status): " + String(text.prefix(400)); testing = false }
+            } catch {
+                await MainActor.run { testResult = error.localizedDescription; testing = false }
+            }
         }
     }
 }

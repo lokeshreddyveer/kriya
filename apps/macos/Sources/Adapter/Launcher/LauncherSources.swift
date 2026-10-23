@@ -682,6 +682,13 @@ final class LauncherSources {
                 list.append((fileEntry(url, isFolder: false, score: nil, prefix: "recent", rememberable: false), "Recent files"))
             }
         }
+        // What was searched for before, when the person keeps a history: choosing one puts it back in the box.
+        let history = SearchHistoryStore.shared
+        if history.isEnabled {
+            for item in history.history.recent(6) {
+                list.append((PaletteEntry(id: "history:\(item.id)", title: item.text, subtitle: "Search again", symbol: "clock.arrow.circlepath", rememberable: false), "Recent searches"))
+            }
+        }
         return list
     }
 

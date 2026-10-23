@@ -171,6 +171,9 @@ struct LauncherPrefsData: Codable, Equatable {
     var currencyRates: Bool?
     /// Shows the next calendar event, once the person allowed it.
     var showMeeting: Bool?
+    /// Open browser tabs show up in results, once the person turned them on. Nil is off: asking a browser for its tabs makes
+    /// macOS ask for permission.
+    var searchBrowserTabs: Bool?
     /// Results kept out of the launcher by the person's choice.
     var hidden: [String] = []
     /// A key for a result, by its id. The special id "@selection" opens the actions for the selected text.
@@ -359,6 +362,7 @@ final class LauncherPrefs: ObservableObject {
 
     func setCurrencyRates(_ on: Bool) { change { $0.currencyRates = on } }
     func setShowMeeting(_ on: Bool) { change { $0.showMeeting = on } }
+    func setSearchBrowserTabs(_ on: Bool) { change { $0.searchBrowserTabs = on ? true : nil } }
 
     func setWebEngine(_ id: String) {
         change { $0.webEngine = id == WebSearch.defaultEngineID ? nil : id }
