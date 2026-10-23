@@ -16,8 +16,10 @@ echo "== Rust core"
 ./scripts/build-core.sh test
 
 if [ "$(uname)" = "Darwin" ]; then
-  echo "== Swift tests"
-  ./scripts/swift-build.sh test
+  echo "== Swift build, then tests"
+  ./scripts/build-core.sh
+  ./scripts/swift-build.sh
+  (cd apps/macos && xcodebuild -project Kriya.xcodeproj -scheme Kriya -configuration Debug -derivedDataPath ../../build/debug test 2>&1 | grep -E "error:|Test Suite 'All tests'|Executed|TEST (SUCCEEDED|FAILED)")
 else
   echo "== Swift tests skipped: this is not a Mac. Run this script on the Mac you ship from."
 fi
