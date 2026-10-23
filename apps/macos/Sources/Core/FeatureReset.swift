@@ -39,4 +39,44 @@ enum FeatureReset {
         for key in saved { defaults.removeObject(forKey: key) }
         return saved.count
     }
+
+    /// What the area has saved now, so a reset can be taken back.
+    static func capture(_ area: ResettableArea, in defaults: UserDefaults = .standard) -> [String: Any] {
+        var values: [String: Any] = [:]
+        for key in area.keys { if let value = defaults.object(forKey: key) { values[key] = value } }
+        return values
+    }
+
+    /// Puts captured values back. Only keys that belong to the area are written, whatever the file says.
+    @discardableResult
+    static func restore(_ values: [String: Any], to area: ResettableArea, in defaults: UserDefaults = .standard) -> Int {
+        var count = 0
+        for (key, value) in values where area.keys.contains(key) { defaults.set(value, forKey: key); count += 1 }
+        return count
+    }
+}
+
+/// The last reset, kept in a file so it can be undone after a restart, and so a restart that never happened is noticed.
+struct FeatureResetUndo {
+    let file: URL
+    static let keepFor: TimeInterval = 24 * 3600
+
+    func save(area: ResettableArea, values: [String: Any], at date: Date = Date()) throws {
+        let plist: [String: Any] = ["area": area.id, "at": date, "values": values]
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: file, options: .atomic)
+    }
+
+    /// The area and values of the last reset, unless it is older than a day or the file is not one of ours.
+    func load(now: Date = Date()) -> (area: ResettableArea, values: [String: Any], at: Date)? {
+        guard let data = try? Data(contentsOf: file),
+              let plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any],
+              let id = plist["area"] as? String, let area = FeatureReset.areas.first(where: { $0.id == id }),
+              let at = plist["at"] as? Date, now.timeIntervalSince(at) <= Self.keepFor,
+              let values = plist["values"] as? [String: Any] else { return nil }
+        return (area, values, at)
+    }
+
+    func clear() { try? FileManager.default.removeItem(at: file) }
 }

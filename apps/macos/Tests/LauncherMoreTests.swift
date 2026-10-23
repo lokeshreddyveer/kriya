@@ -426,3 +426,66 @@ final class PlaceSwitcherTests: XCTestCase {
         XCTAssertEqual(MIDITriggers.learned(from: pad).device, "Launchpad Mini")
     }
 }
+
+final class MIDIRunningStatusTests: XCTestCase {
+    func testDataOnlyBytesUseTheLastStatus() {
+        var running: UInt8?
+        let first = MIDIMessage.parse([0xB0, 21, 10, 21, 11, 21, 12], running: &running)
+        XCTAssertEqual(first.map(\.value), [10, 11, 12])
+        XCTAssertEqual(running, 0xB0)
+        let next = MIDIMessage.parse([21, 99], running: &running)
+        XCTAssertEqual(next.first?.value, 99, "it carries over between calls")
+    }
+
+    func testClockKeepsItAndBadDataOrSystemMessagesEndIt() {
+        var running: UInt8? = 0x90
+        XCTAssertEqual(MIDIMessage.parse([0xF8, 60, 100], running: &running).count, 1, "clock does not end it")
+        XCTAssertTrue(MIDIMessage.parse([0xF0, 1, 2, 0xF7, 60, 100], running: &running).isEmpty, "sysex ends it")
+        XCTAssertNil(running)
+        running = 0x90
+        XCTAssertTrue(MIDIMessage.parse([0x90, 60], running: &running).isEmpty, "a cut-off message")
+        XCTAssertNil(running, "and it ends running status")
+        XCTAssertTrue(MIDIMessage.parse([60, 100], running: &running).isEmpty, "so loose data after it is ignored")
+    }
+
+    func testTriggersThatWouldBothFireAreFlagged() {
+        var a = MIDITrigger(); a.number = 60; a.channel = 1
+        var b = MIDITrigger(); b.number = 60; b.channel = nil
+        var c = MIDITrigger(); c.number = 60; c.channel = 2
+        var d = MIDITrigger(); d.number = 61
+        XCTAssertEqual(MIDITriggers.conflicts(of: a, in: [a, b, c, d]).map(\.id), [b.id], "same note, overlapping channel")
+        c.minValue = 50; c.maxValue = 60; b.channel = 2; b.minValue = 70
+        XCTAssertTrue(MIDITriggers.conflicts(of: c, in: [b, c]).isEmpty, "value ranges that do not meet")
+        a.device = "Launchpad"; b.channel = 1; b.minValue = 1; b.device = "Keystation"
+        XCTAssertTrue(MIDITriggers.conflicts(of: a, in: [a, b]).isEmpty, "different devices")
+        b.enabled = false; b.device = nil
+        XCTAssertTrue(MIDITriggers.conflicts(of: a, in: [a, b]).isEmpty, "switched off")
+    }
+}
+
+final class ResetRollbackTests: XCTestCase {
+    func testAResetCanBeTakenBackAndTheFileIsOnlyTrustedForOurAreas() throws {
+        let defaults = UserDefaults(suiteName: "kriya-undo-\(UUID().uuidString)")!
+        defaults.set("rules", forKey: "soundRules.v1")
+        defaults.set(true, forKey: "soundNotifiesDevices")
+        defaults.set("keep", forKey: "launcherPrefs.v1")
+        let sound = try XCTUnwrap(FeatureReset.areas.first { $0.id == "sound" })
+        let held = FeatureReset.capture(sound, in: defaults)
+        XCTAssertEqual(held.count, 2)
+        FeatureReset.reset(sound, in: defaults)
+        XCTAssertNil(defaults.object(forKey: "soundRules.v1"))
+
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-undo-\(UUID().uuidString).plist")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let undo = FeatureResetUndo(file: file)
+        try undo.save(area: sound, values: held.merging(["launcherPrefs.v1": "evil"]) { a, _ in a })
+        let loaded = try XCTUnwrap(undo.load())
+        XCTAssertEqual(loaded.area.id, "sound")
+        XCTAssertEqual(FeatureReset.restore(loaded.values, to: loaded.area, in: defaults), 2, "a key from another area is not written")
+        XCTAssertEqual(defaults.string(forKey: "soundRules.v1"), "rules")
+        XCTAssertEqual(defaults.string(forKey: "launcherPrefs.v1"), "keep")
+        XCTAssertNil(undo.load(now: Date().addingTimeInterval(FeatureResetUndo.keepFor + 60)), "a day later it is no longer offered")
+        undo.clear()
+        XCTAssertNil(undo.load())
+    }
+}

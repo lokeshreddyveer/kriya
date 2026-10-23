@@ -21,6 +21,9 @@ final class MIDITriggerRunner: ObservableObject {
     private var running = false
     /// The names of the connected devices, by the number each was connected under.
     private var sourceNames: [Int: String] = [:]
+    /// The last status byte heard from each device, for devices that send it only once.
+    private var runningStatus: [Int: UInt8] = [:]
+    private let statusLock = NSLock()
     private var lastFired: [String: Date] = [:]
 
     private init() {
@@ -42,7 +45,11 @@ final class MIDITriggerRunner: ObservableObject {
                 let length = Int(packet.pointee.length)
                 withUnsafeBytes(of: packet.pointee.data) { bytes.append(contentsOf: $0.prefix(length)) }
             }
-            let messages = MIDIMessage.parse(bytes)
+            self?.statusLock.lock()
+            var running = self?.runningStatus[source]
+            let messages = MIDIMessage.parse(bytes, running: &running)
+            self?.runningStatus[source] = running
+            self?.statusLock.unlock()
             if !messages.isEmpty {
                 DispatchQueue.main.async {
                     for var m in messages { m.device = self?.sourceNames[source] ?? ""; self?.handle(m) }
@@ -74,6 +81,7 @@ final class MIDITriggerRunner: ObservableObject {
             MIDIPortConnectSource(port, source, UnsafeMutableRawPointer(bitPattern: i + 1))
         }
         sourceNames = names
+        statusLock.lock(); runningStatus = [:]; statusLock.unlock()
         sources = count
     }
 

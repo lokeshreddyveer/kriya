@@ -994,6 +994,11 @@ private struct MIDITriggersSection: View {
                             Spacer()
                             Button(role: .destructive) { runner.triggers.removeAll { $0.id == trigger.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete trigger")
                         }
+                        let clashes = MIDITriggers.conflicts(of: trigger, in: runner.triggers)
+                        if !clashes.isEmpty {
+                            Label("Also fires: \(clashes.map { $0.name.isEmpty ? $0.summary : $0.name }.joined(separator: ", ")). Both will run.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption).foregroundStyle(Theme.warn)
+                        }
                         HStack {
                             TextField("Device contains (optional)", text: Binding(get: { trigger.device ?? "" }, set: { trigger.device = $0.isEmpty ? nil : $0 }))
                             Stepper("Channel \(trigger.channel.map(String.init) ?? "any")", value: Binding(get: { trigger.channel ?? 0 }, set: { trigger.channel = $0 == 0 ? nil : $0 }), in: 0...16)

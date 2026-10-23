@@ -367,12 +367,24 @@ private struct DiagnosticsOverviewTab: View {
                         Button("Reset…", role: .destructive) { resetting = area }.controlSize(.small)
                     }
                 }
+                if let last = resetUndo.load() {
+                    HStack {
+                        Text("\(last.area.title) was reset \(last.at.formatted(.relative(presentation: .named))).").font(.callout).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Undo and Restart") {
+                            FeatureReset.restore(last.values, to: last.area)
+                            resetUndo.clear()
+                            UserDefaults.standard.synchronize()
+                            SystemInfo.relaunch(arguments: [])
+                        }.controlSize(.small)
+                    }
+                }
             } header: { Text("Reset one part") } footer: {
                 Text("Puts one part of Kriya back to how it was on first launch and leaves everything else as it is. Kriya restarts to finish. It cannot be undone, so make a backup first if the settings matter.")
             }
             .confirmationDialog("Reset \(resetting?.title ?? "")?", isPresented: Binding(get: { resetting != nil }, set: { if !$0 { resetting = nil } }), titleVisibility: .visible) {
                 Button("Reset and Restart", role: .destructive) {
-                    if let area = resetting { AuditLog.shared.record(.setting, "Reset \(area.title)"); FeatureReset.reset(area); UserDefaults.standard.synchronize(); SystemInfo.relaunch(arguments: []) }
+                    if let area = resetting { performReset(area) }
                     resetting = nil
                 }
             } message: {
@@ -425,6 +437,28 @@ private struct DiagnosticsOverviewTab: View {
 
     private func latencyText(_ micros: Int) -> String {
         micros < 1000 ? "\(micros) µs" : String(format: "%.1f ms", Double(micros) / 1000)
+    }
+
+    private var resetUndo: FeatureResetUndo { FeatureResetUndo(file: paths.support.appendingPathComponent("last-reset.plist")) }
+
+    /// Keeps what the area held, clears it, and restarts. If Kriya is still running a few seconds later the restart did not
+    /// happen, so what was held is put back and the person is told.
+    private func performReset(_ area: ResettableArea) {
+        let values = FeatureReset.capture(area)
+        do { try resetUndo.save(area: area, values: values) } catch {
+            message = "Nothing was reset: the settings could not be kept safe first (\(error.localizedDescription))."
+            return
+        }
+        AuditLog.shared.record(.setting, "Reset \(area.title)")
+        FeatureReset.reset(area)
+        UserDefaults.standard.synchronize()
+        SystemInfo.relaunch(arguments: [])
+        let undo = resetUndo
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            FeatureReset.restore(values, to: area)
+            undo.clear()
+            message = "Kriya could not restart, so \(area.title) was put back as it was."
+        }
     }
 
     private func saveReport() {

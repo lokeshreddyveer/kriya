@@ -26,26 +26,46 @@ struct MIDIMessage: Equatable {
 
     /// Every message in a run of MIDI bytes. Notes off, clock and anything else are skipped; a note on with no force is a note off.
     static func parse(_ bytes: [UInt8]) -> [MIDIMessage] {
+        var running: UInt8?
+        return parse(bytes, running: &running)
+    }
+
+    /// The same, keeping the last status between calls: a device may send the status byte once and then only data (running
+    /// status). Real-time bytes (clock and the like) do not end it; a malformed message or a system message does.
+    static func parse(_ bytes: [UInt8], running: inout UInt8?) -> [MIDIMessage] {
         var out: [MIDIMessage] = []
         var i = 0
         while i < bytes.count {
-            let status = bytes[i]
-            guard status >= 0x80 else { i += 1; continue }
-            let channel = Int(status & 0x0F) + 1
-            switch status & 0xF0 {
-            case 0x90, 0xB0:
-                guard i + 2 < bytes.count, bytes[i + 1] < 0x80, bytes[i + 2] < 0x80 else { i += 1; continue }
-                let isNote = status & 0xF0 == 0x90
-                if !isNote || bytes[i + 2] > 0 { out.append(MIDIMessage(kind: isNote ? .noteOn : .controlChange, channel: channel, number: Int(bytes[i + 1]), value: Int(bytes[i + 2]))) }
-                i += 3
-            case 0xC0:
-                guard i + 1 < bytes.count, bytes[i + 1] < 0x80 else { i += 1; continue }
-                out.append(MIDIMessage(kind: .programChange, channel: channel, number: Int(bytes[i + 1]), value: 0))
-                i += 2
-            case 0x80, 0xA0, 0xE0: i += 3
-            case 0xD0: i += 2
-            default: i += 1
+            var status = bytes[i]
+            var dataStart = i + 1
+            if status < 0x80 {
+                guard let last = running else { i += 1; continue }
+                status = last
+                dataStart = i
+            } else if status >= 0xF0 {
+                if status < 0xF8 { running = nil }
+                i += 1
+                continue
+            } else {
+                running = status
             }
+            let family = status & 0xF0
+            let need = (family == 0xC0 || family == 0xD0) ? 1 : 2
+            guard dataStart + need <= bytes.count, bytes[dataStart..<dataStart + need].allSatisfy({ $0 < 0x80 }) else {
+                running = nil
+                i += 1
+                continue
+            }
+            let channel = Int(status & 0x0F) + 1
+            let first = Int(bytes[dataStart])
+            let second = need == 2 ? Int(bytes[dataStart + 1]) : 0
+            switch family {
+            case 0x90 where second > 0: out.append(MIDIMessage(kind: .noteOn, channel: channel, number: first, value: second))
+            case 0xB0: out.append(MIDIMessage(kind: .controlChange, channel: channel, number: first, value: second))
+            case 0xC0: out.append(MIDIMessage(kind: .programChange, channel: channel, number: first, value: 0))
+            default: break
+            }
+            i = dataStart + need
         }
         return out
     }
@@ -100,6 +120,17 @@ enum MIDITriggers {
     static let limit = 60
     /// A pad held down or a knob turned sends many messages; the same trigger is not fired again within this time.
     static let cooldown: TimeInterval = 0.25
+
+    /// Other switched-on triggers that would fire for some of the same messages, so the person is told before two things happen at once.
+    static func conflicts(of trigger: MIDITrigger, in all: [MIDITrigger]) -> [MIDITrigger] {
+        all.filter { other in
+            guard other.id != trigger.id, other.enabled, trigger.enabled, other.kind == trigger.kind, other.number == trigger.number else { return false }
+            if let a = other.channel, let b = trigger.channel, a != b { return false }
+            let da = (other.device ?? "").lowercased(), db = (trigger.device ?? "").lowercased()
+            if !da.isEmpty, !db.isEmpty, !da.contains(db), !db.contains(da) { return false }
+            return max(other.minValue, trigger.minValue) <= min(other.maxValue, trigger.maxValue)
+        }
+    }
 
     static func firing(for message: MIDIMessage, in triggers: [MIDITrigger]) -> [MIDITrigger] {
         triggers.filter { $0.matches(message) && $0.remoteCommand != nil }
