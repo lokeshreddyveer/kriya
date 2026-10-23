@@ -187,6 +187,7 @@ final class PaletteModel: ObservableObject {
             order = heldBack.map(\.id)
         } else {
             order = LauncherEngine.rank(combined.map(\.candidate), query: text, prefs: prefs.data, suggestions: Array(running.prefix(5)) + useful)
+            LauncherWhy.shared.note(query: text, items: combined.map(\.candidate), prefs: prefs.data)
         }
         let byID = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var list = order.compactMap { byID[$0] }

@@ -707,3 +707,40 @@ final class AppTrustTests: XCTestCase {
         XCTAssertEqual(HomebrewDiagnosis.lines(appleSilicon: true, foundAt: "/opt/homebrew/bin/brew", optHomebrewExists: true, usrLocalExists: false, pathVariable: "/opt/homebrew/bin").count, 1)
     }
 }
+
+final class LauncherExplainTests: XCTestCase {
+    private func item(_ id: String, _ title: String, _ category: LauncherCategory = .app) -> LauncherCandidate {
+        LauncherCandidate(id: id, title: title, subtitle: "", keywords: [], category: category, queryScore: nil, rememberable: true)
+    }
+
+    func testTheBreakdownAddsUpToTheScoreRankingUses() {
+        var prefs = LauncherPrefsData()
+        prefs.pinned = ["safari"]
+        let now = Date()
+        prefs.usage["safari"] = LauncherUsage(count: 3, last: now)
+        let candidate = item("safari", "Safari")
+        let explanation = LauncherEngine.explain(candidate, query: "saf", prefs: prefs, now: now)
+        XCTAssertNotNil(explanation.total)
+        XCTAssertTrue(explanation.lines.contains { $0.hasPrefix("Pinned") })
+        XCTAssertTrue(explanation.lines.contains { $0.contains("often or lately") })
+        let ranked = LauncherEngine.rank([candidate, item("other", "Sapphire")], query: "saf", prefs: prefs, now: now)
+        XCTAssertEqual(ranked.first, "safari")
+    }
+
+    func testNonMatchesAndSwitchedOffGroupsSayWhy() {
+        var prefs = LauncherPrefsData()
+        XCTAssertNil(LauncherEngine.explain(item("a", "Notes"), query: "zzz", prefs: prefs).total)
+        XCTAssertTrue(LauncherEngine.explain(item("a", "Notes"), query: "zzz", prefs: prefs).lines[0].contains("does not match"))
+        prefs.hidden = ["a"]
+        XCTAssertEqual(LauncherEngine.explain(item("a", "Notes"), query: "notes", prefs: prefs).lines, ["You hid this result."])
+        XCTAssertTrue(LauncherEngine.explain(item("a", "Notes"), query: "", prefs: LauncherPrefsData()).lines[0].contains("Nothing typed"))
+    }
+
+    func testAnAliasWinsAndSaysSo() {
+        var prefs = LauncherPrefsData()
+        prefs.aliases["n"] = "a"
+        let e = LauncherEngine.explain(item("a", "Notes"), query: "n", prefs: prefs)
+        XCTAssertTrue(e.lines[0].contains("short name"))
+        XCTAssertGreaterThanOrEqual(e.total ?? 0, 5000)
+    }
+}

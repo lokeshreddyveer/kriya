@@ -7,6 +7,7 @@ struct LauncherPane: View {
     @EnvironmentObject private var extras: LauncherExtras
     @EnvironmentObject private var tools: LauncherToolSources
     @State private var confirmReset = false
+    @State private var why: (query: String, rows: [LauncherEngine.Explanation])?
     @State private var editingLink: Quicklink?
     @State private var editingScript: ScriptCommand?
     @State private var editingAPI: APICommand?
@@ -26,6 +27,19 @@ struct LauncherPane: View {
 
     var body: some View {
         Form {
+            Section {
+                Button("Explain the Last Search") { why = LauncherWhy.shared.explainAll() }.controlSize(.small)
+                if let why {
+                    if why.rows.isEmpty { Text("Search in the launcher first, then come back and press the button.").font(.callout).foregroundStyle(.secondary) }
+                    else { Text("For “\(why.query)”").font(.caption).foregroundStyle(.secondary) }
+                    ForEach(Array(why.rows.enumerated()), id: \.offset) { _, row in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.title)
+                            Text(row.lines.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } header: { Text("Why was this shown?") }
             Section {
                 Picker("Theme", selection: $themeRaw) {
                     ForEach(LauncherTheme.allCases) { Text($0.title).tag($0.rawValue) }

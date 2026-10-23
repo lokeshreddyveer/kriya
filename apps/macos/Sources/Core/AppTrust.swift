@@ -44,6 +44,14 @@ struct AppTrust: Equatable {
 
 /// Why Homebrew might not be found or might misbehave, from facts about this Mac.
 enum HomebrewDiagnosis {
+    static var runningOnAppleSilicon: Bool {
+        #if arch(arm64)
+        return true
+        #else
+        return false
+        #endif
+    }
+
     static func lines(appleSilicon: Bool, foundAt: String?, optHomebrewExists: Bool, usrLocalExists: Bool, pathVariable: String) -> [String] {
         var out: [String] = []
         let expected = appleSilicon ? "/opt/homebrew/bin/brew" : "/usr/local/bin/brew"

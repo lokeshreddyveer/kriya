@@ -415,12 +415,7 @@ private struct InstallTab: View {
         Form {
             Section {
                 Text("Homebrew is not installed on this Mac.")
-                #if arch(arm64)
-                let silicon = true
-                #else
-                let silicon = false
-                #endif
-                ForEach(HomebrewDiagnosis.lines(appleSilicon: silicon, foundAt: nil, optHomebrewExists: FileManager.default.fileExists(atPath: "/opt/homebrew"),
+                ForEach(HomebrewDiagnosis.lines(appleSilicon: HomebrewDiagnosis.runningOnAppleSilicon, foundAt: nil, optHomebrewExists: FileManager.default.fileExists(atPath: "/opt/homebrew"),
                                                 usrLocalExists: FileManager.default.fileExists(atPath: "/usr/local/bin"), pathVariable: ProcessInfo.processInfo.environment["PATH"] ?? "").dropFirst(), id: \.self) {
                     Text($0).font(.caption).foregroundStyle(.secondary)
                 }
