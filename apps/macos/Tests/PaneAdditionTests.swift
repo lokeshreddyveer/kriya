@@ -792,3 +792,52 @@ final class NoteVersionTests: XCTestCase {
         XCTAssertTrue(store.versions(of: blank).isEmpty)
     }
 }
+
+final class LicenseAndBackupSizeTests: XCTestCase {
+    func testEveryListedCrateIsReadFromCargoTomlText() {
+        let cargo = """
+        [package]
+        name = "x"
+
+        [dependencies]
+        uniffi = { version = "0.32" }
+        serde = "1"
+        # sha2 = "0"
+        regex = "1"
+
+        [dev-dependencies]
+        tempfile = "3"
+        """
+        XCTAssertEqual(Licenses.dependencyNames(inCargo: cargo), ["uniffi", "serde", "regex"])
+    }
+
+    func testTheLicenseListNamesEveryDependencyTheCoreHas() {
+        XCTAssertEqual(Licenses.rustCrates, ["rusqlite", "uniffi", "serde", "serde_json", "regex", "url", "thiserror", "sha2", "aes-gcm", "hmac"])
+        XCTAssertTrue(Licenses.all.contains { $0.name == "Sparkle" })
+        XCTAssertEqual(Set(Licenses.all.map(\.name)).count, Licenses.all.count)
+    }
+
+    func testBackupSizesAreAddedUpInWords() {
+        let a = BackupFileInfo(url: URL(fileURLWithPath: "/a"), date: Date(), size: 1_000_000)
+        let b = BackupFileInfo(url: URL(fileURLWithPath: "/b"), date: Date(), size: 500_000)
+        XCTAssertEqual(BackupSizes.total([a, b]), 1_500_000)
+        XCTAssertTrue(BackupSizes.summary([a, b]).hasPrefix("2 backups, "))
+        XCTAssertEqual(BackupSizes.summary([]), "No backups")
+        XCTAssertTrue(BackupSizes.summary([a]).hasPrefix("1 backup, "))
+    }
+}
+
+final class DiagnosticReportTests: XCTestCase {
+    func testTheReportLeadsWithProblemsSkipsEmptySectionsAndIsScrubbed() {
+        let features = DiagnosticReport.featureLines([("Mouse", true, "Running"), ("Windows", true, "Needs permission"), ("Notes", false, "Off")])
+        XCTAssertEqual(features, ["Windows: on, needs permission", "Mouse: running", "Off: Notes"])
+        let text = DiagnosticReport.assemble([
+            .init(title: "Build", lines: ["Kriya 1.0"]), .init(title: "Empty", lines: []),
+            .init(title: "Permissions", lines: DiagnosticReport.permissionLines([("Accessibility", true), ("Microphone", false)])),
+        ], generated: Date(timeIntervalSince1970: 0), scrub: { $0.replacingOccurrences(of: "Kriya 1.0", with: "SCRUBBED") })
+        XCTAssertTrue(text.contains("== Build ==\nSCRUBBED"))
+        XCTAssertFalse(text.contains("Empty"))
+        XCTAssertTrue(text.contains("Microphone: not allowed"))
+        XCTAssertTrue(text.hasPrefix("Kriya report, 19"))
+    }
+}

@@ -7,6 +7,7 @@ struct BackupPane: View {
     @Environment(\.paths) private var paths
 
     @State private var message: String?
+    @State private var integrity: [(file: BackupFileInfo, ok: Bool, note: String)] = []
     @State private var messageIsError = false
     @State private var phrase = ""
     @State private var again = ""
@@ -103,7 +104,10 @@ struct BackupPane: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.date.shortDescription)
-                            Text(file.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text("\(file.name) · \(ByteFormat.size(Double(file.size)))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            if let result = integrity.first(where: { $0.file.id == file.id }) {
+                                Text(result.note).font(.caption2).foregroundStyle(result.ok ? Theme.ok : Theme.warn)
+                            }
                         }
                         Spacer()
                         Button("Restore") { confirmRestore(file.url) }.controlSize(.small)
@@ -111,8 +115,9 @@ struct BackupPane: View {
                 }
             } header: {
                 HStack {
-                    Text("Automatic backups")
+                    Text("Automatic backups · " + BackupSizes.summary(backup.automaticBackups))
                     Spacer()
+                    Button("Check Them") { integrity = backup.checkIntegrity() }.controlSize(.small).disabled(backup.automaticBackups.isEmpty)
                     Button("Show in Finder") { NSWorkspace.shared.open(paths.backups) }
                         .controlSize(.small)
                 }

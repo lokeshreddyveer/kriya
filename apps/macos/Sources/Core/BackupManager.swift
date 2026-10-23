@@ -4,11 +4,22 @@ import Foundation
 struct BackupFileInfo: Identifiable, Equatable {
     let url: URL
     let date: Date
+    var size: Int64 = 0
     var id: URL { url }
     var name: String { url.lastPathComponent }
 }
 
 /// Noticing that another Mac saved settings after this one did, so they can be offered, never applied by themselves.
+enum BackupSizes {
+    static func total(_ files: [BackupFileInfo]) -> Int64 { files.reduce(0) { $0 + $1.size } }
+
+    /// "3 backups, 1.2 MB" for a heading.
+    static func summary(_ files: [BackupFileInfo]) -> String {
+        guard !files.isEmpty else { return "No backups" }
+        return "\(files.count) backup\(files.count == 1 ? "" : "s"), \(ByteFormat.size(Double(total(files))))"
+    }
+}
+
 enum SettingsSync {
     /// The newest iCloud copy from a different Mac that is newer than this Mac's own copy and than the moment the person last
     /// said "not now". Copies are named "Kriya – <Mac name>.kriyabackup".
@@ -214,10 +225,23 @@ final class BackupManager: ObservableObject {
         automaticBackups = urls
             .filter { $0.pathExtension == Self.fileExtension && $0.lastPathComponent.hasPrefix("auto-") }
             .map { url in
-                let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                return BackupFileInfo(url: url, date: date)
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                return BackupFileInfo(url: url, date: values?.contentModificationDate ?? .distantPast, size: Int64(values?.fileSize ?? 0))
             }
             .sorted { $0.date > $1.date }
+    }
+
+    /// Reads each automatic backup without restoring it. Protected ones need the passphrase, so they are reported as not checked.
+    func checkIntegrity() -> [(file: BackupFileInfo, ok: Bool, note: String)] {
+        automaticBackups.map { file in
+            do {
+                let summary = try inspect(file.url)
+                _ = summary
+                return (file, true, "Readable")
+            } catch {
+                return (file, false, "Could not be read here (it may be protected with a passphrase)")
+            }
+        }
     }
 
     private func pruneAutomaticBackups() {

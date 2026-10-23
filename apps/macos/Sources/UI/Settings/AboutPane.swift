@@ -45,10 +45,9 @@ struct AboutPane: View {
             }
 
             Section {
-                LabeledContent("Sparkle 2.10.0", value: "Updates (MIT license)")
-                LabeledContent("SQLite (rusqlite)", value: "Storage")
-                LabeledContent("UniFFI", value: "Rust to Swift")
-                LabeledContent("serde, regex, url, sha2, aes-gcm, hmac", value: "Rust libraries")
+                ForEach(Licenses.all) { item in
+                    LabeledContent(item.name, value: "\(item.license) · \(item.purpose)")
+                }
             } header: { Text("Made with") } footer: {
                 Text(Bundle.main.object(forInfoDictionaryKey: "NSHumanReadableCopyright") as? String ?? "")
             }

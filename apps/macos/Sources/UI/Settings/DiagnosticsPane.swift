@@ -45,8 +45,25 @@ private struct HealthTab: View {
     @State private var secure = SecureInput.current()
     @State private var released = false
     @State private var competing: [CompetingUtility] = []
+    @State private var reportCopied = false
 
     private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    private func copyReport() {
+        let facts = BuildFacts(version: SystemInfo.appVersion, build: SystemInfo.build, commit: Bundle.main.object(forInfoDictionaryKey: "KriyaGitCommit") as? String ?? "not recorded in this build",
+                               architecture: SystemInfo.architecture, macOS: SystemInfo.osVersion)
+        let report = DiagnosticReport.assemble([
+            .init(title: "Build", lines: facts.lines),
+            .init(title: "Permissions", lines: DiagnosticReport.permissionLines(Permission.allCases.map { ($0.title, permissions.isGranted($0)) })),
+            .init(title: "Features", lines: DiagnosticReport.featureLines(FeatureId.all.map { ($0.title, config.isEnabled($0), services.state($0).label) })),
+            .init(title: "Competing programs", lines: competing.map(\.name)),
+            .init(title: "Secure input", lines: secure ? ["On: some apps are hiding what is typed from Kriya"] : []),
+        ], generated: Date())
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report, forType: .string)
+        reportCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { reportCopied = false }
+    }
 
     private func refreshCompeting() {
         let running = NSWorkspace.shared.runningApplications.map { RunningProgram(bundleID: $0.bundleIdentifier, name: $0.localizedName) }
@@ -55,6 +72,12 @@ private struct HealthTab: View {
 
     var body: some View {
         Form {
+            Section {
+                HStack {
+                    Button("Copy Report") { copyReport() }
+                    if reportCopied { Text("Copied").font(.caption).foregroundStyle(.secondary) }
+                }
+            } footer: { Text("Version, build, permissions, which features are running and what is competing for the keyboard and mouse, with your name and folders taken out. For pasting into a message.") }
             EvidenceSection()
             Section {
                 ForEach(Permission.allCases) { permission in
