@@ -208,6 +208,15 @@ private struct ButtonsTab: View {
                 bindings: Binding(get: { traffic.config.bindings }, set: { new in traffic.update { $0.bindings = new } }),
                 allowNative: false
             )
+            let notes = TrafficInsight.notes(for: traffic.config.bindings)
+            let dupes = TrafficInsight.duplicates(traffic.config.bindings)
+            if !notes.isEmpty || !dupes.isEmpty {
+                Section {
+                    ForEach(notes) { Text($0.text).font(.callout) }
+                    ForEach(dupes, id: \.self) { Label($0, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(Theme.warn) }
+                    if let title = TrafficInsight.titleBarNote(traffic.config.titleDoubleClick) { Text(title).font(.callout) }
+                } header: { Text("What this changes") } footer: { Text("Compared with what macOS does on its own.") }
+            }
             Section {
                 Text("A rule changes a button only for the exact keys shown. Every other click behaves normally, and so does any app Kriya cannot read. “Do nothing” disables a click. The red button closes through the app, so unsaved-changes prompts still appear.")
                     .font(.callout).foregroundStyle(.secondary)

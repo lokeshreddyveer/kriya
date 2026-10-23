@@ -35,6 +35,7 @@ final class DisplayTools: ObservableObject {
     private var wakeObserver: NSObjectProtocol?
     private var work: DispatchWorkItem?
     private var lastConnected: [String] = []
+    private var lastNames: [String: String] = [:]
     /// Called when the list of displays or their settings may have changed.
     var onChange: () -> Void = {}
 
@@ -44,6 +45,7 @@ final class DisplayTools: ObservableObject {
 
     func start() {
         lastConnected = Self.displays().map(\.key).sorted()
+        lastNames = Dictionary(Self.displays().map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             self?.changed()
         }
@@ -173,6 +175,9 @@ final class DisplayTools: ObservableObject {
             let keys = Self.displays().map(\.key).sorted()
             let before = lastConnected
             lastConnected = keys
+            let names = Dictionary(Self.displays().map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
+            for change in DisplayInsight.changes(before: lastNames, after: names) { DisplayHistoryStore.shared.record(change.name, connected: change.connected) }
+            lastNames = names
             applyDimming()
             onChange()
             // A display came or went: the profile saved for exactly this set of displays goes back on.
@@ -229,4 +234,23 @@ final class DisplayTools: ObservableObject {
         let current = store.current.dimLevels.first { $0.key == entry.key }?.level ?? 0
         setDim(min(0.9, max(0, current + delta)), forKey: entry.key)
     }
+}
+
+
+/// When displays came and went, kept in preferences.
+final class DisplayHistoryStore: ObservableObject {
+    static let shared = DisplayHistoryStore()
+    private let key = "displayHistory.v1"
+    @Published private(set) var timeline: DeviceTimeline
+
+    private init() {
+        timeline = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(DeviceTimeline.self, from: $0) } ?? DeviceTimeline()
+    }
+
+    func record(_ name: String, connected: Bool) {
+        timeline.record(name, connected: connected, at: Date())
+        if let data = try? JSONEncoder().encode(timeline) { UserDefaults.standard.set(data, forKey: key) }
+    }
+
+    func clear() { timeline = DeviceTimeline(); UserDefaults.standard.removeObject(forKey: key) }
 }

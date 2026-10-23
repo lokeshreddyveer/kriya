@@ -17,6 +17,7 @@ struct MonitorControlTab: View {
                 ForEach(ddc.monitors) { monitor in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(monitor.name).font(.headline)
+                        Text(DisplayInsight.ddcReport(name: monitor.name, brightness: monitor.brightness, input: monitor.input)).font(.caption).foregroundStyle(.secondary)
                         if let percent = monitor.brightnessPercent {
                             HStack {
                                 Image(systemName: "sun.min").accessibilityHidden(true)

@@ -71,6 +71,9 @@ struct DisplaysPane: View {
                         range: 0...0.8, format: { $0 == 0 ? "Off" : "\(Int($0 / 0.8 * 100))%" },
                         help: "Takes blue out of the picture for a softer screen in the evening."
                     )
+                    if let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == entry.id }) {
+                        LabeledContent("High dynamic range", value: DisplayInsight.hdr(potential: Double(screen.maximumPotentialExtendedDynamicRangeColorComponentValue), current: Double(screen.maximumExtendedDynamicRangeColorComponentValue)))
+                    }
                 } header: {
                     Text(entry.name + (entry.isMain ? " · main" : ""))
                 } footer: {
@@ -78,6 +81,7 @@ struct DisplaysPane: View {
                 }
             }
             if displays.isEmpty { Section { Text("No displays found.").foregroundStyle(.secondary) } }
+            DisplayHistorySection()
         }
         .formStyle(.grouped)
     }
@@ -153,5 +157,26 @@ struct DisplaysPane: View {
             if let error = store.lastError { Section { Text(error).font(.callout).foregroundStyle(Theme.danger) } }
         }
         .formStyle(.grouped)
+    }
+}
+
+
+private struct DisplayHistorySection: View {
+    @ObservedObject private var history = DisplayHistoryStore.shared
+
+    var body: some View {
+        if !history.timeline.events.isEmpty {
+            Section {
+                ForEach(history.timeline.events.prefix(8)) { event in
+                    HStack {
+                        Image(systemName: event.connected ? "plus.circle" : "minus.circle").foregroundStyle(event.connected ? Theme.ok : Theme.warn)
+                        Text("\(event.device) \(event.connected ? "connected" : "disconnected")")
+                        Spacer()
+                        Text(event.at.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                    }.font(.callout)
+                }
+                Button("Clear History") { history.clear() }.controlSize(.small)
+            } header: { Text("Connection history") }
+        }
     }
 }

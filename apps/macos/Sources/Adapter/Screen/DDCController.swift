@@ -81,7 +81,30 @@ final class DDCController: ObservableObject {
         }
     }
 
+    private var sleepObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
+    private var beforeSleep: [String: Int] = [:]
+
+    /// A monitor can wake at a different brightness than it slept at; the level it had is sent again after wake.
+    private func watchSleep() {
+        guard sleepObserver == nil else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObserver = center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            beforeSleep = Dictionary(monitors.compactMap { m in m.brightnessPercent.map { (m.id, $0) } }, uniquingKeysWith: { a, _ in a })
+        }
+        wakeObserver = center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                guard let self else { return }
+                let restore = DisplayInsight.brightnessToRestore(saved: beforeSleep, connected: Set(monitors.map(\.id)))
+                beforeSleep = [:]
+                for (id, percent) in restore { setBrightness(id, percent: percent) }
+            }
+        }
+    }
+
     func startWatching() {
+        watchSleep()
         guard observer == nil else { return }
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             // A monitor that has just woken needs a moment before it answers.

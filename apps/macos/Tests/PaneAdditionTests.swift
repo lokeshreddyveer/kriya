@@ -482,3 +482,53 @@ final class WorkspaceToolsTests: XCTestCase {
         XCTAssertEqual(log.entries.count, WorkspaceLaunchLog.limit)
     }
 }
+
+final class TrafficInsightTests: XCTestCase {
+    func testEachChangedRuleSaysWhatMacOSWouldHaveDone() {
+        let notes = TrafficInsight.notes(for: [
+            TrafficBinding(button: .close, modifiers: 0, action: .quitApp),
+            TrafficBinding(button: .zoom, modifiers: KeyModifiers.option, action: .maximize),
+            TrafficBinding(button: .minimize, modifiers: 0, action: .native),
+            TrafficBinding(button: .zoom, modifiers: 0, action: .doNothing),
+        ])
+        XCTAssertEqual(notes.count, 3)
+        XCTAssertTrue(notes[0].text.contains("plain click on the red button now quit app"))
+        XCTAssertTrue(notes[0].text.contains("macOS closes the window"))
+        XCTAssertTrue(notes[1].text.contains("zooms the window"))
+        XCTAssertTrue(notes[2].text.contains("does nothing"))
+        XCTAssertTrue(notes[2].text.contains("enters full screen"))
+    }
+
+    func testRepeatedRulesAndTheTitleBarAreReported() {
+        let twice = [TrafficBinding(button: .close, modifiers: 0, action: .hideApp), TrafficBinding(button: .close, modifiers: 0, action: .quitApp)]
+        XCTAssertEqual(TrafficInsight.duplicates(twice).count, 1)
+        XCTAssertTrue(TrafficInsight.duplicates([twice[0]]).isEmpty)
+        XCTAssertNil(TrafficInsight.titleBarNote(.native))
+        XCTAssertNotNil(TrafficInsight.titleBarNote(.maximize))
+    }
+}
+
+final class DisplayInsightTests: XCTestCase {
+    func testHDRWordsFollowWhatTheScreenReports() {
+        XCTAssertEqual(DisplayInsight.hdr(potential: 1.0, current: 1.0), "No HDR support")
+        XCTAssertEqual(DisplayInsight.hdr(potential: 4.0, current: 1.0), "HDR capable; showing standard content now")
+        XCTAssertEqual(DisplayInsight.hdr(potential: 4.0, current: 2.5), "HDR content is showing now")
+    }
+
+    func testDDCReportSaysWhatAnsweredAndWhatDidNot() {
+        let text = DisplayInsight.ddcReport(name: "Dell", brightness: DDC.Reading(current: 50, maximum: 100), input: nil)
+        XCTAssertTrue(text.contains("brightness works (now 50%)"))
+        XCTAssertTrue(text.contains("input switching did not answer"))
+    }
+
+    func testWakeRestoreSkipsGoneMonitorsAndZeroAndClamps() {
+        let result = DisplayInsight.brightnessToRestore(saved: ["a": 60, "b": 0, "c": 40, "d": 300], connected: ["a", "b", "d"])
+        XCTAssertEqual(result, ["a": 60, "d": 100])
+    }
+
+    func testChangesNameWhatAppearedAndWhatLeft() {
+        let result = DisplayInsight.changes(before: ["1": "Built-in", "2": "Dell"], after: ["1": "Built-in", "3": "LG"])
+        XCTAssertEqual(result.map { "\($0.name) \($0.connected)" }, ["Dell false", "LG true"])
+        XCTAssertTrue(DisplayInsight.changes(before: ["1": "A"], after: ["1": "A"]).isEmpty)
+    }
+}
