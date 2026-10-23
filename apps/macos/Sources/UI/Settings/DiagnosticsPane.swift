@@ -296,6 +296,7 @@ private struct DiagnosticsOverviewTab: View {
     @State private var stats = EventMonitor.Stats()
     @State private var autoRefresh = true
     @State private var message: String?
+    @State private var resetting: ResettableArea?
 
     private let ticker = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
@@ -353,6 +354,29 @@ private struct DiagnosticsOverviewTab: View {
                 Text("Log")
             } footer: {
                 Text("The log stays on this Mac. It records what Kriya did, never what you typed or selected. A report is a text file you can choose to share.")
+            }
+
+            Section {
+                ForEach(FeatureReset.areas) { area in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(area.title)
+                            Text(area.detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Reset…", role: .destructive) { resetting = area }.controlSize(.small)
+                    }
+                }
+            } header: { Text("Reset one part") } footer: {
+                Text("Puts one part of Kriya back to how it was on first launch and leaves everything else as it is. Kriya restarts to finish. It cannot be undone, so make a backup first if the settings matter.")
+            }
+            .confirmationDialog("Reset \(resetting?.title ?? "")?", isPresented: Binding(get: { resetting != nil }, set: { if !$0 { resetting = nil } }), titleVisibility: .visible) {
+                Button("Reset and Restart", role: .destructive) {
+                    if let area = resetting { AuditLog.shared.record(.setting, "Reset \(area.title)"); FeatureReset.reset(area); UserDefaults.standard.synchronize(); SystemInfo.relaunch(arguments: []) }
+                    resetting = nil
+                }
+            } message: {
+                Text(resetting.map { "\($0.detail) will be cleared." } ?? "")
             }
 
             Section {

@@ -322,3 +322,23 @@ final class PlaceRuleTests: XCTestCase {
         XCTAssertNil(PlaceRules.place(at: 51.5007, -0.1246, in: [noOutput]))
     }
 }
+
+final class FeatureResetTests: XCTestCase {
+    func testResettingOneAreaLeavesTheOthersAlone() throws {
+        let defaults = UserDefaults(suiteName: "kriya-reset-\(UUID().uuidString)")!
+        defaults.set("a", forKey: "soundRules.v1")
+        defaults.set("b", forKey: "soundModes.v1")
+        defaults.set("c", forKey: "launcherPrefs.v1")
+        let sound = try XCTUnwrap(FeatureReset.areas.first { $0.id == "sound" })
+        XCTAssertEqual(FeatureReset.reset(sound, in: defaults), 2)
+        XCTAssertNil(defaults.object(forKey: "soundRules.v1"))
+        XCTAssertEqual(defaults.string(forKey: "launcherPrefs.v1"), "c")
+        XCTAssertEqual(FeatureReset.reset(sound, in: defaults), 0, "nothing left to remove")
+    }
+
+    func testNoKeyBelongsToTwoAreas() {
+        let keys = FeatureReset.areas.flatMap(\.keys)
+        XCTAssertEqual(keys.count, Set(keys).count)
+        XCTAssertEqual(FeatureReset.areas.count, Set(FeatureReset.areas.map(\.id)).count)
+    }
+}
