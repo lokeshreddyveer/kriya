@@ -179,6 +179,7 @@ final class HomebrewManager: ObservableObject {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { clearSearch(); return }
         guard let brewPath, text.count <= 60, !text.contains("\0"), !text.hasPrefix("-") else { return }
+        guard !LocalOnly.isOn else { status = LocalOnly.blockedMessage; return }
         searchGeneration += 1
         let generation = searchGeneration
         isSearching = true
@@ -230,6 +231,8 @@ final class HomebrewManager: ObservableObject {
     func install(_ tokens: [String]) {
         let wanted = tokens.filter(HomebrewParsing.isValidToken)
         guard let brewPath, !wanted.isEmpty, !isRunning else { return }
+        guard !LocalOnly.isOn else { status = LocalOnly.blockedMessage; return }
+        AuditLog.shared.record(.install, "brew install --cask " + wanted.joined(separator: " "))
         isRunning = true
         setCancelRequested(false)
         log = ""

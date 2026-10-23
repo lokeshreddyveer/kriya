@@ -28,8 +28,9 @@ final class UpdateManager: ObservableObject {
             Log.info("Updates", "No update signing key in this build; the updater is off")
             return
         }
-        let controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
-        controller.updater.automaticallyChecksForUpdates = config.settings.automaticallyCheckForUpdates
+        // In local-only mode the updater is created but not started, so it makes no request.
+        let controller = SPUStandardUpdaterController(startingUpdater: !LocalOnly.isOn, updaterDelegate: nil, userDriverDelegate: nil)
+        controller.updater.automaticallyChecksForUpdates = config.settings.automaticallyCheckForUpdates && !LocalOnly.isOn
         controller.updater.automaticallyDownloadsUpdates = installAutomatically
         controller.updater.updateCheckInterval = 3600
         self.controller = controller
@@ -39,8 +40,20 @@ final class UpdateManager: ObservableObject {
         cancellable = config.$settings
             .map(\.automaticallyCheckForUpdates)
             .removeDuplicates()
-            .sink { [weak controller] on in controller?.updater.automaticallyChecksForUpdates = on }
+            .sink { [weak controller] on in controller?.updater.automaticallyChecksForUpdates = on && !LocalOnly.isOn }
+        localOnlySub = NotificationCenter.default.publisher(for: LocalOnly.changed).sink { [weak self, weak controller] _ in
+            guard let controller else { return }
+            if LocalOnly.isOn {
+                controller.updater.automaticallyChecksForUpdates = false
+            } else {
+                controller.startUpdater()
+                controller.updater.automaticallyChecksForUpdates = config.settings.automaticallyCheckForUpdates
+            }
+            self?.objectWillChange.send()
+        }
     }
+
+    private var localOnlySub: AnyCancellable?
 
     /// When Sparkle last finished looking, which is what "last looked" shows. A failed look does not count.
     func refreshLastChecked() {

@@ -454,6 +454,7 @@ final class AutomationEngine: ObservableObject {
             return nil
 
         case .script(let language, let source):
+            AuditLog.shared.record(.script, "Workflow script step (\(language == .shell ? "shell" : "AppleScript")) run")
             let output: String
             switch language {
             case .shell:

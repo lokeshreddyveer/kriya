@@ -67,8 +67,9 @@ final class CurrencyRates {
     var isFresh: Bool { snapshot.map { Date().timeIntervalSince($0.fetchedAt) < 6 * 3600 } ?? false }
 
     func refreshIfNeeded() {
-        guard !isFresh, !fetching else { return }
+        guard !isFresh, !fetching, !LocalOnly.isOn else { return }
         fetching = true
+        AuditLog.shared.record(.network, "Currency rates: GET \(CurrencyConverter.ratesURL.host ?? "?")")
         var request = URLRequest(url: CurrencyConverter.ratesURL, timeoutInterval: 10)
         request.httpMethod = "GET"
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
@@ -85,6 +86,7 @@ final class CurrencyRates {
 /// Runs a script the person wrote, away from the main thread, and reports what it printed as they chose.
 enum ScriptRunner {
     static func run(_ script: ScriptCommand, argument: String, toast: Toast) {
+        AuditLog.shared.record(.script, "Launcher script “\(script.name)” run")
         DispatchQueue.global(qos: .userInitiated).async {
             let environment = ["PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "KRIYA_ARGUMENT": argument]
             do {

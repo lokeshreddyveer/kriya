@@ -1259,3 +1259,40 @@ final class FinderMetadataTests: XCTestCase {
         XCTAssertEqual(FinderMetadata.tags(of: file), ["Work", "Tax"])
     }
 }
+
+final class AuditAndLocalOnlyTests: XCTestCase {
+    func testTheAuditLogKeepsTheNewestFirstAndOnlyTheLatest() {
+        let defaults = UserDefaults(suiteName: "kriya-audit-\(UUID().uuidString)")!
+        let log = AuditLog(defaults: defaults)
+        for index in 0..<(AuditLog.capacity + 5) { log.record(.network, "request \(index)") }
+        let wait = expectation(description: "published")
+        DispatchQueue.main.async { wait.fulfill() }
+        wait(for: [wait], timeout: 2)
+        XCTAssertEqual(log.entries.count, AuditLog.capacity)
+        XCTAssertEqual(log.entries.first?.summary, "request \(AuditLog.capacity + 4)")
+        XCTAssertEqual(AuditLog(defaults: defaults).entries.count, AuditLog.capacity, "it survives a restart")
+    }
+
+    func testLongOrMultiLineSummariesAreCutDownAndFilterWorks() {
+        let log = AuditLog(defaults: UserDefaults(suiteName: "kriya-audit-\(UUID().uuidString)")!)
+        log.record(.script, String(repeating: "x", count: 500) + "\nsecond line")
+        log.record(.files, "Folder rule “Tidy”: 3 changes")
+        XCTAssertLessThanOrEqual(log.entries.first { $0.kind == .script }?.summary.count ?? 999, 160)
+        XCTAssertFalse(log.entries.contains { $0.summary.contains("\n") })
+        XCTAssertTrue(log.text(kinds: [.files]).contains("Tidy"))
+        XCTAssertFalse(log.text(kinds: [.files]).contains("xxxx"))
+        log.clear()
+        XCTAssertTrue(log.entries.isEmpty)
+    }
+
+    func testLocalOnlyBlocksAnAPICommandBeforeItBuildsAnyRequest() {
+        let before = LocalOnly.isOn
+        defer { LocalOnly.isOn = before }
+        LocalOnly.isOn = true
+        var command = APICommand(name: "Find", keyword: "find", url: "https://api.example.com/{query}")
+        command.id = "t"
+        XCTAssertTrue(LocalOnly.isOn)
+        XCTAssertTrue(LocalOnly.blockedMessage.contains("no network requests"))
+        XCTAssertFalse(LocalOnly.stopped.isEmpty)
+    }
+}

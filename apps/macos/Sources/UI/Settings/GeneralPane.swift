@@ -10,6 +10,7 @@ struct GeneralPane: View {
 
     @State private var loginStatus = LaunchAtLogin.status
     @State private var loginError: String?
+    @State private var localOnly = LocalOnly.isOn
 
     private var loginBinding: Binding<Bool> {
         Binding(
@@ -52,6 +53,12 @@ struct GeneralPane: View {
                     }
                 }
                 .pickerStyle(.segmented)
+            }
+
+            Section {
+                Toggle("Local only: keep Kriya off the network", isOn: Binding(get: { localOnly }, set: { LocalOnly.isOn = $0; localOnly = $0 }))
+            } header: { Text("Privacy") } footer: {
+                Text("While this is on, Kriya makes no network requests of its own. It stops: " + LocalOnly.stopped.joined(separator: "; ") + ". Web searches and quicklinks still open in your browser when you choose them, and Homebrew is only run when you ask. See Diagnostics › Audit for everything Kriya did that reached outside itself.")
             }
 
             Section {

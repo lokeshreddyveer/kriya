@@ -109,7 +109,7 @@ final class BackupManager: ObservableObject {
     /// Keeps one backup per Mac in iCloud Drive, refreshed every hour and when Kriya quits. Another Mac can restore it.
     func startICloud() {
         refreshICloudList()
-        guard iCloudEnabled, timer == nil else { return }
+        guard iCloudEnabled, !LocalOnly.isOn, timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: Self.iCloudInterval, repeats: true) { [weak self] _ in
             self?.backUpToICloudQuietly()
         }
@@ -119,10 +119,12 @@ final class BackupManager: ObservableObject {
     }
 
     func flushICloud() {
-        if iCloudEnabled { backUpToICloudQuietly() }
+        if iCloudEnabled, !LocalOnly.isOn { backUpToICloudQuietly() }
     }
 
     func backUpToICloud() throws {
+        guard !LocalOnly.isOn else { throw CoreError.Backup(message: LocalOnly.blockedMessage) }
+        AuditLog.shared.record(.backup, "Backed up to iCloud Drive")
         guard let folder = Self.iCloudFolder else {
             throw CoreError.Backup(message: "iCloud Drive is not turned on for this Mac")
         }

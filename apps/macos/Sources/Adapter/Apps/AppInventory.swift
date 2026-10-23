@@ -317,8 +317,13 @@ final class AppInventory: ObservableObject {
 
     func checkUpdates() {
         guard !isCheckingUpdates else { return }
+        guard !LocalOnly.isOn else {
+            updateNote = "Local-only mode is on, so updates are not checked."
+            return
+        }
         isCheckingUpdates = true
         updateNote = nil
+        AuditLog.shared.record(.network, "Checking app updates: \(apps.filter { if case .sparkle = $0.source { return true } else { return false } }.count) update feeds and Homebrew")
         checkStage = "Apps that update themselves…"
         let apps = self.apps
         let cancel = CancelToken()
@@ -443,6 +448,7 @@ final class AppInventory: ObservableObject {
             return
         }
         upgrading.insert(token)
+        AuditLog.shared.record(.install, "brew upgrade --cask \(token)")
         let override = brewExecutableOverride
         HomebrewQueue.shared.async {
             guard let brew = override ?? ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {

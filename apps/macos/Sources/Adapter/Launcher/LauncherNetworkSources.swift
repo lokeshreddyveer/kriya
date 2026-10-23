@@ -14,11 +14,13 @@ enum APICommandRunner {
 
     /// Runs the request and reports the outcome in a toast. Only the words typed go into it.
     static func run(_ command: APICommand, query: String, toast: Toast, session: URLSession = .shared) {
+        guard !LocalOnly.isOn else { toast.show(LocalOnly.blockedMessage, isError: true); return }
         guard let request = command.request(for: query, headerValues: headerValues(for: command)) else {
             toast.show("“\(command.name)”: the address could not be built from those words.", isError: true)
             return
         }
         toast.show("Calling \(command.host ?? command.name)…")
+        AuditLog.shared.record(.network, "API command “\(command.name)”: \(command.method.rawValue) \(command.host ?? "?")")
         Task {
             do {
                 let (data, response) = try await session.data(for: request)

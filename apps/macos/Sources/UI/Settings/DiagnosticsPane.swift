@@ -7,14 +7,14 @@ struct DiagnosticsPane: View {
     @State private var tab: Tab = .overview
 
     enum Tab: String, CaseIterable, Identifiable {
-        case overview = "Overview", health = "Health", trace = "Trace", timeline = "Timeline"
+        case overview = "Overview", health = "Health", trace = "Trace", timeline = "Timeline", audit = "Audit"
         var id: String { rawValue }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
-                .paneTabBar(maxWidth: 360)
+                .paneTabBar(maxWidth: 440)
                 .paneHeader()
             Group {
                 switch tab {
@@ -22,6 +22,7 @@ struct DiagnosticsPane: View {
                 case .health: HealthTab()
                 case .trace: TraceTab()
                 case .timeline: TimelineTab()
+                case .audit: AuditTab()
                 }
             }
             .id(tab)
@@ -480,5 +481,49 @@ struct WindowDiagnosticsSection: View {
         } footer: {
             Text("“Did not fit” means the app ended up more than a few points from where it was told, usually because of a minimum or fixed window size.")
         }
+    }
+}
+
+
+// MARK: - Audit
+
+/// What Kriya did that reached outside itself, newest first. It holds where and what, never the words or contents involved.
+private struct AuditTab: View {
+    @ObservedObject private var audit = AuditLog.shared
+    @State private var filter: AuditLog.Kind?
+
+    private var shown: [AuditLog.Entry] { audit.entries.filter { filter == nil || $0.kind == filter } }
+
+    var body: some View {
+        Form {
+            Section {
+                if LocalOnly.isOn { Label("Local-only mode is on: no network requests are being made.", systemImage: "lock.shield").foregroundStyle(Theme.ok) }
+                Picker("Show", selection: $filter) {
+                    Text("Everything").tag(AuditLog.Kind?.none)
+                    ForEach(AuditLog.Kind.allCases) { Text($0.title).tag(AuditLog.Kind?.some($0)) }
+                }
+                if shown.isEmpty { Text("Nothing yet.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(shown.prefix(200)) { entry in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: entry.kind.symbol).foregroundStyle(.secondary).frame(width: 18)
+                        Text(entry.summary).lineLimit(2)
+                        Spacer()
+                        Text(entry.at.formatted(date: .abbreviated, time: .standard)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } header: { Text("Audit") } footer: {
+                Text("A record of network requests Kriya made (the site, not what was sent), scripts and commands it ran, installs, backups, files changed by rules and changes to local-only mode. The last \(AuditLog.capacity) are kept on this Mac.")
+            }
+            Section {
+                HStack {
+                    Button("Copy as Text") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(audit.text(kinds: filter.map { [$0] } ?? []), forType: .string)
+                    }
+                    Button("Clear", role: .destructive) { audit.clear() }
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }

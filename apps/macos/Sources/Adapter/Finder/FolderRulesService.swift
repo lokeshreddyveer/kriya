@@ -83,6 +83,7 @@ final class FolderRulesService: ObservableObject {
             DispatchQueue.main.async {
                 self.running.remove(rule.id)
                 guard !changes.isEmpty else { self.lastResult[rule.id] = "Nothing to do"; return }
+                AuditLog.shared.record(.files, "Folder rule “\(rule.name)”: \(changes.count) change\(changes.count == 1 ? "" : "s")")
                 let verb: String
                 switch rule.action {
                 case .copyTo: verb = "Copied"
