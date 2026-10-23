@@ -69,6 +69,8 @@ struct CaptureSettings: Codable, Equatable {
     /// Names or words to hide wherever they appear when private text is hidden, on top of emails, numbers and keys.
     var redactWords: [String] = []
     var shortcuts: [CaptureShortcut] = []
+    /// How files are named: "{app} {date} {time}". Nil is the original "Kriya Capture date time".
+    var namePattern: String?
     /// How Kriya's own recorder records. Optional so settings saved before it existed still load.
     var recordingOptions: RecordingOptions?
     var recording: RecordingOptions {

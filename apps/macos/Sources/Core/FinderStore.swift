@@ -81,6 +81,9 @@ extension FinderActionKind {
         case .copyChecksum: return "Copy the file's SHA-256 checksum"
         case .removeQuarantine: return "Remove the download warning macOS puts on files"
         case .makeAlias: return "Make an alias beside the item"
+        case .editTags: return "Add Finder tags to the items"
+        case .editComment: return "Write a Finder comment on the items"
+        case .share: return "Open the share menu for the items"
         }
     }
 
@@ -110,6 +113,9 @@ extension FinderActionKind {
         case .copyChecksum: return "number.circle"
         case .removeQuarantine: return "checkmark.shield"
         case .makeAlias: return "arrow.turn.up.right"
+        case .editTags: return "tag"
+        case .editComment: return "text.bubble"
+        case .share: return "square.and.arrow.up"
         }
     }
 }

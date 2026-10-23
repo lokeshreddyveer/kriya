@@ -152,6 +152,7 @@ struct CleanupSection: View {
             HStack {
                 Button("Find Large Files") { scanner.scan(duplicates: false) }.disabled(scanner.scanning)
                 Button("Find Copies") { scanner.scan(duplicates: true) }.disabled(scanner.scanning)
+                Button("Find Old Files") { scanner.scan(duplicates: false, stale: true) }.disabled(scanner.scanning)
                 if scanner.scanning { Button("Stop") { scanner.cancel() }; ProgressView().controlSize(.small) }
                 Spacer()
                 Text(scanner.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -165,12 +166,23 @@ struct CleanupSection: View {
                     }.padding(.vertical, 2)
                 }
             }
+            HStack {
+                Picker("Old means not opened or changed for", selection: $scanner.staleDays) {
+                    Text("3 months").tag(90); Text("6 months").tag(180); Text("1 year").tag(365); Text("2 years").tag(730)
+                }
+                .controlSize(.small)
+                Spacer()
+            }
+            if !scanner.stale.isEmpty {
+                Text("Not touched for \(scanner.staleDays >= 365 ? "\(scanner.staleDays / 365) year\(scanner.staleDays >= 730 ? "s" : "")" : "\(scanner.staleDays / 30) months")").font(.callout.weight(.medium)).padding(.top, 4)
+                ForEach(scanner.stale) { file in fileRow(file) }
+            }
             if !scanner.large.isEmpty {
                 Text("Largest files").font(.callout.weight(.medium)).padding(.top, 4)
                 ForEach(scanner.large) { file in fileRow(file) }
             }
-        } header: { Text("Large files and copies") } footer: {
-            Text("Copies are files with exactly the same contents, found by comparing them. Move to Trash puts a file in the Trash, where you can still get it back. Your Library folder is skipped.")
+        } header: { Text("Large files, copies and old files") } footer: {
+            Text("Old files are ones over 10 MB that have not been opened or changed for the time you choose, biggest first; the last-opened date is only as good as the file system keeps it. Copies are files with exactly the same contents, found by comparing them. Move to Trash puts a file in the Trash, where you can still get it back. Your Library folder is skipped.")
         }
     }
 

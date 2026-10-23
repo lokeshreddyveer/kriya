@@ -5,6 +5,8 @@ struct FoundFile: Identifiable, Equatable, Hashable {
     let path: String
     let size: Int64
     let modified: Date?
+    /// When the file was last opened, if the file system says.
+    var accessed: Date? = nil
     var name: String { (path as NSString).lastPathComponent }
     var folder: String { ((path as NSString).deletingLastPathComponent as NSString).lastPathComponent }
 }
@@ -26,6 +28,22 @@ enum DuplicateFinder {
     /// The room that would come back if all but one of each set were removed.
     static func reclaimable(_ sets: [[FoundFile]]) -> Int64 {
         sets.reduce(0) { $0 + Int64(max($1.count - 1, 0)) * ($1.first?.size ?? 0) }
+    }
+
+    /// The last time anyone touched the file: opened or changed, whichever is later. Nil if neither is known.
+    static func lastTouched(_ file: FoundFile) -> Date? {
+        [file.modified, file.accessed].compactMap { $0 }.max()
+    }
+
+    /// Files nobody has opened or changed for `days`, the biggest first. A file with no known dates is left out, since nothing says
+    /// it is old.
+    static func stale(_ files: [FoundFile], olderThanDays days: Int, minimumSize: Int64 = 10 * 1_048_576, now: Date = Date(), count: Int = 60) -> [FoundFile] {
+        let cutoff = now.addingTimeInterval(-Double(max(days, 1)) * 86_400)
+        let old = files.filter { file in
+            guard file.size >= minimumSize, let touched = lastTouched(file) else { return false }
+            return touched < cutoff
+        }
+        return Array(old.sorted { $0.size > $1.size }.prefix(count))
     }
 
     static func largest(_ files: [FoundFile], count: Int, minimumSize: Int64 = 50 * 1_048_576) -> [FoundFile] {

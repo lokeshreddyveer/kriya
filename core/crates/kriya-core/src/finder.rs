@@ -166,6 +166,12 @@ pub enum FinderActionKind {
     RemoveQuarantine,
     /// Makes a Finder alias beside each selected item.
     MakeAlias,
+    /// Asks for Finder tags and puts them on each selected item (adding to the tags it has).
+    EditTags,
+    /// Asks for a Finder comment and writes it on each selected item.
+    EditComment,
+    /// Opens the system share menu for the selected items.
+    Share,
 }
 
 /// What a selection has to look like for an action to be offered.
@@ -826,6 +832,24 @@ pub fn suggested_items() -> Vec<FinderItem> {
             "Make Alias",
             FinderActionKind::MakeAlias,
             Applies::Anything,
+        ),
+        item(
+            "edit-tags",
+            "Edit Tags…",
+            FinderActionKind::EditTags,
+            Applies::Anything,
+        ),
+        item(
+            "edit-comment",
+            "Edit Comment…",
+            FinderActionKind::EditComment,
+            Applies::Anything,
+        ),
+        item(
+            "share",
+            "Share…",
+            FinderActionKind::Share,
+            Applies::Files,
         ),
     ]
 }

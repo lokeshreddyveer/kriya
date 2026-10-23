@@ -20,6 +20,8 @@ final class ScreenCaptureService: ObservableObject {
 
     /// Opens the editor with a picture and calls back with the finished one (nil when the person cancels). Set by the app.
     var showEditor: (CGImage, @escaping (CGImage?) -> Void) -> Void = { image, done in done(image) }
+    /// The app that was in front when the last capture began, for naming it.
+    private var frontApp: String?
     /// Whether Kriya may capture the screen. Replaced in tests.
     var hasPermission: () -> Bool = { CGPreflightScreenCaptureAccess() }
     var requestPermission: () -> Void = { _ = CGRequestScreenCaptureAccess() }
@@ -84,11 +86,12 @@ final class ScreenCaptureService: ObservableObject {
             return
         }
         isCapturing = true
+        frontApp = NSWorkspace.shared.frontmostApplication?.localizedName
         let current = settings.settings
         if action == .recordScreen || action == .recordWindow || action == .recordApp {
             var options = current.recording
             options.source = action == .recordWindow ? .window : action == .recordApp ? .app : .screen
-            recording.start(options, into: current.folder)
+            recording.start(options, into: current.folder, namePattern: current.namePattern, app: frontApp, mode: options.source.rawValue)
             return
         }
         if action == .record || action == .recordGIF { return record(asGIF: action == .recordGIF, settings: current) }
@@ -256,7 +259,7 @@ final class ScreenCaptureService: ObservableObject {
         let manager = FileManager.default
         do {
             try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let name = ScreenCaptureArguments.fileName(for: now) { manager.fileExists(atPath: folder.appendingPathComponent($0).path) }
+            let name = CaptureNaming.fileName(pattern: settings.settings.namePattern, date: now, app: frontApp, mode: "capture", ext: "png") { manager.fileExists(atPath: folder.appendingPathComponent($0).path) }
             guard let data = image.pngData else { return nil }
             try data.write(to: folder.appendingPathComponent(name), options: .atomic)
             return name

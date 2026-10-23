@@ -68,8 +68,15 @@ struct CapturePane: View {
                     Text("No wait").tag(0); Text("3 seconds").tag(3); Text("5 seconds").tag(5); Text("10 seconds").tag(10)
                 }
                 Toggle("Play the camera sound", isOn: bind(\.playSound))
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("File name", text: Binding(get: { settings.namePattern ?? CaptureNaming.defaultPattern }, set: { value in store.update { $0.namePattern = value == CaptureNaming.defaultPattern ? nil : value } }))
+                    if let problem = CaptureNaming.problem(settings.namePattern ?? CaptureNaming.defaultPattern) { Text(problem).font(.caption).foregroundStyle(Theme.danger) }
+                    else {
+                        Text("Example: " + CaptureNaming.fileName(pattern: settings.namePattern, date: Date(), app: NSWorkspace.shared.frontmostApplication?.localizedName ?? "Safari", mode: "capture", ext: "png")).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             } header: { Text("After a capture") } footer: {
-                Text("Pictures are made and kept on this Mac. Reading text and hiding private text use the Mac's own text recognition, with no internet.")
+                Text("In the file name, {date}, {time}, {app} (the app in front), {mode} and {n} are filled in; recordings use the same pattern with “Recording” in place of “Capture”. Pictures are made and kept on this Mac. Reading text and hiding private text use the Mac's own text recognition, with no internet.")
             }
 
             Section {

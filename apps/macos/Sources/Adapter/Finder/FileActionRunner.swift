@@ -95,6 +95,20 @@ final class FileActionRunner {
         case .makeAlias:
             inBackground { try FolderTools.makeAliases(urls) }
 
+        case .editTags:
+            guard !urls.isEmpty else { toast.show("Select the items to tag.", isError: true); return }
+            guard let names = FinderMetadata.askTags(existing: FinderMetadata.tags(of: urls[0]), count: urls.count) else { return }
+            inBackground { try FinderMetadata.addTags(names, to: urls) }
+
+        case .editComment:
+            guard !urls.isEmpty else { toast.show("Select the items to comment on.", isError: true); return }
+            guard let comment = FinderMetadata.askComment(existing: urls.count == 1 ? FinderMetadata.comment(of: urls[0]) : "", count: urls.count) else { return }
+            inBackground { try FinderMetadata.setComment(comment, on: urls) }
+
+        case .share:
+            guard !urls.isEmpty else { toast.show("Select the files to share.", isError: true); return }
+            FinderMetadata.share(urls)
+
         case .openInTerminal(let appID):
             openInTerminal(urls: urls, folder: folder, appID: appID ?? child)
 

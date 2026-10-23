@@ -41,20 +41,30 @@ final class FolderRulesService: ObservableObject {
     // MARK: Looking
 
     /// The files in a rule's folder, with what a rule can ask about them.
-    static func files(in folder: String) -> [FolderFile] {
+    static func files(in folder: String, markDuplicates: Bool = false) -> [FolderFile] {
         let url = URL(fileURLWithPath: folder, isDirectory: true)
         let keys: [URLResourceKey] = [.isDirectoryKey, .isHiddenKey, .fileSizeKey, .contentModificationDateKey, .tagNamesKey]
         let entries = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: [])) ?? []
-        return entries.compactMap { entry in
+        var files: [FolderFile] = entries.compactMap { entry in
             guard let values = try? entry.resourceValues(forKeys: Set(keys)), let modified = values.contentModificationDate else { return nil }
             return FolderFile(name: entry.lastPathComponent, isDirectory: values.isDirectory ?? false, isHidden: values.isHidden ?? false, size: Int64(values.fileSize ?? 0), modified: modified, tags: values.tagNames ?? [])
         }
+        if markDuplicates {
+            let copies = FolderRuleEngine.duplicateNames(files) { FileCleanupScanner.fingerprint(of: url.appendingPathComponent($0.name).path) }
+            for index in files.indices where copies.contains(files[index].name) { files[index].isDuplicate = true }
+        }
+        return files
+    }
+
+    /// The files a rule looks at; copies are worked out only for a rule that asks about them.
+    static func files(for rule: FolderRule) -> [FolderFile] {
+        files(in: rule.folder, markDuplicates: rule.conditions.contains(.isDuplicate))
     }
 
     /// What a rule would do right now, without doing it.
     func preview(_ rule: FolderRule, completion: @escaping ([PlannedChange]) -> Void) {
         queue.async {
-            let changes = FolderRuleEngine.plan(rule, files: Self.files(in: rule.folder), now: Date())
+            let changes = FolderRuleEngine.plan(rule, files: Self.files(for: rule), now: Date())
             DispatchQueue.main.async { completion(changes) }
         }
     }
@@ -68,7 +78,7 @@ final class FolderRulesService: ObservableObject {
         running.insert(rule.id)
         queue.async { [weak self] in
             guard let self else { return }
-            let changes = FolderRuleEngine.plan(rule, files: Self.files(in: rule.folder), now: Date())
+            let changes = FolderRuleEngine.plan(rule, files: Self.files(for: rule), now: Date())
             let result = Self.apply(changes)
             DispatchQueue.main.async {
                 self.running.remove(rule.id)

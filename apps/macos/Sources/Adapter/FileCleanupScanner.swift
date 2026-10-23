@@ -6,6 +6,9 @@ import CryptoKit
 final class FileCleanupScanner: ObservableObject {
     @Published private(set) var large: [FoundFile] = []
     @Published private(set) var duplicateSets: [[FoundFile]] = []
+    @Published private(set) var stale: [FoundFile] = []
+    /// How long a file must have gone untouched to be listed as old.
+    @Published var staleDays = 365
     @Published private(set) var scanning = false
     @Published private(set) var status = ""
     @Published var folder: URL = FileManager.default.homeDirectoryForCurrentUser
@@ -20,28 +23,30 @@ final class FileCleanupScanner: ObservableObject {
         panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.directoryURL = folder
         panel.prompt = "Look Here"
-        if panel.runModal() == .OK, let url = panel.url { folder = url; large = []; duplicateSets = [] }
+        if panel.runModal() == .OK, let url = panel.url { folder = url; large = []; duplicateSets = []; stale = [] }
     }
 
     func cancel() { cancelled = true }
 
-    func scan(duplicates: Bool) {
+    func scan(duplicates: Bool, stale findStale: Bool = false) {
         guard !scanning else { return }
+        let staleDays = self.staleDays
         scanning = true; cancelled = false
         status = "Looking through \(folder.lastPathComponent)…"
         let root = folder
         queue.async { [weak self] in
             var files: [FoundFile] = []
-            let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey, .isPackageKey]
+            let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .contentAccessDateKey, .isRegularFileKey, .isPackageKey]
             let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants]) { _, _ in true }
             while let url = enumerator?.nextObject() as? URL {
                 if self?.cancelled == true { break }
                 // Libraries and app bundles hold what apps need; copies there are not clutter.
                 if url.lastPathComponent == "Library" && url.deletingLastPathComponent() == FileManager.default.homeDirectoryForCurrentUser { enumerator?.skipDescendants(); continue }
                 guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isRegularFile == true, let size = v.fileSize else { continue }
-                files.append(FoundFile(path: url.path, size: Int64(size), modified: v.contentModificationDate))
+                files.append(FoundFile(path: url.path, size: Int64(size), modified: v.contentModificationDate, accessed: v.contentAccessDate))
             }
             let large = DuplicateFinder.largest(files, count: 40)
+            let old = findStale ? DuplicateFinder.stale(files, olderThanDays: staleDays) : []
             var sets: [[FoundFile]] = []
             if duplicates, self?.cancelled != true {
                 let groups = DuplicateFinder.sizeGroups(files)
@@ -55,9 +60,10 @@ final class FileCleanupScanner: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.large = large
+                if findStale { self.stale = old }
                 if duplicates { self.duplicateSets = sets }
                 self.scanning = false
-                self.status = self.cancelled ? "Stopped." : duplicates ? "Found \(sets.count) set\(sets.count == 1 ? "" : "s") of copies." : "Done."
+                self.status = self.cancelled ? "Stopped." : findStale ? "Found \(old.count) old file\(old.count == 1 ? "" : "s")." : duplicates ? "Found \(sets.count) set\(sets.count == 1 ? "" : "s") of copies." : "Done."
             }
         }
     }
@@ -78,5 +84,6 @@ final class FileCleanupScanner: ObservableObject {
         do { try FileManager.default.trashItem(at: URL(fileURLWithPath: file.path), resultingItemURL: nil) } catch { Toast().show("“\(file.name)” could not be moved to the Trash.", isError: true); return }
         large.removeAll { $0.path == file.path }
         duplicateSets = duplicateSets.map { $0.filter { $0.path != file.path } }.filter { $0.count > 1 }
+        stale.removeAll { $0.path == file.path }
     }
 }

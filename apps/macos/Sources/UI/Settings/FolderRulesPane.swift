@@ -171,6 +171,7 @@ private struct FolderRuleEditor: View {
                         Button("Is older than…") { rule.conditions.append(.olderThanDays(7)) }
                         Button("Is larger than…") { rule.conditions.append(.largerThanMB(100)) }
                         Button("Is smaller than…") { rule.conditions.append(.smallerThanMB(1)) }
+                        Button("Is a copy of an older file…") { if !rule.conditions.contains(.isDuplicate) { rule.conditions.append(.isDuplicate) } }
                     } label: { Label("Add a Condition", systemImage: "plus") }
                         .menuStyle(.button).fixedSize().disabled(rule.conditions.count >= 5)
                 } header: { Text("Conditions (all must be true)") }
@@ -265,6 +266,8 @@ private struct ConditionEditor: View {
             HStack { Text("is larger than"); Stepper("\(mb) MB", value: Binding(get: { mb }, set: { condition = .largerThanMB($0) }), in: 0...100_000, step: 10) }
         case .smallerThanMB(let mb):
             HStack { Text("is smaller than"); Stepper("\(mb) MB", value: Binding(get: { mb }, set: { condition = .smallerThanMB($0) }), in: 0...100_000) }
+        case .isDuplicate:
+            Text("is a copy of an older file in this folder (same contents; the oldest is kept)").foregroundStyle(.secondary)
         }
     }
 }

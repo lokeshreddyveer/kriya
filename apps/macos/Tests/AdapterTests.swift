@@ -1166,3 +1166,96 @@ final class CapsLockMappingTests: XCTestCase {
         XCTAssertNil(RemapService.parseMappings("x   UserKeyMapping   (\n)") { _ in nil }, "when the converter fails, nothing is changed")
     }
 }
+
+final class StaleFileTests: XCTestCase {
+    func testOnlyBigFilesNobodyTouchedForALongTimeAreListedBiggestFirst() {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let day: TimeInterval = 86_400
+        func file(_ name: String, mb: Int64, modifiedDaysAgo: Double?, openedDaysAgo: Double? = nil) -> FoundFile {
+            FoundFile(path: "/x/\(name)", size: mb * 1_048_576, modified: modifiedDaysAgo.map { now.addingTimeInterval(-$0 * day) }, accessed: openedDaysAgo.map { now.addingTimeInterval(-$0 * day) })
+        }
+        let files = [
+            file("old-small", mb: 1, modifiedDaysAgo: 900),
+            file("old-big", mb: 500, modifiedDaysAgo: 800),
+            file("old-medium", mb: 50, modifiedDaysAgo: 400),
+            file("recent", mb: 900, modifiedDaysAgo: 3),
+            file("old-but-opened-lately", mb: 300, modifiedDaysAgo: 900, openedDaysAgo: 10),
+            file("no-dates", mb: 700, modifiedDaysAgo: nil),
+        ]
+        XCTAssertEqual(DuplicateFinder.stale(files, olderThanDays: 365, now: now).map(\.name), ["old-big", "old-medium"])
+        XCTAssertEqual(DuplicateFinder.stale(files, olderThanDays: 700, now: now).map(\.name), ["old-big"])
+        XCTAssertEqual(DuplicateFinder.stale(files, olderThanDays: 365, now: now, count: 1).map(\.name), ["old-big"])
+    }
+}
+
+final class CaptureNamingAndDuplicateRuleTests: XCTestCase {
+    func testNamesCarryTheAppAndNeverClash() {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let plain = CaptureNaming.fileName(pattern: nil, date: date, app: "Safari", mode: "capture", ext: "png")
+        XCTAssertTrue(plain.hasPrefix("Kriya Capture ") && plain.hasSuffix(".png"))
+        let named = CaptureNaming.fileName(pattern: "{app} {date} {time}", date: date, app: "Safari", mode: "capture", ext: "png")
+        XCTAssertTrue(named.hasPrefix("Safari 2023-"))
+        XCTAssertEqual(CaptureNaming.fileName(pattern: "{app} {time}", date: date, app: "A/B:C", mode: "m", ext: "png").prefix(4), "ABC ")
+        let taken = CaptureNaming.fileName(pattern: "{app} {time}", date: date, app: "X", mode: "m", ext: "png") { $0.hasSuffix(" 2.png") ? false : true }
+        XCTAssertTrue(taken.hasSuffix(" 2.png"), "a name in use gets a number")
+        XCTAssertEqual(CaptureNaming.fileName(pattern: "shot {n}", date: date, app: nil, mode: "m", ext: "png") { $0 == "shot 1.png" }, "shot 2.png")
+    }
+
+    func testBadPatternsAreExplainedAndFallBack() {
+        XCTAssertNotNil(CaptureNaming.problem(""))
+        XCTAssertNotNil(CaptureNaming.problem("fixed name"))
+        XCTAssertNotNil(CaptureNaming.problem("a/b {time}"))
+        XCTAssertNil(CaptureNaming.problem("{app} {time}"))
+        let name = CaptureNaming.fileName(pattern: "fixed", date: Date(), app: nil, mode: "m", ext: "png")
+        XCTAssertTrue(name.hasPrefix("Kriya Capture "), "a bad pattern uses the default")
+    }
+
+    func testOnlyLaterCopiesAreMarkedAsDuplicates() {
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        func file(_ name: String, size: Int64, age: TimeInterval) -> FolderFile { FolderFile(name: name, size: size, modified: base.addingTimeInterval(age)) }
+        let files = [file("report.pdf", size: 100, age: 0), file("report (1).pdf", size: 100, age: 50), file("report copy.pdf", size: 100, age: 90),
+                     file("different.pdf", size: 100, age: 10), file("alone.txt", size: 7, age: 5), file("empty1", size: 0, age: 1), file("empty2", size: 0, age: 2)]
+        let sums = ["report.pdf": "A", "report (1).pdf": "A", "report copy.pdf": "A", "different.pdf": "B"]
+        let copies = FolderRuleEngine.duplicateNames(files) { sums[$0.name] }
+        XCTAssertEqual(copies, ["report (1).pdf", "report copy.pdf"], "the oldest is the original; same size with other contents is not a copy; empty files are ignored")
+    }
+
+    func testARuleWithTheCopyConditionOnlyMatchesMarkedFiles() {
+        let now = Date()
+        let rule = FolderRule(name: "Trash copies", enabled: true, folder: "/tmp/x", conditions: [.isDuplicate], action: .trash)
+        var copy = FolderFile(name: "a (1).pdf", size: 5, modified: now.addingTimeInterval(-600))
+        copy.isDuplicate = true
+        let original = FolderFile(name: "a.pdf", size: 5, modified: now.addingTimeInterval(-600))
+        XCTAssertTrue(FolderRuleEngine.matches(rule, copy, now: now))
+        XCTAssertFalse(FolderRuleEngine.matches(rule, original, now: now))
+        XCTAssertTrue(FolderCondition.isDuplicate.summary.contains("copy"))
+    }
+}
+
+final class FinderMetadataTests: XCTestCase {
+    func testTagsAreParsedAndMergedWithoutRepeats() {
+        XCTAssertEqual(FinderMetadata.parseTags(" Work, receipts ,work\n, ,Tax"), ["Work", "receipts", "Tax"])
+        XCTAssertEqual(FinderMetadata.merged(existing: ["Work"], adding: ["work", "Tax"]), ["Work", "Tax"])
+        XCTAssertTrue(FinderMetadata.parseTags(String(repeating: "x", count: 80)).isEmpty, "a very long name is not a tag")
+    }
+
+    func testACommentCanBeWrittenReadAndRemoved() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-comment-\(UUID().uuidString).txt")
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertEqual(FinderMetadata.comment(of: file), "")
+        _ = try FinderMetadata.setComment("For the tax return", on: [file])
+        XCTAssertEqual(FinderMetadata.comment(of: file), "For the tax return")
+        _ = try FinderMetadata.setComment("", on: [file])
+        XCTAssertEqual(FinderMetadata.comment(of: file), "")
+    }
+
+    func testTagsCanBeAddedToAFile() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-tags-\(UUID().uuidString).txt")
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+        _ = try FinderMetadata.addTags(["Work"], to: [file])
+        _ = try FinderMetadata.addTags(["Tax", "work"], to: [file])
+        XCTAssertEqual(FinderMetadata.tags(of: file), ["Work", "Tax"])
+    }
+}

@@ -22,14 +22,17 @@ final class RecordingController: ObservableObject {
         recorder.onFinish = { [weak self] result in self?.finished(result) }
     }
 
-    func start(_ options: RecordingOptions, into folder: URL) {
+    func start(_ options: RecordingOptions, into folder: URL, namePattern: String? = nil, app: String? = nil, mode: String = "recording") {
         guard !recorder.isActive else { return }
         let hud = RecordingHUD(recorder: recorder, onPause: { [weak self] in self?.recorder.togglePause() }, onStop: { [weak self] in self?.recorder.stop() })
         self.hud = hud
         hud.show()
         if options.showKeystrokes { keystrokes.show() }
         let begin = {
-            self.recorder.start(options: options, into: folder, excluding: [hud.windowNumber]) { [weak self] error in
+            let fileName = CaptureNaming.fileName(pattern: namePattern.map { $0.replacingOccurrences(of: "Capture", with: "Recording") } ?? "Kriya Recording {date} {time}", date: Date(), app: app, mode: mode, ext: "mov") {
+                FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
+            }
+            self.recorder.start(options: options, into: folder, excluding: [hud.windowNumber], fileName: fileName) { [weak self] error in
                 guard let self, let error else { return }
                 self.tearDown()
                 self.toast.show(error.localizedDescription, isError: true)

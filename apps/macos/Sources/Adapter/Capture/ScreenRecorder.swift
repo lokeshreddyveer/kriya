@@ -57,7 +57,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     /// Starts recording into `folder`. `excluding` are the numbers of Kriya's own windows (the controls) that must stay out of
     /// the video. The result of starting arrives through `completion`.
-    func start(options requested: RecordingOptions, into folder: URL, excluding hidden: [Int], completion: @escaping (Error?) -> Void) {
+    func start(options requested: RecordingOptions, into folder: URL, excluding hidden: [Int], fileName: String? = nil, completion: @escaping (Error?) -> Void) {
         guard state == .idle else { return completion(Failure("A recording is already running.")) }
         let options = requested.sanitized(hdrAvailable: Self.hdrAvailable)
         setState(.starting)
@@ -68,7 +68,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 let filter = try Self.filter(for: options.source, in: content, excluding: hidden)
                 let configuration = Self.configuration(for: filter, options: options)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-                let name = RecordingFileName.make(for: Date()) { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
+                let name = fileName ?? RecordingFileName.make(for: Date()) { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
                 let url = folder.appendingPathComponent(name)
                 try await begin(filter: filter, configuration: configuration, options: options, url: url)
                 await MainActor.run {

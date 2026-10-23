@@ -133,7 +133,7 @@ final class BrowserTabsTests: XCTestCase {
     private let sep = "\u{1F}"
 
     func testTabsAreReadFromTheBrowsersAnswer() {
-        let output = "1\(sep)1\(sep)Apple\(sep)https://apple.com/\n1\(sep)2\(sep)Start Page\(sep)\n2\(sep)1\(sep)Docs \(sep) page\(sep)https://docs.example.com/a?x=1\nnonsense\n"
+        let output = "1\(sep)1\(sep)Apple\(sep)https://apple.com/\n1\(sep)2\(sep)Start Page\(sep)\n2\(sep)1\(sep)Docs page\(sep)https://docs.example.com/a?x=1\nnonsense\n"
         let tabs = BrowserTabs.parse(output, browser: .safari)
         XCTAssertEqual(tabs.map(\.url), ["https://apple.com/", "https://docs.example.com/a?x=1"], "a tab with no address and a broken line are dropped")
         XCTAssertEqual(tabs[1].window, 2)

@@ -9,6 +9,8 @@ struct FolderFile: Equatable {
     var modified: Date
     /// The Finder tags already on the file.
     var tags: [String] = []
+    /// Another file in the same folder has exactly the same contents and is older. Only filled in for rules that ask.
+    var isDuplicate = false
 
     var fileExtension: String { (name as NSString).pathExtension.lowercased() }
     var baseName: String { (name as NSString).deletingPathExtension }
@@ -23,6 +25,8 @@ enum FolderCondition: Codable, Equatable {
     case olderThanDays(Int)
     case largerThanMB(Int)
     case smallerThanMB(Int)
+    /// A later copy of a file that is also in the folder: the oldest of identical files is the original and is left alone.
+    case isDuplicate
 
     var summary: String {
         switch self {
@@ -33,6 +37,7 @@ enum FolderCondition: Codable, Equatable {
         case .olderThanDays(let days): return "is older than \(days) day\(days == 1 ? "" : "s")"
         case .largerThanMB(let mb): return "is larger than \(mb) MB"
         case .smallerThanMB(let mb): return "is smaller than \(mb) MB"
+        case .isDuplicate: return "is a copy of an older file in the folder"
         }
     }
 }
@@ -114,7 +119,24 @@ enum FolderRuleEngine {
         case .olderThanDays(let days): return now.timeIntervalSince(file.modified) >= Double(days) * 86_400
         case .largerThanMB(let mb): return file.size > Int64(mb) * 1_048_576
         case .smallerThanMB(let mb): return file.size < Int64(mb) * 1_048_576
+        case .isDuplicate: return file.isDuplicate
         }
+    }
+
+    /// The names of files that are later copies of another file in `files`. Files with the same size are compared by their
+    /// fingerprint; of each identical set the oldest (then the first by name) is the original and the rest are copies.
+    static func duplicateNames(_ files: [FolderFile], fingerprint: (FolderFile) -> String?) -> Set<String> {
+        let candidates = files.filter { !$0.isDirectory && !$0.isHidden && !$0.name.hasPrefix(".") && $0.size > 0 }
+        var copies = Set<String>()
+        for group in Dictionary(grouping: candidates, by: \.size).values where group.count > 1 {
+            var bySum: [String: [FolderFile]] = [:]
+            for file in group { if let sum = fingerprint(file) { bySum[sum, default: []].append(file) } }
+            for same in bySum.values where same.count > 1 {
+                let ordered = same.sorted { ($0.modified, $0.name) < ($1.modified, $1.name) }
+                for copy in ordered.dropFirst() { copies.insert(copy.name) }
+            }
+        }
+        return copies
     }
 
     /// What is wrong with a rule, or nil when it is safe to run.
