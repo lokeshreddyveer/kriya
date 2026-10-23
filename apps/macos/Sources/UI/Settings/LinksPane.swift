@@ -88,6 +88,7 @@ struct LinksPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
     }
 }
 

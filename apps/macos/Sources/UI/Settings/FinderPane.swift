@@ -52,6 +52,7 @@ struct FinderPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
         .animation(.smooth(duration: 0.25), value: services.state(.contextMenu))
         .overlay(alignment: .bottom) {
             if let error = store.lastError {

@@ -155,6 +155,7 @@ final class PermissionManager: ObservableObject {
         guard updated != statuses else { return }
         for (permission, state) in updated where statuses[permission] != nil && statuses[permission] != state {
             Log.info("Permissions", "\(permission.title) is now \(state)")
+            FeatureActivity.shared.changed("permission:" + permission.rawValue, "\(permission.title) is now \(state == .granted ? "allowed" : (state == .denied ? "denied" : "not set"))")
             if defaults.object(forKey: "permissionNotices") as? Bool ?? true, let text = PermissionChange.notice(permission, from: statuses[permission], to: state) {
                 Toast().show(text, isError: state != .granted)
             }

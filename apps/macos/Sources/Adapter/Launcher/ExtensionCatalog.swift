@@ -107,6 +107,7 @@ final class ExtensionCatalog: ObservableObject {
     }
 
     func setEnabled(_ id: String, _ on: Bool) {
+        FeatureActivity.shared.changed("extensions", "\(id) turned \(on ? "on" : "off")")
         setEnabledStored(id, on)
         reload()
     }
@@ -153,6 +154,7 @@ final class ExtensionCatalog: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let output = try ToolRunner.run(exe, arguments, in: folder, environment: environment, timeout: 60)
+                FeatureActivity.shared.used("extensions")
                 DispatchQueue.main.async {
                     let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
                     if text.isEmpty { toast.show("\(command.title) finished") }
@@ -160,6 +162,7 @@ final class ExtensionCatalog: ObservableObject {
                     else { ScriptOutputWindow.show(title: command.title, text: text) }
                 }
             } catch {
+                FeatureActivity.shared.failed("extensions", "\(command.title) failed")
                 DispatchQueue.main.async { toast.show("\(command.title) failed: \(error.localizedDescription)", isError: true) }
             }
         }

@@ -10,7 +10,7 @@ final class MIDITriggerRunner: ObservableObject {
 
     @Published var triggers: [MIDITrigger] { didSet { if let data = try? JSONEncoder().encode(triggers) { UserDefaults.standard.set(data, forKey: Self.key) } } }
     @Published var enabled: Bool {
-        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); if enabled { start() } else { stop() } }
+        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); FeatureActivity.shared.changed("midi", enabled ? "Turned on" : "Turned off"); if enabled { start() } else { stop() } }
     }
     @Published private(set) var lastHeard: MIDIMessage?
     @Published private(set) var learning = false
@@ -102,6 +102,7 @@ final class MIDITriggerRunner: ObservableObject {
             if let last = lastFired[trigger.id], Date().timeIntervalSince(last) < MIDITriggers.cooldown { continue }
             lastFired[trigger.id] = Date()
             Log.info("MIDI", "Trigger \(trigger.summary) fired")
+            FeatureActivity.shared.used("midi")
             if let command = trigger.remoteCommand { RemoteCommands.shared?.perform(command) }
         }
     }

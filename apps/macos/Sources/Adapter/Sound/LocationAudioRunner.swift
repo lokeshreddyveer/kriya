@@ -9,7 +9,7 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
 
     @Published var places: [PlaceRule] { didSet { if let data = try? JSONEncoder().encode(places) { UserDefaults.standard.set(data, forKey: Self.key) } } }
     @Published var enabled: Bool {
-        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); enabled ? start() : stop() }
+        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); FeatureActivity.shared.changed("locationAudio", enabled ? "Turned on" : "Turned off"); enabled ? start() : stop() }
     }
     @Published private(set) var currentPlace: String?
     @Published private(set) var problem: String?
@@ -106,6 +106,7 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
             if let device = devices.first(where: { $0.name.lowercased().contains(wanted.lowercased()) }), audio.setDefault(device) {
                 chosenUID = device.uid
                 Toast().show("At \(target.name): sound on \(device.name)")
+                FeatureActivity.shared.used("locationAudio")
                 AuditLog.shared.record(.setting, "Sound output set to \(device.name) at \(target.name)")
                 return
             }
@@ -116,6 +117,7 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
         if !warnedAbout.contains(target.id) {
             warnedAbout.insert(target.id)
             Toast().show("At \(target.name), but none of its outputs is connected.", isError: true)
+            FeatureActivity.shared.failed("locationAudio", "None of the outputs for \(target.name) was connected")
         }
     }
     private var lastPosition: CLLocationCoordinate2D?

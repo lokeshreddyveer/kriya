@@ -17,7 +17,7 @@ final class AIIndexer: ObservableObject {
     private static let enabledKey = "ai.search.enabled"
     private static let consentKey = "ai.search.embeddingConsent.v1"
 
-    @Published var enabled: Bool { didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); if enabled { Task { await refresh() } } } }
+    @Published var enabled: Bool { didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); FeatureActivity.shared.changed("semanticSearch", enabled ? "Turned on" : "Turned off"); if enabled { Task { await refresh() } } } }
     @Published private(set) var status: String?
     @Published private(set) var busy = false
     @Published private(set) var counts: (documents: Int, chunks: Int, embedded: Int) = (0, 0, 0)
@@ -104,6 +104,7 @@ final class AIIndexer: ObservableObject {
                 try index.store(vectors: zip(pieces, response.vectors).map { (chunk: $0.0.id, vector: $0.1) }, model: target.model)
             } catch {
                 await MainActor.run { status = "Search by meaning is not available: \((error as? AIError)?.errorDescription ?? error.localizedDescription) Keyword search still works." }
+                FeatureActivity.shared.failed("semanticSearch", (error as? AIError)?.errorDescription ?? "Embedding failed")
                 break
             }
         }
@@ -133,6 +134,7 @@ final class AIIndexer: ObservableObject {
 
     func search(_ query: String, limit: Int = 12) async -> [SearchHit] {
         guard enabled, let index else { return [] }
+        FeatureActivity.shared.used("semanticSearch")
         let clean = String(SecretRedactor.redact(query).text.prefix(300))
         let keyword = index.keywordSearch(clean)
         var vector: [(match: AIIndex.Match, similarity: Float)] = []

@@ -59,6 +59,7 @@ struct ClipboardPane: View {
         .animation(.smooth(duration: 0.2), value: showsLock)
         .onAppear { if lock.needsUnlock { lock.ensureUnlocked(reason: "Open your clipboard history") { _ in } } }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
         .animation(.smooth(duration: 0.25), value: clip.config.paused)
         .overlay(alignment: .bottom) {
             if let error = clip.lastError {

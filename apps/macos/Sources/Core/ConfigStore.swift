@@ -24,6 +24,7 @@ final class ConfigStore: ObservableObject {
     }
 
     func setEnabled(_ feature: FeatureId, _ enabled: Bool) {
+        if isEnabled(feature) != enabled { FeatureActivity.shared.changed(feature.key, enabled ? "Turned on" : "Turned off") }
         var features = settings.enabledFeatures.filter { $0 != feature }
         if enabled { features.append(feature) }
         settings.enabledFeatures = features

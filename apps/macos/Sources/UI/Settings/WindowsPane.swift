@@ -47,6 +47,7 @@ struct WindowsPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
         .animation(.smooth(duration: 0.25), value: services.state(.windowManagement))
         .overlay(alignment: .bottom) {
             if let error = store.lastError ?? controller.lastMessage {

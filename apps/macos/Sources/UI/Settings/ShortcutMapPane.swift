@@ -44,27 +44,42 @@ private struct EverythingTab: View {
     @EnvironmentObject private var library: ActionLibrary
     @State private var query = ""
     @State private var shown: Set<InteractionEntry.Kind> = Set(InteractionEntry.Kind.allCases)
+    @State private var severities: Set<InteractionMap.Severity> = Set(InteractionMap.Severity.allCases)
+    @State private var exportNote: String?
 
     private var entries: [InteractionEntry] {
         InteractionMap.entries(InteractionMap.Inputs(
             hotkeys: registry.entries, remapEnabled: remap.config.enabled, remaps: remap.config.rules,
             presets: mouse.presets, assignments: mouse.assignments, defaultPresetID: mouse.config.defaultPresetId,
             drag: drag.config, traffic: traffic.config, screen: screen.config, workflows: workflows.workflows, pointerMenu: pointerMenu.config,
+            midi: MIDITriggerRunner.shared.enabled ? MIDITriggerRunner.shared.triggers : [],
             name: { id in library.actions.first { $0.id == id }?.name ?? WindowCommands.all.first { $0.command == id }?.title ?? id }
         ))
     }
 
     var body: some View {
         let all = entries
-        let clashes = InteractionMap.clashes(all)
+        let allClashes = InteractionMap.clashes(all)
+        let clashes = allClashes.filter { severities.contains(InteractionMap.severity(of: $0)) }
+            .sorted { InteractionMap.severity(of: $0) < InteractionMap.severity(of: $1) }
         let text = query.trimmingCharacters(in: .whitespaces).lowercased()
         let visible = all.filter { shown.contains($0.kind) && (text.isEmpty || $0.title.lowercased().contains(text) || $0.trigger.lowercased().contains(text) || $0.owner.lowercased().contains(text)) }
         Form {
-            if !clashes.isEmpty {
+            if !allClashes.isEmpty {
                 Section {
+                    HStack {
+                        ForEach(InteractionMap.Severity.allCases) { severity in
+                            let on = severities.contains(severity)
+                            let count = allClashes.filter { InteractionMap.severity(of: $0) == severity }.count
+                            Toggle("\(severity.title) (\(count))", isOn: Binding(get: { on }, set: { if $0 { severities.insert(severity) } else { severities.remove(severity) } })).toggleStyle(.button).controlSize(.small)
+                        }
+                        Spacer()
+                        Button("Export Report…") { exportReport(allClashes) }.controlSize(.small)
+                    }
+                    if let exportNote { Text(exportNote).font(.caption).foregroundStyle(.secondary) }
                     ForEach(Array(clashes.enumerated()), id: \.offset) { _, group in
                         VStack(alignment: .leading, spacing: 4) {
-                            Label(group[0].trigger, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
+                            Label("\(group[0].trigger) · \(InteractionMap.severity(of: group).title)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(InteractionMap.severity(of: group) == .blocks ? Theme.danger : Theme.warn)
                             ForEach(group) { entry in
                                 HStack {
                                     Text("\(entry.owner) › \(entry.title)").font(.callout).foregroundStyle(.secondary)
@@ -139,6 +154,14 @@ private struct EverythingTab: View {
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.2), value: shown)
+    }
+
+    private func exportReport(_ groups: [[InteractionEntry]]) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Kriya conflict report.txt"
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try InteractionMap.report(groups).write(to: url, atomically: true, encoding: .utf8); exportNote = "Saved \(url.lastPathComponent)." } catch { exportNote = error.localizedDescription }
     }
 }
 

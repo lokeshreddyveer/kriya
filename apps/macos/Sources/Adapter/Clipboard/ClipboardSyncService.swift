@@ -17,7 +17,7 @@ final class ClipboardSyncService: ObservableObject {
     }
 
     @Published var enabled: Bool {
-        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); enabled ? start() : stop() }
+        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); FeatureActivity.shared.changed("clipboardSync", enabled ? "Turned on" : "Turned off"); enabled ? start() : stop() }
     }
     @Published var includeHistory: Bool { didSet { UserDefaults.standard.set(includeHistory, forKey: Self.historyKey) } }
     @Published private(set) var status: String?
@@ -80,7 +80,8 @@ final class ClipboardSyncService: ObservableObject {
             DispatchQueue.main.async {
                 self.busy = false
                 self.status = outcome.message
-                if outcome.ok { self.lastSync = Date() }
+                if outcome.ok { self.lastSync = Date(); FeatureActivity.shared.used("clipboardSync") }
+                else { FeatureActivity.shared.failed("clipboardSync", outcome.message) }
             }
         }
     }

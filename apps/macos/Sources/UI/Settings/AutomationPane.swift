@@ -40,6 +40,7 @@ struct AutomationPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
         .overlay(alignment: .bottom) {
             if let error = store.lastError {
                 Text(error).font(.callout).padding(10).background(Theme.danger.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))

@@ -53,7 +53,7 @@ final class MCPHTTPServer: ObservableObject {
     private static let portKey = "mcpServer.port"
     static let defaultPort: UInt16 = 47615
 
-    @Published var enabled: Bool { didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); enabled ? start() : stop() } }
+    @Published var enabled: Bool { didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); FeatureActivity.shared.changed("mcpServer", enabled ? "Turned on" : "Turned off"); enabled ? start() : stop() } }
     @Published var port: UInt16 { didSet { UserDefaults.standard.set(Int(port), forKey: Self.portKey); if enabled { stop(); start() } } }
     @Published private(set) var status: String?
     @Published private(set) var requests = 0
@@ -152,6 +152,7 @@ final class MCPHTTPServer: ObservableObject {
         if limiter.count() >= 60 { reply(connection, 429, "Too many requests.", deadline: deadline); return }
         limiter.record()
         await MainActor.run { requests += 1 }
+        FeatureActivity.shared.used("mcpServer")
         if request.path == "/api/run" { reply(connection, 200, await runCommand(request.body), json: true, deadline: deadline); return }
         let version = SystemInfo.appVersion
         let answer = await MCPServerCore.handle(request.body, tools: engine.registryForOutsideClients, serverVersion: version) { [engine] call in

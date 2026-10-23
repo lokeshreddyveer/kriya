@@ -5,13 +5,15 @@ import AppKit
 final class SafariInboxWatcher: ObservableObject {
     private static let enabledKey = "safariExtension.enabled"
 
+    /// The one running copy, which the Overview reaches.
+    static weak var current: SafariInboxWatcher?
     let folder: URL
     var openLink: (URL) -> Void = { _ in }
     var showSelection: (String) -> Void = { _ in }
     var savePage: (PageClip, PageAction) -> Void = { _, _ in }
 
     @Published var enabled: Bool {
-        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); enabled ? start() : stop() }
+        didSet { UserDefaults.standard.set(enabled, forKey: Self.enabledKey); FeatureActivity.shared.changed("safariExtension", enabled ? "Turned on" : "Turned off"); enabled ? start() : stop() }
     }
     @Published private(set) var handled = 0
     @Published private(set) var refused = 0
@@ -20,6 +22,7 @@ final class SafariInboxWatcher: ObservableObject {
     init(support: URL) {
         folder = support.appendingPathComponent(SafariInbox.folderName, isDirectory: true)
         enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
+        Self.current = self
     }
 
     func start() {
@@ -50,6 +53,7 @@ final class SafariInboxWatcher: ObservableObject {
                 refused += 1
             case .success(let request):
                 handled += 1
+                FeatureActivity.shared.used("safariExtension")
                 switch request {
                 case .open(let url, _): openLink(url)
                 case .selection(let text, _): showSelection(text)

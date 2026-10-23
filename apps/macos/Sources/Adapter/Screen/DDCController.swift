@@ -131,7 +131,8 @@ final class DDCController: ObservableObject {
             guard let api, let ref = services[id] else { DispatchQueue.main.async { done(false) }; return }
             let ok = write(DDC.setPacket(vcp, value: value), ref, api)
             DispatchQueue.main.async {
-                if !ok { Toast().show("The monitor did not accept that.", isError: true) }
+                if !ok { Toast().show("The monitor did not accept that.", isError: true); FeatureActivity.shared.failed("ddc", "A monitor did not accept a setting") }
+                else { FeatureActivity.shared.used("ddc") }
                 done(ok)
             }
         }

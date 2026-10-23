@@ -49,6 +49,7 @@ struct PointerPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
         .animation(.smooth(duration: 0.25), value: config.positions)
         .sheet(item: $editing) { position in
             PositionEditor(position: position, onSave: { store.upsert($0); editing = nil }, onCancel: { editing = nil })

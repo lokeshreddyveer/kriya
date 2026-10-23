@@ -14,6 +14,32 @@ struct PermissionsPane: View {
             }
 
             Section {
+                ForEach(FeatureRegistry.permissionMatrix(core: FeatureId.all.map { (title: $0.title, permissions: $0.requiredPermissions.map(\.title)) }), id: \.permission) { row in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(row.permission).font(.headline)
+                            if let permission = Permission.allCases.first(where: { $0.title == row.permission }) {
+                                let status = permissions.status(permission)
+                                StateBadge(text: status == .granted ? "Allowed" : status.label, color: status == .granted ? Theme.ok : status.color)
+                            }
+                        }
+                        Text(row.features.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
+            } header: { Text("Which features need what") } footer: {
+                Text("Features not listed here need no system permission. Location is asked by macOS the first time Sound by Place is switched on.")
+            }
+
+            Section {
+                let history = FeatureActivity.shared.log.changes.filter { $0.feature.hasPrefix("permission:") }.prefix(8)
+                if history.isEmpty { Text("No permission has changed since Kriya started keeping this.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(Array(history)) { change in
+                    HStack { Text(change.what); Spacer(); Text(change.at.formatted(.relative(presentation: .named))).font(.caption).foregroundStyle(.tertiary) }.font(.callout)
+                }
+            } header: { Text("Permission history") }
+
+            Section {
                 HStack {
                     Text("If a permission shows as allowed but a feature still does not work, restart Kriya.")
                         .font(.callout).foregroundStyle(.secondary)

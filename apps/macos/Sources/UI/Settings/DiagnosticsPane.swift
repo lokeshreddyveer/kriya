@@ -29,6 +29,7 @@ struct DiagnosticsPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
     }
 }
 
@@ -54,6 +55,7 @@ private struct HealthTab: View {
 
     var body: some View {
         Form {
+            EvidenceSection()
             Section {
                 ForEach(Permission.allCases) { permission in
                     let needed = FeatureId.all.filter { $0.requiredPermissions.contains(permission) }
@@ -462,26 +464,12 @@ private struct DiagnosticsOverviewTab: View {
         micros < 1000 ? "\(micros) µs" : String(format: "%.1f ms", Double(micros) / 1000)
     }
 
-    private var resetUndo: FeatureResetUndo { FeatureResetUndo(file: paths.support.appendingPathComponent("last-reset.plist")) }
+    private var resetUndo: FeatureResetUndo { FeatureResetService.undoStore }
 
     /// Keeps what the area held, clears it, and restarts. If Kriya is still running a few seconds later the restart did not
     /// happen, so what was held is put back and the person is told.
     private func performReset(_ area: ResettableArea) {
-        let values = FeatureReset.capture(area)
-        do { try resetUndo.save(area: area, values: values) } catch {
-            message = "Nothing was reset: the settings could not be kept safe first (\(error.localizedDescription))."
-            return
-        }
-        AuditLog.shared.record(.setting, "Reset \(area.title)")
-        FeatureReset.reset(area)
-        UserDefaults.standard.synchronize()
-        SystemInfo.relaunch(arguments: [])
-        let undo = resetUndo
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
-            FeatureReset.restore(values, to: area)
-            undo.clear()
-            message = "Kriya could not restart, so \(area.title) was put back as it was."
-        }
+        if let problem = FeatureResetService.reset(area, onRollback: { message = $0 }) { message = problem }
     }
 
     private func explain() {
@@ -615,6 +603,7 @@ private struct AuditTab: View {
 
     var body: some View {
         Form {
+            UnifiedActivitySection()
             Section {
                 if LocalOnly.isOn { Label("Local-only mode is on: no network requests are being made.", systemImage: "lock.shield").foregroundStyle(Theme.ok) }
                 Picker("Show", selection: $filter) {

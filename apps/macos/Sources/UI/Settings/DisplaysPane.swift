@@ -35,6 +35,7 @@ struct DisplaysPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
         .onAppear { reload() }
         .alert("Save display profile", isPresented: $naming) {
             TextField("Name", text: $newName)

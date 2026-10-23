@@ -22,6 +22,7 @@ final class FinderDrawer: ObservableObject {
     }
 
     func show() {
+        FeatureActivity.shared.used("finderDrawer")
         let panel = self.panel ?? makePanel()
         self.panel = panel
         place(panel)

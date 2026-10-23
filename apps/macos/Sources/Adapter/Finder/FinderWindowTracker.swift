@@ -11,6 +11,7 @@ final class FinderWindowTracker: ObservableObject {
     @Published var enabled: Bool {
         didSet {
             UserDefaults.standard.set(enabled, forKey: Self.enabledKey)
+            FeatureActivity.shared.changed("finderWindows", enabled ? "Turned on" : "Turned off")
             if enabled { start() } else { stop(); history.clear(); UserDefaults.standard.removeObject(forKey: Self.historyKey) }
         }
     }

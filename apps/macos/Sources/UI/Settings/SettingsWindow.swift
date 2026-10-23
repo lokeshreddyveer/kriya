@@ -205,6 +205,15 @@ extension FeatureId {
 /// Which pane the settings window shows. Shared so the menu bar can open the window on a particular pane.
 final class SettingsNavigator: ObservableObject {
     @Published var pane: SettingsPane = .features
+    /// The tab to show inside the pane being opened. A pane with tabs takes it when it appears and clears it.
+    @Published var tabHint: String?
+
+    /// Opens a pane, and a tab inside it if it has one. The hint is dropped after a moment so it cannot land on a later visit.
+    func go(_ pane: SettingsPane, tab: String? = nil) {
+        tabHint = tab
+        self.pane = pane
+        if tab != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.tabHint = nil } }
+    }
     /// Opens the guided setup. Set by the app delegate.
     var openSetupGuide: () -> Void = {}
 }
@@ -239,6 +248,15 @@ struct SettingsRootView: View {
     }
 
     private var results: [SettingsPane] { SettingsPane.allCases.filter { $0.matches(query) } }
+
+    /// Settings found inside panes, for the same words.
+    private var nested: [SettingsIndexEntry] { SettingsIndex.search(query) }
+
+    private func open(_ entry: SettingsIndexEntry) {
+        guard let pane = SettingsPane(rawValue: entry.pane) else { return }
+        navigator.go(pane, tab: entry.tab)
+        query = ""
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
@@ -276,13 +294,28 @@ struct SettingsRootView: View {
                         if !group.title.isEmpty { Text(group.title) }
                     }
                 }
-            } else if results.isEmpty {
+            } else if results.isEmpty && nested.isEmpty {
                 Text("No settings match “\(query)”")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
             } else {
                 ForEach(results) { pane in SidebarRow(pane: pane).tag(pane) }
+                if !nested.isEmpty {
+                    Section("Inside the settings") {
+                        ForEach(nested) { entry in
+                            Button { open(entry) } label: {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(entry.title)
+                                    Text((SettingsPane(rawValue: entry.pane)?.title ?? entry.pane) + (entry.tab.map { " › \($0)" } ?? "")).font(.caption).foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
             }
         }
         .tint(Theme.accent)
@@ -408,4 +441,25 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         env.config.applyActivationPolicy()
     }
+}
+
+
+/// Lets a pane with tabs open on the tab the settings search or the Overview asked for.
+struct TabHint<T: RawRepresentable & Equatable>: ViewModifier where T.RawValue == String {
+    @Binding var tab: T
+    @EnvironmentObject private var navigator: SettingsNavigator
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear(perform: apply)
+            .onChange(of: navigator.tabHint) { _, _ in apply() }
+    }
+
+    private func apply() {
+        if let hint = navigator.tabHint, let wanted = T(rawValue: hint) { tab = wanted; navigator.tabHint = nil }
+    }
+}
+
+extension View {
+    func tabHint<T: RawRepresentable & Equatable>(_ tab: Binding<T>) -> some View where T.RawValue == String { modifier(TabHint(tab: tab)) }
 }

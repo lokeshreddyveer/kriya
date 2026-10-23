@@ -41,6 +41,8 @@ struct FeaturesPane: View {
                 } footer: {
                     Text("Turning a feature on asks only for the permissions it needs.")
                 }
+                RecentChangesSection()
+                MoreFeaturesSection()
             }
             .formStyle(.grouped)
         }

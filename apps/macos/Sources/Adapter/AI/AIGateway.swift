@@ -192,6 +192,7 @@ final class AIGateway: ObservableObject {
         lock.unlock()
         let entry = AIActivity(at: Date(), feature: feature.title, provider: config.name, model: request.model, inputCharacters: input, outputCharacters: response?.text.count ?? 0,
                                tokens: response?.usage?.total ?? 0, secretsHidden: secretsHidden, status: status, note: note)
+        if status == "ok" { FeatureActivity.shared.used("aiProviders") } else { FeatureActivity.shared.failed("aiProviders", status) }
         DispatchQueue.main.async {
             self.history.insert(entry, at: 0)
             if self.history.count > Self.historyLimit { self.history.removeLast(self.history.count - Self.historyLimit) }

@@ -3,7 +3,7 @@ import Foundation
 /// One way of triggering something in Kriya: a shortcut, a remapped key, a mouse button, a gesture, a corner and so on.
 struct InteractionEntry: Identifiable, Hashable {
     enum Kind: String, CaseIterable, Identifiable {
-        case hotkey, remap, mouseButton, gesture, doubleClick, dragTool, trafficLight, hotCorner, screenEdge, automation, pointerMenu
+        case hotkey, remap, mouseButton, gesture, doubleClick, dragTool, trafficLight, hotCorner, screenEdge, automation, pointerMenu, midi
         var id: String { rawValue }
 
         var title: String {
@@ -19,6 +19,7 @@ struct InteractionEntry: Identifiable, Hashable {
             case .screenEdge: return "Screen edges"
             case .automation: return "Automation triggers"
             case .pointerMenu: return "Pointer menu"
+            case .midi: return "MIDI controls"
             }
         }
 
@@ -35,6 +36,7 @@ struct InteractionEntry: Identifiable, Hashable {
             case .screenEdge: return "rectangle.lefthalf.inset.filled"
             case .automation: return "gearshape.2"
             case .pointerMenu: return "contextualmenu.and.cursorarrow"
+            case .midi: return "pianokeys"
             }
         }
     }
@@ -72,6 +74,7 @@ enum InteractionMap {
         var screen: ScreenToolsConfig?
         var workflows: [Workflow] = []
         var pointerMenu: PointerMenuConfig?
+        var midi: [MIDITrigger] = []
         /// The name of a saved action or command, by its id.
         var name: (String) -> String = { $0 }
     }
@@ -188,6 +191,14 @@ enum InteractionMap {
             }
         }
 
+        for trigger in input.midi where trigger.enabled {
+            let where_ = (trigger.device ?? "").isEmpty ? "" : " on \(trigger.device ?? "")"
+            list.append(InteractionEntry(
+                kind: .midi, owner: "MIDI triggers", title: trigger.name.isEmpty ? trigger.targetID : trigger.name,
+                trigger: trigger.summary + where_, key: "midi:\(trigger.kind.rawValue):\(trigger.number)", pane: .automation
+            ))
+        }
+
         if let menu = input.pointerMenu, menu.optionRightClick {
             list.append(InteractionEntry(
                 kind: .pointerMenu, owner: "Pointer menu", title: "Open the pointer menu",
@@ -222,6 +233,38 @@ enum InteractionMap {
         return !Set(a.apps).isDisjoint(with: b.apps)
     }
 
+    enum Severity: Int, CaseIterable, Identifiable, Comparable {
+        case blocks = 0, both, order
+        var id: Int { rawValue }
+        static func < (a: Severity, b: Severity) -> Bool { a.rawValue < b.rawValue }
+        var title: String {
+            switch self {
+            case .blocks: return "One may never run"
+            case .both: return "Both may run"
+            case .order: return "Depends on order"
+            }
+        }
+    }
+
+    /// How bad a clash is: some mean one of the two cannot work, some mean both fire, and the rest depend on who looks first.
+    static func severity(of group: [InteractionEntry]) -> Severity {
+        let kinds = Set(group.map(\.kind))
+        if kinds.contains(.remap) && kinds.contains(.hotkey) { return .blocks }
+        if kinds.contains(.gesture) && kinds.contains(.mouseButton) { return .blocks }
+        if kinds == [.midi] || kinds.contains(.hotCorner) || kinds.contains(.screenEdge) { return .both }
+        return .order
+    }
+
+    /// The clashes as a plain-text report for sharing, with personal details taken out.
+    static func report(_ groups: [[InteractionEntry]]) -> String {
+        guard !groups.isEmpty else { return "No two things in Kriya want the same trigger." }
+        let body = groups.sorted { severity(of: $0) != severity(of: $1) ? severity(of: $0) < severity(of: $1) : ($0.first?.trigger ?? "") < ($1.first?.trigger ?? "") }.map { group -> String in
+            let lines = group.map { "  - \($0.owner) › \($0.title)" + ($0.apps.isEmpty ? "" : " (in \($0.apps.count) app\($0.apps.count == 1 ? "" : "s"))") }.joined(separator: "\n")
+            return "\(group[0].trigger)  [\(severity(of: group).title)]\n\(lines)\n  \(explanation(for: group))"
+        }.joined(separator: "\n\n")
+        return SupportScrubber.scrub("Kriya conflict report\n\n" + body)
+    }
+
     /// What happens when two clash, in words.
     static func explanation(for group: [InteractionEntry]) -> String {
         let kinds = Set(group.map(\.kind))
@@ -230,6 +273,9 @@ enum InteractionMap {
         }
         if kinds.contains(.gesture), kinds.contains(.mouseButton) {
             return "Holding this button starts a gesture, which can take the press away from the button rule."
+        }
+        if kinds == [.midi] {
+            return "The same note or knob starts both. They run together when the channel and device they listen to overlap."
         }
         if kinds.contains(.hotCorner) || kinds.contains(.screenEdge) {
             return "Both react to the pointer in the same place. One of them may run, or both."

@@ -42,6 +42,16 @@ targets:
         type: folder
         buildPhase: resources
       - path: Generated/kriya_core.swift
+    postBuildScripts:
+      # Writes the commit the app was built from into its Info.plist, before the app is signed, so About and bug reports can name it.
+      - name: Record the commit
+        basedOnDependencyAnalysis: false
+        script: |
+          COMMIT=$(git -C "$SRCROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+          DIRTY=$(git -C "$SRCROOT" status --porcelain 2>/dev/null | head -1)
+          [ -n "$DIRTY" ] && COMMIT="$COMMIT+local"
+          PLIST="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          /usr/libexec/PlistBuddy -c "Set :KriyaGitCommit $COMMIT" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :KriyaGitCommit string $COMMIT" "$PLIST"
     dependencies:
       - package: Sparkle
         product: Sparkle
