@@ -558,3 +558,34 @@ final class UsageLogTests: XCTestCase {
         XCTAssertEqual(log.entries[0].detail.count, 80)
     }
 }
+
+final class JobQueueTests: XCTestCase {
+    func testJobsRunInOrderAndPauseHoldsBackTheNextOne() {
+        var q = JobQueueState()
+        q.add(id: "1", title: "Compress 3 items"); q.add(id: "2", title: "Convert 1 item")
+        XCTAssertEqual(q.next?.id, "1")
+        q.start("1")
+        XCTAssertEqual(q.next?.id, "2")
+        q.setPaused(true)
+        XCTAssertNil(q.next)
+        XCTAssertEqual(q.summary, "1 running, 1 waiting (paused: waiting ones will not start)")
+        q.setPaused(false)
+        q.finish("1", failed: false)
+        XCTAssertEqual(q.runningCount, 0)
+        XCTAssertEqual(q.waitingCount, 1)
+    }
+
+    func testOnlyAWaitingJobCanBeCancelledAndFinishedOnesAreTrimmed() {
+        var q = JobQueueState()
+        q.add(id: "a", title: "A"); q.add(id: "b", title: "B")
+        q.start("a")
+        XCTAssertFalse(q.cancelWaiting("a"), "a running job cannot be stopped")
+        XCTAssertTrue(q.cancelWaiting("b"))
+        XCTAssertFalse(q.cancelWaiting("zzz"))
+        q.finish("a", failed: true)
+        XCTAssertEqual(q.jobs.first?.status, .failed)
+        XCTAssertEqual(q.summary, "No file operations waiting.")
+        for i in 0..<40 { q.add(id: "j\(i)", title: "J"); q.finish("j\(i)", failed: false) }
+        XCTAssertLessThanOrEqual(q.jobs.count, JobQueueState.keepFinished)
+    }
+}

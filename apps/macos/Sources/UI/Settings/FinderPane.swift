@@ -125,6 +125,13 @@ private struct RecentOperationsSection: View {
     @State private var open: UUID?
 
     var body: some View {
+        Group {
+            FileJobsSection()
+            operations
+        }
+    }
+
+    private var operations: some View {
         Section {
             if history.operations.isEmpty {
                 Text("Nothing yet. Moves, copies, renames, archives and new files you make from the menu show up here.")
@@ -664,6 +671,29 @@ private struct FolderMemorySection: View {
             } label: { Label("Leave a Folder Out of Recent Folders…", systemImage: "plus") }
         } header: { Text("Recent folders") } footer: {
             Text("A folder left out here, and everything inside it, never shows up in recent folders or in Finder window history.")
+        }
+    }
+}
+
+
+/// File jobs waiting and running. Pausing holds back the ones that have not started; one already running finishes.
+private struct FileJobsSection: View {
+    @ObservedObject private var jobs = FinderJobs.shared
+
+    var body: some View {
+        if jobs.state.isBusy || jobs.state.paused {
+            Section {
+                Text(jobs.state.summary).font(.callout)
+                ForEach(jobs.state.jobs.filter { $0.status == .waiting || $0.status == .running }) { job in
+                    HStack {
+                        Image(systemName: job.status == .running ? "arrow.triangle.2.circlepath" : "clock").foregroundStyle(.secondary)
+                        Text(job.title)
+                        Spacer()
+                        if job.status == .waiting { Button("Cancel") { jobs.cancelWaiting(job.id) }.controlSize(.small) }
+                    }
+                }
+                Button(jobs.state.paused ? "Resume" : "Pause Waiting Jobs") { jobs.setPaused(!jobs.state.paused) }.controlSize(.small)
+            } header: { Text("In progress") } footer: { Text("A job that has already started cannot be stopped part-way; it finishes.") }
         }
     }
 }

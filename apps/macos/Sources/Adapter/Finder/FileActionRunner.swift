@@ -138,7 +138,11 @@ final class FileActionRunner {
     private func background(_ item: FinderItem, urls: [URL], folder: URL?, child: String?) {
         let templates = store.fileTemplates
         let folderTemplates = store.folderTemplates
+        let jobID = UUID().uuidString
+        FinderJobs.shared.add(id: jobID, title: Self.jobTitle(item, count: max(urls.count, 1)))
         diskQueue.async { [self] in
+            guard FinderJobs.shared.waitUntilAllowedToStart(jobID) else { return }
+            defer { FinderJobs.shared.finish(jobID) }
             do {
                 let outcome: Outcome
                 switch item.kind {
@@ -583,5 +587,62 @@ final class FileActionRunner {
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
+
+extension FileActionRunner {
+    static func jobTitle(_ item: FinderItem, count: Int) -> String {
+        let what: String
+        switch item.kind {
+        case .compress: what = "Compress"
+        case .extract: what = "Extract"
+        case .convert: what = "Convert"
+        case .duplicate: what = "Duplicate"
+        case .newFile, .newFromTemplate: what = "New file"
+        case .newFolder, .newFolderFromTemplate: what = "New folder"
+        case .runScript, .runShortcut: what = "Run"
+        default: what = "Do"
+        }
+        return count > 1 ? "\(what) \(count) items" : "\(what) 1 item"
+    }
+}
+
+/// The file jobs, shared so the Finder pane can show them and hold back the ones that have not started.
+final class FinderJobs: ObservableObject {
+    static let shared = FinderJobs()
+    @Published private(set) var state = JobQueueState()
+    private let condition = NSCondition()
+    private var failedIDs = Set<String>()
+
+    func add(id: String, title: String) { DispatchQueue.main.async { self.state.add(id: id, title: title) } }
+
+    func setPaused(_ paused: Bool) {
+        condition.lock(); defer { condition.unlock() }
+        pausedFlag = paused
+        condition.broadcast()
+        DispatchQueue.main.async { self.state.setPaused(paused) }
+    }
+
+    func cancelWaiting(_ id: String) {
+        condition.lock(); cancelled.insert(id); condition.unlock()
+        DispatchQueue.main.async { self.state.cancelWaiting(id) }
+    }
+
+    private var pausedFlag = false
+    private var cancelled = Set<String>()
+
+    /// Blocks the disk queue while paused. Returns false for a job that was cancelled while it waited, which must not run.
+    func waitUntilAllowedToStart(_ id: String) -> Bool {
+        condition.lock()
+        while pausedFlag && !cancelled.contains(id) { condition.wait() }
+        let wasCancelled = cancelled.remove(id) != nil
+        condition.unlock()
+        if !wasCancelled { DispatchQueue.main.async { self.state.start(id) } }
+        return !wasCancelled
+    }
+
+    func finish(_ id: String) {
+        DispatchQueue.main.async { self.state.finish(id, failed: false) }
     }
 }
