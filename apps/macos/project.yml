@@ -47,6 +47,8 @@ targets:
         product: Sparkle
       - sdk: FinderSync.framework
       - target: KriyaFinder
+      - target: KriyaSafari
+      - sdk: SafariServices.framework
       - framework: Generated/KriyaCore.xcframework
         embed: false
     info:
@@ -175,6 +177,45 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kriya.app.finder
         PRODUCT_NAME: KriyaFinder
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+  KriyaSafari:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: SafariExtension/SafariWebExtensionHandler.swift
+      # The web extension. The two scripts are the ones the Chromium extension uses.
+      - path: SafariExtension/Resources/manifest.json
+        buildPhase: resources
+      - path: Extensions/chromium/background.js
+        buildPhase: resources
+      - path: Extensions/chromium/extract.js
+        buildPhase: resources
+    dependencies:
+      - sdk: SafariServices.framework
+    info:
+      path: SafariExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Kriya for Safari
+        CFBundleName: KriyaSafari
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        LSMinimumSystemVersion: "14.0"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.Safari.web-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler
+    entitlements:
+      path: SafariExtension/KriyaSafari.entitlements
+      # Safari extensions must be sandboxed. This one can only write into the inbox folder the app reads.
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.temporary-exception.files.home-relative-path.read-write:
+          - /Library/Application Support/Kriya/Safari-Inbox/
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kriya.app.safari
+        PRODUCT_NAME: KriyaSafari
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO

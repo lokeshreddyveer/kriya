@@ -1,4 +1,5 @@
 import AppKit
+import SafariServices
 import SwiftUI
 
 /// Where a link is sent: which browser, and which of its profiles. Used for the fallback and for each rule.
@@ -96,6 +97,7 @@ struct LinksPane: View {
 /// loaded from a folder.
 private struct BrowsersTab: View {
     @EnvironmentObject private var bridge: BrowserBridge
+    @EnvironmentObject private var safari: SafariInboxWatcher
     @State private var browsers = NativeHostInstaller.installedBrowsers()
     @State private var installed = Set<String>()
     @State private var folder: URL?
@@ -140,10 +142,25 @@ private struct BrowsersTab: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Chrome, Edge, Brave, Vivaldi: open chrome://extensions, turn on Developer mode, choose Load unpacked, and pick the “chromium” folder.")
                     Text("Firefox: open about:debugging, choose This Firefox, Load Temporary Add-on, and pick the manifest.json in the “firefox” folder. Firefox only keeps it permanently once Mozilla has signed it, which has not been done.")
-                    Text("Safari is not covered: it needs a Safari extension built into the app.")
+                    Text("Safari: switch on “Safari extension” below, then enable Kriya in Safari › Settings › Extensions and allow it on the sites you choose.")
                 }
                 .font(.callout).foregroundStyle(.secondary)
             } header: { Text("Step 2: load the extension") }
+
+            Section {
+                Toggle("Safari extension", isOn: $safari.enabled)
+                HStack {
+                    Button("Open Safari Extension Settings") {
+                        SFSafariApplication.showPreferencesForExtension(withIdentifier: "com.kriya.app.safari") { error in
+                            if error != nil { DispatchQueue.main.async { message = "Safari could not show the extension. Open Safari › Settings › Extensions." } }
+                        }
+                    }
+                    Spacer()
+                    Text("Handled \(safari.handled)\(safari.refused > 0 ? " · refused \(safari.refused)" : "")").font(.caption).foregroundStyle(.secondary)
+                }
+            } header: { Text("Safari") } footer: {
+                Text("Safari asks you which sites the extension may use, and reads a page only when you choose a Kriya item for it in the right-click menu. The extension cannot reach the network or start programs. It leaves each request as a small file in a folder only you can read, and Kriya checks it and deletes it.")
+            }
 
             Section {
                 LabeledContent("Requests handled", value: "\(bridge.handled)")

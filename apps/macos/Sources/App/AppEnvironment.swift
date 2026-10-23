@@ -74,6 +74,7 @@ final class AppEnvironment {
     let pointerEffects: PointerEffects
     let links: LinkRouter
     let bridge: BrowserBridge
+    let safariInbox: SafariInboxWatcher
     let capture: ScreenCaptureService
     let intelligence: IntelligenceCoordinator
     let timeline = PerformanceTimeline()
@@ -116,6 +117,7 @@ final class AppEnvironment {
         let linkStore = LinkRoutingStore(core: core, logFile: paths.support.appendingPathComponent("link-log.json"))
         let links = LinkRouter(store: linkStore)
         let bridge = BrowserBridge(support: paths.support)
+        let safariInbox = SafariInboxWatcher(support: paths.support)
         let capture = ScreenCaptureService(settings: CaptureSettingsStore())
         let intelligence = IntelligenceCoordinator(service: AppleIntelligence())
         let workspaceStore = WorkspaceStore(core: core)
@@ -219,6 +221,7 @@ final class AppEnvironment {
         self.linkStore = linkStore
         self.links = links
         self.bridge = bridge
+        self.safariInbox = safariInbox
         self.capture = capture
         self.intelligence = intelligence
         self.workspaceStore = workspaceStore
@@ -263,7 +266,10 @@ final class AppEnvironment {
         pageCapture = pages
         bridge.savePage = { [weak pages] file, action in DispatchQueue.main.async { pages?.handle(file: file, action: action) } }
         bridge.openLink = { [weak links] url in DispatchQueue.main.async { links?.open(url, sourceAppID: nil) } }
+        safariInbox.openLink = { [weak links] url in DispatchQueue.main.async { links?.open(url, sourceAppID: nil) } }
+        safariInbox.savePage = { [weak pages] clip, action in DispatchQueue.main.async { pages?.perform(action, on: clip) } }
         bridge.showSelection = { [weak selection] text in DispatchQueue.main.async { selection?.showText(text) } }
+        safariInbox.showSelection = { [weak selection] text in DispatchQueue.main.async { selection?.showText(text) } }
         selection.runner.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "Selection bar", input: text) }
         finder.runner.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "Finder menu", input: text) }
         pointerMenu.runWorkflow = { [weak automation] id in automation?.fire(id, source: "Pointer menu") }
@@ -335,6 +341,7 @@ final class AppEnvironment {
         appAudio.start()
         soundRules.start()
         MIDITriggerRunner.shared.start()
+        safariInbox.start()
         LocationAudioRunner.shared.start()
         focusSession.start()
         worldClock.meetings = launcherTools.meetings
@@ -478,6 +485,7 @@ extension View {
             .environmentObject(env.pointerMenuStore)
             .environmentObject(env.linkStore)
             .environmentObject(env.bridge)
+            .environmentObject(env.safariInbox)
             .environmentObject(env.capture)
             .environmentObject(env.intelligence.service)
             .environmentObject(env.timeline)

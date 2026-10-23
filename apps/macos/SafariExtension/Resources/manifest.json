@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Kriya",
+  "version": "0.2.0",
+  "description": "Send links, the page you are on, its readable text, and selected text to Kriya on this Mac.",
+  "permissions": ["contextMenus", "nativeMessaging", "activeTab", "scripting"],
+  "background": { "scripts": ["background.js"], "persistent": false },
+  "action": { "default_title": "Open this page through Kriya" }
+}
