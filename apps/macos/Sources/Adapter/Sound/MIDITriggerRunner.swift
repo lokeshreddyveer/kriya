@@ -19,6 +19,8 @@ final class MIDITriggerRunner: ObservableObject {
     private var client = MIDIClientRef()
     private var port = MIDIPortRef()
     private var running = false
+    /// The names of the connected devices, by the number each was connected under.
+    private var sourceNames: [Int: String] = [:]
     private var lastFired: [String: Date] = [:]
 
     private init() {
@@ -33,14 +35,19 @@ final class MIDITriggerRunner: ObservableObject {
             if notification.pointee.messageID == .msgSetupChanged { DispatchQueue.main.async { self?.connectSources() } }
         }
         guard ok == noErr else { Log.warning("MIDI", "Could not start MIDI"); return }
-        let made = MIDIInputPortCreateWithBlock(client, "Kriya input" as CFString, &port) { [weak self] list, _ in
+        let made = MIDIInputPortCreateWithBlock(client, "Kriya input" as CFString, &port) { [weak self] list, refCon in
+            let source = Int(bitPattern: refCon)
             var bytes: [UInt8] = []
             for packet in list.unsafeSequence() {
                 let length = Int(packet.pointee.length)
                 withUnsafeBytes(of: packet.pointee.data) { bytes.append(contentsOf: $0.prefix(length)) }
             }
             let messages = MIDIMessage.parse(bytes)
-            if !messages.isEmpty { DispatchQueue.main.async { for m in messages { self?.handle(m) } } }
+            if !messages.isEmpty {
+                DispatchQueue.main.async {
+                    for var m in messages { m.device = self?.sourceNames[source] ?? ""; self?.handle(m) }
+                }
+            }
         }
         guard made == noErr else { MIDIClientDispose(client); return }
         running = true
@@ -58,7 +65,15 @@ final class MIDITriggerRunner: ObservableObject {
 
     private func connectSources() {
         let count = MIDIGetNumberOfSources()
-        for i in 0..<count { MIDIPortConnectSource(port, MIDIGetSource(i), nil) }
+        var names: [Int: String] = [:]
+        for i in 0..<count {
+            let source = MIDIGetSource(i)
+            var name: Unmanaged<CFString>?
+            MIDIObjectGetStringProperty(source, kMIDIPropertyDisplayName, &name)
+            names[i + 1] = name?.takeRetainedValue() as String? ?? "Device \(i + 1)"
+            MIDIPortConnectSource(port, source, UnsafeMutableRawPointer(bitPattern: i + 1))
+        }
+        sourceNames = names
         sources = count
     }
 

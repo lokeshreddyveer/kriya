@@ -362,3 +362,67 @@ final class PlaceStabilityTests: XCTestCase {
         XCTAssertNil(PlaceRules.place(at: 0, 0, in: [off], current: home), "a place switched off is left")
     }
 }
+
+final class PlaceSwitcherTests: XCTestCase {
+    private let home = PlaceRule(name: "Home", latitude: 0, longitude: 0, outputContains: "Speakers", fallbacks: ["Headphones"], dwellSeconds: 60)
+    private let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    func testItWaitsOutThePassThroughThenSwitchesOnce() {
+        var state = PlaceSwitchState()
+        XCTAssertNil(PlaceSwitcher.decide(&state, place: home, now: t0, outputIsOurs: true), "first sight starts the wait")
+        XCTAssertNil(PlaceSwitcher.decide(&state, place: home, now: t0.addingTimeInterval(30), outputIsOurs: true))
+        XCTAssertEqual(PlaceSwitcher.decide(&state, place: home, now: t0.addingTimeInterval(61), outputIsOurs: true)?.name, "Home")
+        XCTAssertNil(PlaceSwitcher.decide(&state, place: home, now: t0.addingTimeInterval(200), outputIsOurs: true), "once only")
+    }
+
+    func testLeavingBeforeTheWaitIsOverCancelsIt() {
+        var state = PlaceSwitchState()
+        _ = PlaceSwitcher.decide(&state, place: home, now: t0, outputIsOurs: true)
+        _ = PlaceSwitcher.decide(&state, place: nil, now: t0.addingTimeInterval(30), outputIsOurs: true)
+        XCTAssertNil(PlaceSwitcher.decide(&state, place: home, now: t0.addingTimeInterval(90), outputIsOurs: true), "the wait starts again")
+    }
+
+    func testAManualChoiceIsRespectedUntilTheMacLeaves() {
+        var state = PlaceSwitchState()
+        _ = PlaceSwitcher.decide(&state, place: home, now: t0, outputIsOurs: true)
+        _ = PlaceSwitcher.decide(&state, place: home, now: t0.addingTimeInterval(61), outputIsOurs: true)
+        XCTAssertNil(PlaceSwitcher.decide(&state, place: home, now: t0.addingTimeInterval(100), outputIsOurs: false))
+        XCTAssertEqual(state.overriddenID, home.id)
+        XCTAssertNil(PlaceSwitcher.decide(&state, place: home, now: t0.addingTimeInterval(1000), outputIsOurs: false))
+        _ = PlaceSwitcher.decide(&state, place: nil, now: t0.addingTimeInterval(2000), outputIsOurs: false)
+        XCTAssertNil(state.overriddenID, "leaving clears it")
+    }
+
+    func testAShortHopBetweenPlacesRestsAfterASwitch() {
+        var state = PlaceSwitchState()
+        var work = PlaceRule(name: "Work", latitude: 1, longitude: 1, outputContains: "Display"); work.dwellSeconds = 10
+        _ = PlaceSwitcher.decide(&state, place: home, now: t0, outputIsOurs: true)
+        XCTAssertNotNil(PlaceSwitcher.decide(&state, place: home, now: t0.addingTimeInterval(61), outputIsOurs: true))
+        _ = PlaceSwitcher.decide(&state, place: work, now: t0.addingTimeInterval(70), outputIsOurs: true)
+        XCTAssertNil(PlaceSwitcher.decide(&state, place: work, now: t0.addingTimeInterval(90), outputIsOurs: true), "inside the five-minute rest")
+        XCTAssertNotNil(PlaceSwitcher.decide(&state, place: work, now: t0.addingTimeInterval(400), outputIsOurs: true))
+    }
+
+    func testOutputsAreListedBestFirst() {
+        XCTAssertEqual(home.outputs, ["Speakers", "Headphones"])
+        XCTAssertEqual(PlaceRule(name: "x", latitude: 0, longitude: 0, outputContains: " ").outputs, [])
+    }
+
+    func testPlacesSavedBeforeTheNewFieldsStillLoad() throws {
+        let old = #"{"id":"1","name":"Home","latitude":1,"longitude":2,"radius":150,"outputContains":"Speakers","enabled":true}"#
+        let rule = try JSONDecoder().decode(PlaceRule.self, from: Data(old.utf8))
+        XCTAssertNil(rule.fallbacks)
+        XCTAssertEqual(rule.outputs, ["Speakers"])
+    }
+
+    func testMIDIDeviceNameNarrowsATrigger() {
+        var trigger = MIDITrigger(); trigger.targetID = "wf"
+        let pad = MIDIMessage(kind: .noteOn, channel: 1, number: 60, value: 90, device: "Launchpad Mini")
+        XCTAssertTrue(trigger.matches(pad), "no device means any")
+        trigger.device = "launchpad"
+        XCTAssertTrue(trigger.matches(pad))
+        trigger.device = "keystation"
+        XCTAssertFalse(trigger.matches(pad))
+        XCTAssertEqual(MIDITriggers.learned(from: pad).device, "Launchpad Mini")
+    }
+}

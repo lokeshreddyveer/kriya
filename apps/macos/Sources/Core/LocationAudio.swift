@@ -11,6 +11,50 @@ struct PlaceRule: Codable, Equatable, Identifiable {
     /// Part of the output's name, such as "Studio Display" or "Speakers".
     var outputContains: String
     var enabled = true
+    /// Tried in order when the first output is not connected.
+    var fallbacks: [String]?
+    /// How long the Mac must stay in the place before the output changes. Nil means the usual 60 seconds.
+    var dwellSeconds: Double?
+
+    /// The outputs to try, first choice first.
+    var outputs: [String] { ([outputContains] + (fallbacks ?? [])).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+}
+
+/// What the place automation has done so far, so it switches once on arrival, waits out a short pass-through, rests after a
+/// switch, and leaves the output alone once the person has chosen another by hand.
+struct PlaceSwitchState: Equatable {
+    var candidateID: String?
+    var candidateSince: Date?
+    var appliedID: String?
+    var lastSwitch: Date?
+    var overriddenID: String?
+}
+
+enum PlaceSwitcher {
+    static let defaultDwell: TimeInterval = 60
+    static let cooldown: TimeInterval = 300
+
+    /// The place to switch the output for now, or nil. `outputIsOurs` says whether the output in use is still the one the last
+    /// switch chose.
+    static func decide(_ state: inout PlaceSwitchState, place: PlaceRule?, now: Date, outputIsOurs: Bool) -> PlaceRule? {
+        if place?.id != state.candidateID {
+            state.candidateID = place?.id
+            state.candidateSince = place == nil ? nil : now
+            if place == nil { state.appliedID = nil; state.overriddenID = nil }
+            return nil
+        }
+        guard let place, let since = state.candidateSince else { return nil }
+        if state.overriddenID == place.id { return nil }
+        if state.appliedID == place.id {
+            if !outputIsOurs { state.overriddenID = place.id }
+            return nil
+        }
+        guard now.timeIntervalSince(since) >= (place.dwellSeconds ?? defaultDwell) else { return nil }
+        if let last = state.lastSwitch, now.timeIntervalSince(last) < cooldown { return nil }
+        state.appliedID = place.id
+        state.lastSwitch = now
+        return place
+    }
 }
 
 enum PlaceRules {

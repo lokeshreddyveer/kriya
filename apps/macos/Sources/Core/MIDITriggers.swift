@@ -21,6 +21,8 @@ struct MIDIMessage: Equatable {
     var number: Int
     /// How hard or how far, 0 to 127 (a program change has none).
     var value: Int
+    /// The device it came from, when known.
+    var device = ""
 
     /// Every message in a run of MIDI bytes. Notes off, clock and anything else are skipped; a note on with no force is a note off.
     static func parse(_ bytes: [UInt8]) -> [MIDIMessage] {
@@ -69,14 +71,18 @@ struct MIDITrigger: Codable, Equatable, Identifiable {
     var target = Target.workflow
     var targetID = ""
     var enabled = true
+    /// Part of the device's name; nil or empty means any device.
+    var device: String?
 
     var summary: String {
         "\(kind.title) \(number)\(channel.map { " on channel \($0)" } ?? "")"
     }
 
     func matches(_ message: MIDIMessage) -> Bool {
-        enabled && message.kind == kind && message.number == number && (channel == nil || channel == message.channel)
-            && message.value >= minValue && message.value <= maxValue
+        guard enabled, message.kind == kind, message.number == number, channel == nil || channel == message.channel,
+              message.value >= minValue, message.value <= maxValue else { return false }
+        let wanted = (device ?? "").trimmingCharacters(in: .whitespaces)
+        return wanted.isEmpty || message.device.lowercased().contains(wanted.lowercased())
     }
 
     /// The request this trigger makes, or nil when its target id is not a valid name.
@@ -106,6 +112,7 @@ enum MIDITriggers {
         trigger.channel = message.channel
         trigger.number = message.number
         trigger.minValue = message.kind == .controlChange ? 0 : 1
+        trigger.device = message.device.isEmpty ? nil : message.device
         trigger.name = "\(trigger.summary)"
         return trigger
     }

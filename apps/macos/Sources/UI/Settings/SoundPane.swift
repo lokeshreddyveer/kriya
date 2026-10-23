@@ -608,12 +608,13 @@ private struct PlacesSection: View {
         Toggle("Switch the output by place", isOn: $runner.enabled)
         if let problem = runner.problem { Text(problem).font(.caption).foregroundStyle(Theme.warn) }
         if let here = runner.currentPlace { Text("Now at: \(here)").font(.callout).foregroundStyle(.secondary) }
+        if let note = runner.note { Text(note).font(.caption).foregroundStyle(.secondary) }
         ForEach($runner.places) { $place in
             HStack {
                 Toggle("", isOn: $place.enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(place.name)
-                    Text("Use “\(place.outputContains)” within \(Int(place.radius)) m").font(.caption).foregroundStyle(.secondary)
+                    Text("Use \(place.outputs.map { "“\($0)”" }.joined(separator: ", then ")) within \(Int(place.radius)) m, after \(Int(place.dwellSeconds ?? PlaceSwitcher.defaultDwell)) s").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Stepper("", value: $place.radius, in: PlaceRules.radiusRange, step: 50).labelsHidden().accessibilityLabel("Distance in metres")
@@ -622,8 +623,8 @@ private struct PlacesSection: View {
         }
         HStack {
             TextField("Place name", text: $name)
-            TextField("Output name contains", text: $output)
-            Button("Save Where I Am") { runner.addCurrentPlace(named: name, output: output); name = ""; output = "" }
+            TextField("Outputs, best first (comma between)", text: $output)
+            Button("Save Where I Am") { runner.addCurrentPlace(named: name, outputs: output.split(separator: ",").map { String($0) }); name = ""; output = "" }
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || output.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }

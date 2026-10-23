@@ -34,6 +34,9 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
         started = true
         manager.requestWhenInUseAuthorization()
         manager.startMonitoringSignificantLocationChanges()
+        let t = Timer(timeInterval: 20, repeats: true) { [weak self] _ in self?.evaluate() }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
         if authorized { manager.requestLocation() }
     }
 
@@ -53,16 +56,18 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
 
     func stop() {
         manager.stopMonitoringSignificantLocationChanges()
+        timer?.invalidate(); timer = nil
+        state = PlaceSwitchState()
         started = false
         currentPlace = nil
     }
 
     /// Saves where the Mac is now as a place. Needs one fresh reading.
-    func addCurrentPlace(named name: String, output: String) {
-        pending = (name, output)
+    func addCurrentPlace(named name: String, outputs: [String]) {
+        pending = (name, outputs)
         manager.requestLocation()
     }
-    private var pending: (String, String)?
+    private var pending: (String, [String])?
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let here = locations.last(where: { PlaceRules.isUsable(accuracy: $0.horizontalAccuracy, age: Date().timeIntervalSince($0.timestamp)) }) else {
@@ -70,27 +75,56 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
             return
         }
         problem = nil
-        if let (name, output) = pending {
+        if let (name, outputs) = pending {
             pending = nil
-            if places.count < PlaceRules.limit {
-                places.append(PlaceRule(name: name, latitude: here.coordinate.latitude, longitude: here.coordinate.longitude, outputContains: output))
+            let list = outputs.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            if places.count < PlaceRules.limit, let first = list.first {
+                places.append(PlaceRule(name: name, latitude: here.coordinate.latitude, longitude: here.coordinate.longitude, outputContains: first, fallbacks: Array(list.dropFirst())))
             }
         }
         guard enabled else { return }
+        lastPosition = here.coordinate
+        evaluate()
+    }
+
+    /// Looks at the last position again. Also run by a timer, so the dwell time can pass without a new reading.
+    private func evaluate() {
+        guard enabled, let here = lastPosition else { return }
+        let audio = AudioControl.shared
         let current = places.first { $0.id == currentPlaceID }
-        let place = PlaceRules.place(at: here.coordinate.latitude, here.coordinate.longitude, in: places, current: current)
-        guard place?.id != currentPlaceID else { return }
+        let place = PlaceRules.place(at: here.latitude, here.longitude, in: places, current: current)
         currentPlaceID = place?.id
         currentPlace = place?.name
-        if let place {
-            let audio = AudioControl.shared
-            if let device = audio.devices().first(where: { $0.isOutput && $0.name.lowercased().contains(place.outputContains.lowercased()) }), audio.setDefault(device) {
-                Toast().show("At \(place.name): sound on \(device.name)")
-                AuditLog.shared.record(.setting, "Sound output set to \(device.name) at \(place.name)")
+        let ours = audio.defaultOutputUID() == chosenUID
+        guard let target = PlaceSwitcher.decide(&state, place: place, now: Date(), outputIsOurs: ours) else {
+            note = state.overriddenID != nil ? "You chose another output here, so Kriya will leave it until you leave." : nil
+            return
+        }
+        note = nil
+        let devices = audio.devices().filter(\.isOutput)
+        for wanted in target.outputs {
+            if let device = devices.first(where: { $0.name.lowercased().contains(wanted.lowercased()) }), audio.setDefault(device) {
+                chosenUID = device.uid
+                Toast().show("At \(target.name): sound on \(device.name)")
+                AuditLog.shared.record(.setting, "Sound output set to \(device.name) at \(target.name)")
+                return
             }
         }
+        // None of the outputs is connected: say so once, and try again at the next reading or when one connects.
+        state.appliedID = nil
+        state.lastSwitch = nil
+        if !warnedAbout.contains(target.id) {
+            warnedAbout.insert(target.id)
+            Toast().show("At \(target.name), but none of its outputs is connected.", isError: true)
+        }
     }
+    private var lastPosition: CLLocationCoordinate2D?
+    private var state = PlaceSwitchState()
+    private var chosenUID: String?
+    private var warnedAbout = Set<String>()
     private var currentPlaceID: String?
+    @Published private(set) var note: String?
+    private var timer: Timer?
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         problem = (error as? CLError)?.code == .denied ? "Location is off for Kriya. Turn it on in System Settings › Privacy & Security › Location Services." : "The position could not be read."

@@ -982,7 +982,9 @@ private struct MIDITriggersSection: View {
                 HStack {
                     Text(runner.sources == 0 ? "No MIDI device is connected." : "\(runner.sources) MIDI source\(runner.sources == 1 ? "" : "s") connected.").font(.callout).foregroundStyle(.secondary)
                     Spacer()
-                    if let heard = runner.lastHeard { Text("Last: \(heard.kind.title) \(heard.number) · channel \(heard.channel)").font(.caption).foregroundStyle(.secondary) }
+                    if let heard = runner.lastHeard {
+                        Text("Heard: \(heard.device.isEmpty ? "" : heard.device + " · ")\(heard.kind.title) \(heard.number) · channel \(heard.channel) · value \(heard.value)").font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 ForEach($runner.triggers) { $trigger in
                     VStack(alignment: .leading, spacing: 6) {
@@ -991,6 +993,10 @@ private struct MIDITriggersSection: View {
                             Text(trigger.summary).font(.headline)
                             Spacer()
                             Button(role: .destructive) { runner.triggers.removeAll { $0.id == trigger.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete trigger")
+                        }
+                        HStack {
+                            TextField("Device contains (optional)", text: Binding(get: { trigger.device ?? "" }, set: { trigger.device = $0.isEmpty ? nil : $0 }))
+                            Stepper("Channel \(trigger.channel.map(String.init) ?? "any")", value: Binding(get: { trigger.channel ?? 0 }, set: { trigger.channel = $0 == 0 ? nil : $0 }), in: 0...16)
                         }
                         HStack {
                             Picker("Runs", selection: $trigger.target) { ForEach(MIDITrigger.Target.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 190)
