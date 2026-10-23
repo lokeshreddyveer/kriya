@@ -12,6 +12,8 @@ struct ShelfRecord: Codable, Identifiable, Equatable {
     var added: Date
     /// When it was taken off a shelf, for items in the history.
     var removed: Date?
+    /// A name the person gave to keep related items together on a shelf. Optional so older saved shelves load.
+    var group: String?
 
     /// A short name for lists and for searching.
     var title: String {
@@ -176,6 +178,58 @@ struct ShelfLibrary: Codable, Equatable {
         for shelf in shelves { hits += shelf.items.filter(matches).map { Hit(record: $0, shelf: shelf.name) } }
         hits += history.filter(matches).map { Hit(record: $0, shelf: nil) }
         return hits
+    }
+
+    // MARK: Looking after a shelf
+
+    struct Expiring: Equatable {
+        let shelf: String
+        let record: ShelfRecord
+        let hoursLeft: Int
+    }
+
+    /// Items that will be let go within `hours`, soonest first. Empty when nothing expires.
+    func expiring(within hours: Int, now: Date = Date()) -> [Expiring] {
+        guard let days = expiryDays, days > 0 else { return [] }
+        var out: [Expiring] = []
+        for shelf in shelves {
+            for item in shelf.items {
+                let left = item.added.addingTimeInterval(Double(days) * 86_400).timeIntervalSince(now)
+                if left > 0, left <= Double(hours) * 3600 { out.append(Expiring(shelf: shelf.name, record: item, hoursLeft: Int((left / 3600).rounded(.up)))) }
+            }
+        }
+        return out.sorted { $0.hoursLeft < $1.hoursLeft }
+    }
+
+    /// Files on a shelf that are no longer where they were.
+    func missingFiles(exists: (String) -> Bool) -> [ShelfRecord] {
+        shelves.flatMap(\.items).filter { $0.kind == .file && !exists($0.value) }
+    }
+
+    /// The same file or the same text on more than one shelf.
+    func duplicatesAcrossShelves() -> [[Hit]] {
+        var byValue: [String: [Hit]] = [:]
+        for shelf in shelves {
+            for item in shelf.items where item.kind != .image { byValue["\(item.kind.rawValue)|\(item.value)", default: []].append(Hit(record: item, shelf: shelf.name)) }
+        }
+        return byValue.values.filter { Set($0.compactMap(\.shelf)).count > 1 }.sorted { ($0.first?.record.title ?? "") < ($1.first?.record.title ?? "") }
+    }
+
+    /// Takes the given items off their shelves and into the history.
+    mutating func remove(_ itemIDs: [String], now: Date = Date()) { for id in itemIDs { remove(id, now: now) } }
+
+    mutating func setGroup(_ name: String?, for itemID: String) {
+        let clean = name.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(30)) }.flatMap { $0.isEmpty ? nil : $0 }
+        for i in shelves.indices { if let j = shelves[i].items.firstIndex(where: { $0.id == itemID }) { shelves[i].items[j].group = clean } }
+    }
+
+    /// The groups on a shelf with their items; items with no group come under nil, last.
+    func groups(of shelfID: String? = nil) -> [(name: String?, items: [ShelfRecord])] {
+        let shelf = shelves.first { $0.id == (shelfID ?? currentID) } ?? current
+        let named = Dictionary(grouping: shelf.items.filter { $0.group != nil }, by: { $0.group ?? "" })
+        let ordered: [(name: String?, items: [ShelfRecord])] = named.keys.sorted().map { (name: $0, items: named[$0] ?? []) }
+        let loose = shelf.items.filter { $0.group == nil }
+        return loose.isEmpty ? ordered : ordered + [(name: nil, items: loose)]
     }
 
     // MARK: Names

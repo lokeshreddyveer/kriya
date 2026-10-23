@@ -61,6 +61,19 @@ struct ShelfPane: View {
                         Button("Clear the History") { shelves.change { $0.clearHistory() } }.disabled(shelves.library.history.isEmpty)
                         Button("Empty Every Shelf", role: .destructive) { shelves.change { library in for shelf in library.shelves { library.clear(shelf.id) } } }
                     }
+                    let expiring = shelves.library.expiring(within: 24)
+                    if !expiring.isEmpty { Label("\(expiring.count) item\(expiring.count == 1 ? "" : "s") will be let go within a day.", systemImage: "clock.badge.exclamationmark").font(.callout).foregroundStyle(Theme.warn) }
+                    let missing = shelves.library.missingFiles(exists: { FileManager.default.fileExists(atPath: $0) })
+                    if !missing.isEmpty {
+                        HStack {
+                            Label("\(missing.count) file\(missing.count == 1 ? " has" : "s have") moved or been deleted.", systemImage: "questionmark.folder").font(.callout)
+                            Spacer()
+                            Button("Take Them Off") { shelves.change { $0.remove(missing.map(\.id)) } }.controlSize(.small)
+                        }
+                    }
+                    ForEach(Array(shelves.library.duplicatesAcrossShelves().enumerated()), id: \.offset) { _, group in
+                        Label("“\(group[0].record.title)” is on \(group.compactMap(\.shelf).joined(separator: " and ")).", systemImage: "square.on.square").font(.callout)
+                    }
                 } header: { Text("Shelves") } footer: {
                     Text("The shelf keeps what you put on it until you take it off, even after Kriya restarts. Switch shelves, make new ones and search them from the shelf's own header. Items taken off, or let go after the time above, stay in the history for 30 days and can be put back. Files stay where they are; the shelf only remembers where. Pictures and text are kept on this Mac only.")
                 }

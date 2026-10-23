@@ -625,3 +625,54 @@ final class CaptureProfileTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(CaptureSettings.self, from: Data(legacy.utf8)).includeCursor)
     }
 }
+
+final class ShelfCareTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_760_000_000)
+    private func file(_ path: String, added: Date) -> ShelfRecord { ShelfRecord(kind: .file, value: path, added: added) }
+
+    func testItemsAboutToExpireAreListedSoonestFirst() {
+        var lib = ShelfLibrary()
+        lib.expiryDays = 1
+        lib.shelves[0].items = [file("/a", added: now.addingTimeInterval(-23 * 3600)), file("/b", added: now.addingTimeInterval(-10 * 3600)), file("/c", added: now.addingTimeInterval(-26 * 3600))]
+        let soon = lib.expiring(within: 24, now: now)
+        XCTAssertEqual(soon.map(\.record.value), ["/a", "/b"].sorted { $0 == "/a" ? true : false } + [])
+        XCTAssertEqual(soon.map(\.hoursLeft), [1, 14])
+        lib.expiryDays = nil
+        XCTAssertTrue(lib.expiring(within: 24, now: now).isEmpty)
+    }
+
+    func testMissingFilesAndDuplicatesAcrossShelvesAreFound() {
+        var lib = ShelfLibrary()
+        lib.shelves[0].items = [file("/here", added: now), file("/gone", added: now), ShelfRecord(kind: .text, value: "note", added: now)]
+        var second = ShelfSet(name: "Second")
+        second.items = [file("/here", added: now)]
+        lib.shelves.append(second)
+        XCTAssertEqual(lib.missingFiles(exists: { $0 == "/here" }).map(\.value), ["/gone"])
+        let dupes = lib.duplicatesAcrossShelves()
+        XCTAssertEqual(dupes.count, 1)
+        XCTAssertEqual(Set(dupes[0].compactMap(\.shelf)), ["Shelf", "Second"])
+        let ids = lib.missingFiles(exists: { _ in false }).map(\.id)
+        lib.remove(ids, now: now)
+        XCTAssertEqual(lib.history.count, 2)
+    }
+
+    func testGroupsKeepRelatedItemsTogetherAndLooseOnesLast() {
+        var lib = ShelfLibrary()
+        let a = file("/a", added: now), b = file("/b", added: now), c = file("/c", added: now)
+        lib.shelves[0].items = [a, b, c]
+        lib.setGroup("Taxes", for: a.id)
+        lib.setGroup("  Taxes ", for: b.id)
+        lib.setGroup("", for: c.id)
+        let groups = lib.groups()
+        XCTAssertEqual(groups.map { $0.name }, ["Taxes", nil])
+        XCTAssertEqual(groups[0].items.count, 2)
+        lib.setGroup(nil, for: a.id)
+        XCTAssertEqual(lib.groups().first?.items.count, 1)
+    }
+
+    func testOldShelvesWithoutGroupsStillLoad() throws {
+        let json = #"{"shelves":[{"id":"main","name":"Shelf","items":[{"id":"1","kind":"file","value":"/a","added":0}]}],"currentID":"main","history":[]}"#
+        let lib = try JSONDecoder().decode(ShelfLibrary.self, from: Data(json.utf8))
+        XCTAssertNil(lib.shelves[0].items[0].group)
+    }
+}
