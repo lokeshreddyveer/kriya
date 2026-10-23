@@ -658,3 +658,36 @@ final class ExtensionBundleTests: XCTestCase {
         XCTAssertNil(ExtensionBundle.interpreter(for: "tool"))
     }
 }
+
+final class FinderDrawerListTests: XCTestCase {
+    func testFilesAreKeptOnceInOrderAndBounded() {
+        var list = FinderDrawerList()
+        XCTAssertEqual(list.add(["/a", "/b", "/a", ""]), 2)
+        XCTAssertEqual(list.paths, ["/a", "/b"])
+        let many = (0..<(FinderDrawerList.capacity + 5)).map { "/f\($0)" }
+        list.add(many)
+        XCTAssertEqual(list.paths.count, FinderDrawerList.capacity)
+    }
+
+    func testReorderingMatchesAListsDrag() {
+        var list = FinderDrawerList()
+        list.add(["/a", "/b", "/c", "/d"])
+        list.move(from: IndexSet(integer: 0), to: 3)
+        XCTAssertEqual(list.paths, ["/b", "/c", "/a", "/d"])
+        list.move(from: IndexSet(integer: 3), to: 0)
+        XCTAssertEqual(list.paths, ["/d", "/b", "/c", "/a"])
+        list.move(from: IndexSet(integer: 99), to: 0)
+        XCTAssertEqual(list.paths.count, 4, "a drag from nowhere changes nothing")
+    }
+
+    func testMissingFilesAreDroppedAndRemovalWorks() {
+        var list = FinderDrawerList()
+        list.add(["/a", "/gone", "/b"])
+        list.prune { $0 != "/gone" }
+        XCTAssertEqual(list.paths, ["/a", "/b"])
+        list.remove("/a")
+        XCTAssertEqual(list.paths, ["/b"])
+        list.clear()
+        XCTAssertTrue(list.paths.isEmpty)
+    }
+}

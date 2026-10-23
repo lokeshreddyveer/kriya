@@ -389,6 +389,7 @@ final class AppEnvironment {
             }
         }
         // Sound modes can be turned on and off from anything that runs commands, and the sound can be put back.
+        executor.registerCommand("finder.drawer") { DispatchQueue.main.async { FinderDrawer.shared.toggle() } }
         executor.registerCommand("sound.restore") { [weak soundRules] in DispatchQueue.main.async { soundRules?.putSoundBack() } }
         soundModeSub = soundRules.$modes.receive(on: DispatchQueue.main).sink { [weak self] modes in
             guard let self else { return }
@@ -403,6 +404,7 @@ final class AppEnvironment {
         }
         KeyboardCommands.extra = { [weak automation, weak soundRules] in
             [(command: "automation.macros", title: "Show the macro menu (workflows by group, for the front app)"),
+             (command: "finder.drawer", title: "Show or hide the Finder drawer (selection and kept files)"),
              (command: "sound.restore", title: "Put the sound back how it was before Kriya changed it")]
                 + (soundRules?.modes ?? []).map { (command: "sound.mode.\($0.id)", title: "Sound mode: \($0.name) (turn on or off)") }
                 + (automation?.store.workflows ?? []).filter(\.enabled).map { (command: workflowCommand(workflow: $0), title: "Workflow: \($0.name)") }
