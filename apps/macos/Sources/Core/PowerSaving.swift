@@ -35,8 +35,6 @@ enum PowerSaving {
     static let whatItDoes: [String] = [
         "The system monitor and sound-device checks look less often.",
         "The search index updates less often.",
-        "The launcher's browser-tab and network lookups wait to be asked.",
-        "Animations in Kriya's own windows are shortened.",
     ]
 }
 

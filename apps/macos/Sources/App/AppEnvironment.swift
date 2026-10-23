@@ -307,6 +307,8 @@ final class AppEnvironment {
             }
         }
         workspaces.start()
+        SpaceChangeLayouts.shared.controller = windowController
+        SpaceChangeLayouts.shared.update()
         displayTools.start()
         executor.registerCommand("clipboard.stack") { [weak pasteStack] in DispatchQueue.main.async { pasteStack?.toggle() } }
         executor.registerCommand("color.pick") { DispatchQueue.main.async { ScreenColorPicker.pick() } }

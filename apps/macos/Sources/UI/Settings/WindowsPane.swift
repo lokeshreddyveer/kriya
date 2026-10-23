@@ -448,6 +448,12 @@ private struct LayoutsTab: View {
             } header: { Text("Windows still to place") } footer: { Text("When a restore cannot find a window, Kriya looks again for ten minutes and places it when it appears. It matches by app, then window title, and never moves a locked window.") }
             .id(retryTick)
             Section {
+                Picker("When I change Space, arrange windows by", selection: Binding(get: { SpaceChangeLayouts.layoutID ?? "" }, set: { SpaceChangeLayouts.layoutID = $0.isEmpty ? nil : $0; SpaceChangeLayouts.shared.controller = controller; retryTick += 1 })) {
+                    Text("Nothing").tag("")
+                    ForEach(store.layouts.filter { !$0.isAuto && !$0.isGroup }) { Text($0.name).tag($0.id) }
+                }
+            } header: { Text("Spaces") } footer: { Text("macOS does not let an app move windows between Spaces, so Kriya cannot send a window to another Space. This only places the windows that are on the Space you arrive at. Use the Mission Control actions (Actions › Add Common Actions) with a shortcut to change Space yourself.") }
+            Section {
                 ForEach(locks.locks) { lock in
                     HStack {
                         Text(AppChoice.name(for: lock.appID)); if !lock.titleContains.isEmpty { Text("“\(lock.titleContains)”").foregroundStyle(.secondary) }

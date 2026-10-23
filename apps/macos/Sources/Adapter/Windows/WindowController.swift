@@ -827,3 +827,38 @@ final class RestoreRetry: ObservableObject {
         if queue.items.isEmpty { stop() }
     }
 }
+
+
+/// Arranging windows again when the person moves to another Space. macOS does not let an app move windows between Spaces, so
+/// this only places the windows that are on the Space now.
+final class SpaceChangeLayouts {
+    static let shared = SpaceChangeLayouts()
+    static let layoutKey = "windows.layoutOnSpaceChange"
+    private var observer: NSObjectProtocol?
+    private var work: DispatchWorkItem?
+    weak var controller: WindowController?
+
+    static var layoutID: String? {
+        get { UserDefaults.standard.string(forKey: layoutKey).flatMap { $0.isEmpty ? nil : $0 } }
+        set { UserDefaults.standard.set(newValue ?? "", forKey: layoutKey); shared.update() }
+    }
+
+    func update() {
+        if Self.layoutID == nil {
+            if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+            observer = nil
+            return
+        }
+        guard observer == nil else { return }
+        observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.work?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                guard let self, let controller, let id = Self.layoutID, let layout = controller.store.layouts.first(where: { $0.id == id }) else { return }
+                controller.restore(layout)
+            }
+            self?.work = item
+            // Spaces slide for a moment; wait until it has settled.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: item)
+        }
+    }
+}
