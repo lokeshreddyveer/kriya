@@ -37,7 +37,7 @@ struct SoundPane: View {
             Section {
                 SoundModesSection()
             } header: { Text("Sound modes") } footer: {
-                Text("A mode is several sound changes turned on together, such as headset, microphone and volume for a meeting. Turn it off to put the sound back how it was. The starting two only set the volume; edit them to add your own headset and microphone. Modes can also be run from shortcuts and workflows with the commands sound.mode.<name>.")
+                Text("A mode is several sound changes turned on together, such as headset, microphone and volume for a meeting. Turn it off to put the sound back how it was. The starting two only set the volume; edit them to add your own headset and microphone. Modes can also be run from shortcuts and workflows with the commands sound.mode.<id> (they are listed under Keyboard › Shortcuts).")
             }
             Section {
                 BluetoothSection()

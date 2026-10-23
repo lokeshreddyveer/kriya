@@ -39,6 +39,8 @@ final class AppEnvironment {
     let appAudio = AppAudioEngine()
     let soundMixer = SoundMixerModel()
     let soundRules = SoundRuleRunner()
+    private var soundModeSub: AnyCancellable?
+    private var soundModeCommands: Set<String> = []
     let focusSession = FocusSessionController()
     let worldClock = WorldClockModel()
     let sharedClipboard = SharedClipboardService()
@@ -370,8 +372,23 @@ final class AppEnvironment {
                 DispatchQueue.main.async { pointerMenu?.show(appMenuOnly: appOnly) }
             }
         }
-        KeyboardCommands.extra = { [weak automation] in
-            [(command: "automation.macros", title: "Show the macro menu (workflows by group, for the front app)")]
+        // Sound modes can be turned on and off from anything that runs commands, and the sound can be put back.
+        executor.registerCommand("sound.restore") { [weak soundRules] in DispatchQueue.main.async { soundRules?.putSoundBack() } }
+        soundModeSub = soundRules.$modes.receive(on: DispatchQueue.main).sink { [weak self] modes in
+            guard let self else { return }
+            for command in self.soundModeCommands { self.executor.unregisterCommand(command) }
+            self.soundModeCommands = Set(modes.map { "sound.mode.\($0.id)" })
+            for mode in modes {
+                let id = mode.id
+                self.executor.registerCommand("sound.mode.\(id)") { [weak self] in
+                    DispatchQueue.main.async { if let mode = self?.soundRules.modes.first(where: { $0.id == id }) { self?.soundRules.toggle(mode) } }
+                }
+            }
+        }
+        KeyboardCommands.extra = { [weak automation, weak soundRules] in
+            [(command: "automation.macros", title: "Show the macro menu (workflows by group, for the front app)"),
+             (command: "sound.restore", title: "Put the sound back how it was before Kriya changed it")]
+                + (soundRules?.modes ?? []).map { (command: "sound.mode.\($0.id)", title: "Sound mode: \($0.name) (turn on or off)") }
                 + (automation?.store.workflows ?? []).filter(\.enabled).map { (command: workflowCommand(workflow: $0), title: "Workflow: \($0.name)") }
         }
         keyboard.palette.addProvider { [weak automation] in
