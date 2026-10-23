@@ -169,7 +169,7 @@ final class AIIndex {
     func piecesNeedingVectors(model: String, limit: Int) -> [(id: Int, text: String)] {
         (try? rows("""
         SELECT c.id, c.text FROM chunks c JOIN documents d ON d.id = c.document_id
-        WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.chunk_id = c.id AND e.model = ?) AND d.sensitivity < 2 LIMIT ?
+        WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.chunk_id = c.id AND e.model = ?) AND d.sensitivity < 2 ORDER BY c.id LIMIT ?
         """, [.text(model), .int(limit)]) { (Int(sqlite3_column_int64($0, 0)), Self.text($0, 1)) }) ?? []
     }
 

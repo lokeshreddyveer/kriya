@@ -37,7 +37,9 @@ final class SemanticSearchTests: XCTestCase {
     func testFavouritesAndFreshnessBreakTies() {
         let now = Date()
         let fav = HybridRanker.rank(keyword: ["a", "b"], vector: [], favorites: ["b"], now: now)
-        XCTAssertEqual(fav.map(\.id), ["a", "b"], "a small push does not beat a better rank by much")
+        XCTAssertEqual(fav.map(\.id), ["b", "a"], "a favourite edges ahead of its neighbour")
+        let far = HybridRanker.rank(keyword: (0..<30).map { "k\($0)" } + ["fav"], vector: [], favorites: ["fav"], now: now, limit: 40)
+        XCTAssertNotEqual(far.first?.id, "fav", "but not past the strongest matches")
         let tie = HybridRanker.rank(keyword: [], vector: [(id: "old", similarity: 0.5), (id: "new", similarity: 0.5)], updated: ["old": now.addingTimeInterval(-400 * 86_400), "new": now], now: now)
         XCTAssertEqual(Set(tie.map(\.id)), ["old", "new"])
     }
@@ -45,8 +47,7 @@ final class SemanticSearchTests: XCTestCase {
     func testFullTextQueriesAreMadeSafe() {
         XCTAssertEqual(HybridRanker.ftsQuery("Hello, World!"), "\"hello\"* \"world\"*")
         XCTAssertNil(HybridRanker.ftsQuery("  ?!  "))
-        XCTAssertEqual(HybridRanker.ftsQuery("a\" OR \"b")?.contains("OR"), true, "the word OR is just a word here, quoted")
-        XCTAssertFalse(HybridRanker.ftsQuery("x\"y")!.contains("\"y"), "quotes in the text cannot break out")
+        XCTAssertEqual(HybridRanker.ftsQuery("a\" OR \"b"), "\"a\"* \"or\"* \"b\"*", "OR is just a quoted word, and quotes in the text cannot break out")
     }
 
     private func doc(_ text: String, source: IndexSource = .notes, target: String = "/Users/me/n.md", sensitivity: AISensitivity = .normal, excluded: Bool = false) -> IndexDocument {
