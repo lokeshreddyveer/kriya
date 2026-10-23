@@ -117,7 +117,7 @@ final class ScreenCaptureService: ObservableObject {
         if action == .area || action == .previousArea {
             return captureArea(pickNew: action == .area, settings: current, file: file)
         }
-        let arguments = ScreenCaptureArguments.make(mode: mode, delay: current.delaySeconds, sound: current.playSound, output: file)
+        let arguments = ScreenCaptureArguments.make(mode: mode, delay: current.delaySeconds, sound: current.playSound, output: file, cursor: current.includeCursor ?? false)
         queue.async { [self] in
             capturer(arguments)
             defer { try? FileManager.default.removeItem(at: file) }

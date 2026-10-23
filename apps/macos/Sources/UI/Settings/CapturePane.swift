@@ -7,6 +7,8 @@ struct CapturePane: View {
     @ObservedObject var store: CaptureSettingsStore
     @State private var screenAllowed = CGPreflightScreenCaptureAccess()
     @State private var newWord = ""
+    @StateObject private var profiles = CaptureProfileStore()
+    @State private var profileName = ""
 
     private var settings: CaptureSettings { store.settings }
 
@@ -51,6 +53,22 @@ struct CapturePane: View {
             CaptureHistorySection()
 
             Section {
+                ForEach(profiles.profiles) { profile in
+                    HStack {
+                        Text(profile.name)
+                        Spacer()
+                        Button("Use") { store.update { $0 = profile.applied(to: $0) } }.controlSize(.small)
+                        Button(role: .destructive) { profiles.profiles.removeAll { $0.id == profile.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete \(profile.name)")
+                    }
+                }
+                HStack {
+                    TextField("Name for the current settings", text: $profileName)
+                    Button("Save") { profiles.profiles.append(CaptureProfile.from(settings, named: profileName.trimmingCharacters(in: .whitespaces))); profileName = "" }
+                        .disabled(profileName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: { Text("Capture profiles") } footer: { Text("A profile sets where the picture goes and what happens to it. Your shortcuts, hidden words and recording options stay as they are.") }
+
+            Section {
                 Toggle("Copy the picture to the clipboard", isOn: bind(\.copyImage))
                 Toggle("Save it in a folder", isOn: bind(\.saveToFolder))
                 if settings.saveToFolder {
@@ -68,6 +86,7 @@ struct CapturePane: View {
                     Text("No wait").tag(0); Text("3 seconds").tag(3); Text("5 seconds").tag(5); Text("10 seconds").tag(10)
                 }
                 Toggle("Play the camera sound", isOn: bind(\.playSound))
+                Toggle("Include the pointer in screenshots", isOn: Binding(get: { settings.includeCursor ?? false }, set: { v in store.update { $0.includeCursor = v } }))
                 VStack(alignment: .leading, spacing: 4) {
                     TextField("File name", text: Binding(get: { settings.namePattern ?? CaptureNaming.defaultPattern }, set: { value in store.update { $0.namePattern = value == CaptureNaming.defaultPattern ? nil : value } }))
                     if let problem = CaptureNaming.problem(settings.namePattern ?? CaptureNaming.defaultPattern) { Text(problem).font(.caption).foregroundStyle(Theme.danger) }

@@ -589,3 +589,39 @@ final class JobQueueTests: XCTestCase {
         XCTAssertLessThanOrEqual(q.jobs.count, JobQueueState.keepFinished)
     }
 }
+
+final class CaptureProfileTests: XCTestCase {
+    func testAProfileChangesWhereAndHowButKeepsShortcutsAndWords() {
+        var base = CaptureSettings()
+        base.redactWords = ["Priya"]
+        base.shortcuts = [CaptureShortcut(command: "capture.region", keyCode: 1, modifiers: 1)]
+        let applied = CaptureProfile.starters[2].applied(to: base)
+        XCTAssertEqual(applied.delaySeconds, 3)
+        XCTAssertEqual(applied.includeCursor, true)
+        XCTAssertEqual(applied.redactWords, ["Priya"])
+        XCTAssertEqual(applied.shortcuts.count, 1)
+        XCTAssertTrue(applied.saveToFolder)
+    }
+
+    func testAProfileThatKeepsNothingStillCopies() {
+        var p = CaptureProfile.starters[0]
+        p.copyImage = false; p.saveToFolder = false
+        XCTAssertTrue(p.applied(to: CaptureSettings()).copyImage)
+    }
+
+    func testRoundTripAndTheCursorFlag() {
+        var s = CaptureSettings()
+        s.delaySeconds = 5; s.openEditor = true
+        let p = CaptureProfile.from(s, named: "Mine")
+        var other = CaptureSettings(); other.copyImage = false
+        XCTAssertEqual(p.applied(to: other).delaySeconds, 5)
+        let out = URL(fileURLWithPath: "/tmp/x.png")
+        XCTAssertEqual(ScreenCaptureArguments.make(mode: .screen, delay: 0, sound: false, output: out, cursor: true), ["-x", "-C", "-t", "png", "/tmp/x.png"])
+        XCTAssertEqual(ScreenCaptureArguments.make(mode: .screen, delay: 0, sound: false, output: out), ["-x", "-t", "png", "/tmp/x.png"])
+    }
+
+    func testOlderSavedSettingsStillLoad() throws {
+        let legacy = #"{"copyImage":true,"saveToFolder":true,"folderPath":"","openEditor":false,"redactAutomatically":false,"delaySeconds":0,"playSound":false,"redactWords":[],"shortcuts":[]}"#
+        XCTAssertNil(try JSONDecoder().decode(CaptureSettings.self, from: Data(legacy.utf8)).includeCursor)
+    }
+}

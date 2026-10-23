@@ -79,6 +79,8 @@ struct CaptureSettings: Codable, Equatable {
     var shortcuts: [CaptureShortcut] = []
     /// How files are named: "{app} {date} {time}". Nil is the original "Kriya Capture date time".
     var namePattern: String?
+    /// Draw the pointer in the picture. Optional so settings saved before it existed still load.
+    var includeCursor: Bool?
     /// How Kriya's own recorder records. Optional so settings saved before it existed still load.
     var recordingOptions: RecordingOptions?
     var recording: RecordingOptions {
@@ -170,7 +172,7 @@ final class CaptureSettingsStore: ObservableObject {
 
 /// The arguments for the system's own screenshot tool, kept apart so they can be checked.
 enum ScreenCaptureArguments {
-    static func make(mode: CaptureMode, delay: Int, sound: Bool, output: URL) -> [String] {
+    static func make(mode: CaptureMode, delay: Int, sound: Bool, output: URL, cursor: Bool = false) -> [String] {
         var arguments: [String] = []
         switch mode {
         case .region: arguments += ["-i", "-s"]
@@ -178,6 +180,7 @@ enum ScreenCaptureArguments {
         case .screen: break
         }
         if !sound { arguments.append("-x") }
+        if cursor { arguments.append("-C") }
         if delay > 0 { arguments += ["-T", String(min(delay, 30))] }
         arguments += ["-t", "png", output.path]
         return arguments
