@@ -511,13 +511,21 @@ impl StepKind {
             StepKind::Parallel { steps } => {
                 format!("Run {} steps at the same time", steps.len())
             }
-            StepKind::Confirm { message } => format!("Ask “{}” before going on", first_line(message)),
+            StepKind::Confirm { message } => {
+                format!("Ask “{}” before going on", first_line(message))
+            }
             StepKind::Ask { prompt, variable } => {
-                format!("Ask “{}” and keep it as {{{{{variable}}}}}", first_line(prompt))
+                format!(
+                    "Ask “{}” and keep it as {{{{{variable}}}}}",
+                    first_line(prompt)
+                )
             }
             StepKind::Choose {
                 prompt, variable, ..
-            } => format!("Offer a menu “{}” and keep it as {{{{{variable}}}}}", first_line(prompt)),
+            } => format!(
+                "Offer a menu “{}” and keep it as {{{{{variable}}}}}",
+                first_line(prompt)
+            ),
             StepKind::JavaScript { source } => format!("Run JavaScript: {}", first_line(source)),
         }
     }
@@ -579,9 +587,7 @@ impl StepKind {
             }
             StepKind::Parallel { steps } => {
                 if steps.len() < 2 || steps.len() > MAX_PARALLEL {
-                    return Err(CoreError::invalid(
-                        "steps side by side need 2 to 8 steps",
-                    ));
+                    return Err(CoreError::invalid("steps side by side need 2 to 8 steps"));
                 }
             }
             StepKind::Confirm { message }
@@ -610,9 +616,7 @@ impl StepKind {
                     .iter()
                     .any(|o| o.trim().is_empty() || o.chars().count() > 80)
                 {
-                    return Err(CoreError::invalid(
-                        "each choice needs 1 to 80 characters",
-                    ));
+                    return Err(CoreError::invalid("each choice needs 1 to 80 characters"));
                 }
                 check_variable_name(variable)?;
             }
@@ -650,7 +654,9 @@ pub fn check_variable_name(name: &str) -> Result<(), CoreError> {
         ));
     }
     if name == "loop" {
-        return Err(CoreError::invalid("“loop” is the loop counter; pick another name"));
+        return Err(CoreError::invalid(
+            "“loop” is the loop counter; pick another name",
+        ));
     }
     Ok(())
 }
@@ -853,11 +859,10 @@ pub fn macro_menu(all: &[Workflow], front_app: Option<&str>) -> Vec<MacroGroup> 
         .iter()
         .filter(|w| w.enabled && w.group.as_deref().is_some_and(|g| !g.trim().is_empty()))
         .filter(|w| {
-            w.app_ids.is_empty()
-                || front_app.is_some_and(|app| w.app_ids.iter().any(|a| a == app))
+            w.app_ids.is_empty() || front_app.is_some_and(|app| w.app_ids.iter().any(|a| a == app))
         })
         .collect();
-    offered.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    offered.sort_by_key(|w| w.name.to_lowercase());
     for w in offered {
         let name = w.group.clone().unwrap_or_default().trim().to_string();
         let specific = !w.app_ids.is_empty();
@@ -877,7 +882,7 @@ pub fn macro_menu(all: &[Workflow], front_app: Option<&str>) -> Vec<MacroGroup> 
             }),
         }
     }
-    groups.sort_by(|a, b| b.app_specific.cmp(&a.app_specific));
+    groups.sort_by_key(|g| std::cmp::Reverse(g.app_specific));
     groups
 }
 
@@ -1101,7 +1106,11 @@ fn renumber(steps: &[WorkflowStep], next: &mut usize) -> Vec<WorkflowStep> {
                 },
                 other => other.clone(),
             };
-            WorkflowStep { id, kind, ..s.clone() }
+            WorkflowStep {
+                id,
+                kind,
+                ..s.clone()
+            }
         })
         .collect()
 }
@@ -2372,8 +2381,14 @@ mod tests {
     fn variables_are_put_into_text_once() {
         let n = names(&["who", "n"]);
         let v = names(&["World", "3"]);
-        assert_eq!(render_variables("Hi {{who}} x{{ n }}", &n, &v), "Hi World x3");
-        assert_eq!(render_variables("{{missing}} stays", &n, &v), "{{missing}} stays");
+        assert_eq!(
+            render_variables("Hi {{who}} x{{ n }}", &n, &v),
+            "Hi World x3"
+        );
+        assert_eq!(
+            render_variables("{{missing}} stays", &n, &v),
+            "{{missing}} stays"
+        );
         // A value that looks like a variable is not expanded again.
         let v2 = names(&["{{n}}", "3"]);
         assert_eq!(render_variables("{{who}}", &n, &v2), "{{n}}");
@@ -2410,24 +2425,55 @@ mod tests {
         assert!(ok.check().is_ok());
         let empty = workflow("a", vec![step("1", repeat(3, vec![]))]);
         assert!(empty.check().is_err());
-        let zero = workflow("a", vec![step("1", repeat(0, vec![step("2", StepKind::Delay { ms: 1 })]))]);
+        let zero = workflow(
+            "a",
+            vec![step(
+                "1",
+                repeat(0, vec![step("2", StepKind::Delay { ms: 1 })]),
+            )],
+        );
         assert!(zero.check().is_err());
-        let too_many = workflow("a", vec![step("1", repeat(101, vec![step("2", StepKind::Delay { ms: 1 })]))]);
+        let too_many = workflow(
+            "a",
+            vec![step(
+                "1",
+                repeat(101, vec![step("2", StepKind::Delay { ms: 1 })]),
+            )],
+        );
         assert!(too_many.check().is_err());
         let bad_inner = workflow(
             "a",
-            vec![step("1", repeat(2, vec![step("2", StepKind::Delay { ms: MAX_DELAY_MS + 1 })]))],
+            vec![step(
+                "1",
+                repeat(
+                    2,
+                    vec![step(
+                        "2",
+                        StepKind::Delay {
+                            ms: MAX_DELAY_MS + 1,
+                        },
+                    )],
+                ),
+            )],
         );
         let message = bad_inner.check().unwrap_err().to_string();
         assert!(message.contains("step 1.1"), "{message}");
         let clash = workflow(
             "a",
-            vec![step("1", repeat(2, vec![step("1", StepKind::Delay { ms: 1 })]))],
+            vec![step(
+                "1",
+                repeat(2, vec![step("1", StepKind::Delay { ms: 1 })]),
+            )],
         );
         assert!(clash.check().is_err(), "ids are unique across nested steps");
         let lone = workflow(
             "a",
-            vec![step("1", StepKind::Parallel { steps: vec![step("2", StepKind::Delay { ms: 1 })] })],
+            vec![step(
+                "1",
+                StepKind::Parallel {
+                    steps: vec![step("2", StepKind::Delay { ms: 1 })],
+                },
+            )],
         );
         assert!(lone.check().is_err(), "parallel needs at least two steps");
     }
@@ -2448,8 +2494,12 @@ mod tests {
 
     #[test]
     fn steps_inside_loops_count_toward_the_limit() {
-        let inner: Vec<_> = (0..MAX_STEPS).map(|i| step(&format!("i{i}"), StepKind::Delay { ms: 1 })).collect();
-        assert!(workflow("a", vec![step("outer", repeat(2, inner))]).check().is_err());
+        let inner: Vec<_> = (0..MAX_STEPS)
+            .map(|i| step(&format!("i{i}"), StepKind::Delay { ms: 1 }))
+            .collect();
+        assert!(workflow("a", vec![step("outer", repeat(2, inner))])
+            .check()
+            .is_err());
     }
 
     #[test]
@@ -2458,10 +2508,19 @@ mod tests {
         assert_eq!(safe.risk(), StepRisk::Safe);
         let risky = repeat(
             2,
-            vec![step("2", StepKind::Script { language: FinderScript::Shell, source: "ls".into() })],
+            vec![step(
+                "2",
+                StepKind::Script {
+                    language: FinderScript::Shell,
+                    source: "ls".into(),
+                },
+            )],
         );
         assert_eq!(risky.risk(), StepRisk::NeedsAuthorization);
-        assert_eq!(StepKind::JavaScript { source: "1".into() }.risk(), StepRisk::NeedsAuthorization);
+        assert_eq!(
+            StepKind::JavaScript { source: "1".into() }.risk(),
+            StepRisk::NeedsAuthorization
+        );
         let w = workflow("a", vec![step("1", risky)]);
         assert!(needs_authorization(&w));
     }
@@ -2472,12 +2531,31 @@ mod tests {
             "a",
             vec![step(
                 "1",
-                repeat(2, vec![step("2", StepKind::RunWorkflow { workflow_id: "b".into() })]),
+                repeat(
+                    2,
+                    vec![step(
+                        "2",
+                        StepKind::RunWorkflow {
+                            workflow_id: "b".into(),
+                        },
+                    )],
+                ),
             )],
         );
         assert_eq!(w.references(), vec!["b".to_string()]);
-        let b = workflow("b", vec![step("1", StepKind::RunWorkflow { workflow_id: "a".into() })]);
-        assert!(find_cycle(&[w, b]).is_some(), "a cycle through a loop is still a cycle");
+        let b = workflow(
+            "b",
+            vec![step(
+                "1",
+                StepKind::RunWorkflow {
+                    workflow_id: "a".into(),
+                },
+            )],
+        );
+        assert!(
+            find_cycle(&[w, b]).is_some(),
+            "a cycle through a loop is still a cycle"
+        );
     }
 
     #[test]
@@ -2500,19 +2578,59 @@ mod tests {
 
     #[test]
     fn prompts_and_menus_are_checked() {
-        let ask = |p: &str, v: &str| step("1", StepKind::Ask { prompt: p.into(), variable: v.into() });
+        let ask = |p: &str, v: &str| {
+            step(
+                "1",
+                StepKind::Ask {
+                    prompt: p.into(),
+                    variable: v.into(),
+                },
+            )
+        };
         assert!(workflow("a", vec![ask("Name?", "who")]).check().is_ok());
         assert!(workflow("a", vec![ask("", "who")]).check().is_err());
         assert!(workflow("a", vec![ask("Name?", "loop")]).check().is_err());
         let choose = |options: Vec<&str>| {
-            step("1", StepKind::Choose { prompt: "Pick".into(), options: options.into_iter().map(String::from).collect(), variable: "c".into() })
+            step(
+                "1",
+                StepKind::Choose {
+                    prompt: "Pick".into(),
+                    options: options.into_iter().map(String::from).collect(),
+                    variable: "c".into(),
+                },
+            )
         };
         assert!(workflow("a", vec![choose(vec!["a", "b"])]).check().is_ok());
         assert!(workflow("a", vec![choose(vec!["a"])]).check().is_err());
         assert!(workflow("a", vec![choose(vec!["a", " "])]).check().is_err());
-        assert!(workflow("a", vec![step("1", StepKind::Confirm { message: "Sure?".into() })]).check().is_ok());
-        assert!(workflow("a", vec![step("1", StepKind::Confirm { message: " ".into() })]).check().is_err());
-        assert!(workflow("a", vec![step("1", StepKind::JavaScript { source: " ".into() })]).check().is_err());
+        assert!(workflow(
+            "a",
+            vec![step(
+                "1",
+                StepKind::Confirm {
+                    message: "Sure?".into()
+                }
+            )]
+        )
+        .check()
+        .is_ok());
+        assert!(workflow(
+            "a",
+            vec![step(
+                "1",
+                StepKind::Confirm {
+                    message: " ".into()
+                }
+            )]
+        )
+        .check()
+        .is_err());
+        assert!(workflow(
+            "a",
+            vec![step("1", StepKind::JavaScript { source: " ".into() })]
+        )
+        .check()
+        .is_err());
     }
 
     #[test]
@@ -2520,14 +2638,28 @@ mod tests {
         let w = workflow(
             "a",
             vec![
-                step("x", repeat(2, vec![step("y", StepKind::Delay { ms: 1 }), step("s0", StepKind::Delay { ms: 1 })])),
+                step(
+                    "x",
+                    repeat(
+                        2,
+                        vec![
+                            step("y", StepKind::Delay { ms: 1 }),
+                            step("s0", StepKind::Delay { ms: 1 }),
+                        ],
+                    ),
+                ),
                 step("z", StepKind::Delay { ms: 1 }),
             ],
         );
         assert!(w.check().is_ok());
         let copy = duplicate(&w, "b", 5);
         assert!(copy.check().is_ok(), "no id clashes after renumbering");
-        let ids: Vec<_> = copy.steps[0].kind.children().iter().map(|s| s.id.clone()).collect();
+        let ids: Vec<_> = copy.steps[0]
+            .kind
+            .children()
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
         assert_eq!(ids, vec!["s1".to_string(), "s2".to_string()]);
     }
 
@@ -2555,7 +2687,11 @@ mod tests {
         assert_eq!(safari[0].name, "File", "this app's groups come first");
         assert!(safari[0].app_specific);
         assert_eq!(
-            safari[0].items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(),
+            safari[0]
+                .items
+                .iter()
+                .map(|i| i.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["Another", "Export"],
             "by name"
         );
@@ -2579,7 +2715,16 @@ mod tests {
     #[test]
     fn the_catalog_has_flow_steps_that_pass_their_own_checks() {
         for template in step_catalog() {
-            if matches!(template.kind, StepKind::Repeat { .. } | StepKind::Parallel { .. } | StepKind::SetVariable { .. } | StepKind::Ask { .. } | StepKind::Choose { .. } | StepKind::Confirm { .. } | StepKind::JavaScript { .. }) {
+            if matches!(
+                template.kind,
+                StepKind::Repeat { .. }
+                    | StepKind::Parallel { .. }
+                    | StepKind::SetVariable { .. }
+                    | StepKind::Ask { .. }
+                    | StepKind::Choose { .. }
+                    | StepKind::Confirm { .. }
+                    | StepKind::JavaScript { .. }
+            ) {
                 let w = workflow("a", vec![step("1", template.kind.clone())]);
                 assert!(w.check().is_ok(), "{}: {:?}", template.title, w.check());
             }

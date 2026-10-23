@@ -845,12 +845,7 @@ pub fn suggested_items() -> Vec<FinderItem> {
             FinderActionKind::EditComment,
             Applies::Anything,
         ),
-        item(
-            "share",
-            "Share…",
-            FinderActionKind::Share,
-            Applies::Files,
-        ),
+        item("share", "Share…", FinderActionKind::Share, Applies::Files),
     ]
 }
 

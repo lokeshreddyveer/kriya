@@ -104,9 +104,9 @@ pub use windows::{
 };
 pub use workflow::{
     ConditionGroup, ConditionItem, ConditionKind, ConditionMode, ConditionTemplate, Corner, Edge,
-    EvalContext, MacroGroup, MacroItem, OnError, Risk, RunStatus, StepKind, StepResult, StepRisk, StepStatus,
-    StepTemplate, SystemOp, TrackpadGesture, TriggerTemplate, Workflow, WorkflowRun, WorkflowStep,
-    WorkflowTrigger,
+    EvalContext, MacroGroup, MacroItem, OnError, Risk, RunStatus, StepKind, StepResult, StepRisk,
+    StepStatus, StepTemplate, SystemOp, TrackpadGesture, TriggerTemplate, Workflow, WorkflowRun,
+    WorkflowStep, WorkflowTrigger,
 };
 pub use workspace::{FavoriteWindow, Workspace, WorkspaceConfig};
 
@@ -991,7 +991,11 @@ pub fn workflow_step_summary(step: WorkflowStep) -> String {
 
 /// Puts variables into text: each `{{name}}` becomes the value in the same place in `values`.
 #[uniffi::export]
-pub fn workflow_render_variables(template: String, names: Vec<String>, values: Vec<String>) -> String {
+pub fn workflow_render_variables(
+    template: String,
+    names: Vec<String>,
+    values: Vec<String>,
+) -> String {
     workflow::render_variables(&template, &names, &values)
 }
 
@@ -1004,7 +1008,9 @@ pub fn workflow_macro_menu(workflows: Vec<Workflow>, front_app: Option<String>) 
 /// Whether a name can be used for a variable.
 #[uniffi::export]
 pub fn workflow_variable_name_problem(name: String) -> Option<String> {
-    workflow::check_variable_name(&name).err().map(|e| e.to_string())
+    workflow::check_variable_name(&name)
+        .err()
+        .map(|e| e.to_string())
 }
 
 #[uniffi::export]

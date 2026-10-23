@@ -292,9 +292,7 @@ mod tests {
     use super::*;
     use crate::finder::FinderScript;
     use crate::keyboard::{KeyShortcut, ShortcutScope, ShortcutTarget};
-    use crate::workflow::{
-        needs_authorization, RunStatus, StepResult, StepStatus, WorkflowStep,
-    };
+    use crate::workflow::{needs_authorization, RunStatus, StepResult, StepStatus, WorkflowStep};
 
     fn open() -> Store {
         Store::open_in_memory().unwrap()
