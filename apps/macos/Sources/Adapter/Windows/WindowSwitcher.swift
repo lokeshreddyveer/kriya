@@ -4,6 +4,8 @@ import SwiftUI
 
 /// Remembers which apps and windows were used most recently, for ordering the switcher.
 final class WindowRecency {
+    /// One tally shared by the switcher and the window list, so both order windows by when they were really used.
+    static let shared = WindowRecency()
     private let lock = NSLock()
     private var counter: Int64 = 0
     private var apps: [pid_t: Int64] = [:]

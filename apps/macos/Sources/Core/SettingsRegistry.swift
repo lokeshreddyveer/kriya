@@ -89,7 +89,7 @@ enum SettingsRegistry {
         h("deviceTimeline.v1", "timelines"), h("displayHistory.v1", "timelines"),
         // Windows, displays and workspaces
         s("windowLocks.v1", "windowextras", .reload(.windowLocks)), s("windows.layoutOnSpaceChange", "windowextras", .live),
-        s("windows.retryUnresolved", "windowextras", .live), s("displaySetupBindings.v1", "windowextras", .live), h("workspaceLaunchLog.v1", "windowextras"),
+        s("windows.retryUnresolved", "windowextras", .live), s("windows.favoriteWindows.v1", "windowextras", .live), s("displaySetupBindings.v1", "windowextras", .live), h("workspaceLaunchLog.v1", "windowextras"),
         s("monitorPresets.v1", "displays"), m("displayProfileIndex", "displays"),
         // Usage
         h("usage.selectionActions.v1", "usage"), h("usage.savedActions.v1", "usage"),

@@ -250,9 +250,15 @@ private struct RadialView: View {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
                 .font(.system(size: 14))
                 .foregroundStyle(model.selected == .maximize ? Color.white : Color.secondary)
+            // The name of what the pointer is on, below the ring, so the direction is never a guess.
+            Text(model.selected.title)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule())
+                .offset(y: outer + 22)
         }
-        .animation(.smooth(duration: 0.12), value: model.selected)
-        .frame(width: outer * 2, height: outer * 2)
+        .animation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .smooth(duration: 0.12), value: model.selected)
+        .frame(width: outer * 2, height: outer * 2 + 56, alignment: .top)
     }
 }
 
@@ -286,7 +292,7 @@ private struct Wedge: Shape {
 /// Covers the display with a clear layer that takes the pointer, so choosing a sector never clicks the window behind.
 private final class RadialCaptureView: NSView {
     var onMove: ((CGPoint) -> Void)?
-    var onClick: (() -> Void)?
+    var onClick: ((CGPoint) -> Void)?
     var onCancel: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
@@ -300,7 +306,7 @@ private final class RadialCaptureView: NSView {
 
     override func mouseMoved(with event: NSEvent) { onMove?(convert(event.locationInWindow, from: nil)) }
     override func mouseDragged(with event: NSEvent) { onMove?(convert(event.locationInWindow, from: nil)) }
-    override func mouseDown(with event: NSEvent) { onMove?(convert(event.locationInWindow, from: nil)); onClick?() }
+    override func mouseDown(with event: NSEvent) { let p = convert(event.locationInWindow, from: nil); onMove?(p); onClick?(p) }
     override func rightMouseDown(with event: NSEvent) { onCancel?() }
 }
 
@@ -366,10 +372,14 @@ final class RadialMenu {
             y: min(max(mouse.y - screen.frame.minY, margin), screen.frame.height - margin)
         )
         let host = NSHostingView(rootView: RadialView(model: model, outer: outer, inner: inner, tint: .fromHex(store.currentConfig.radialColor)))
-        host.frame = CGRect(x: centre.x - outer, y: centre.y - outer, width: outer * 2, height: outer * 2)
+        host.frame = CGRect(x: centre.x - outer, y: centre.y - outer - 56, width: outer * 2, height: outer * 2 + 56)
         capture.addSubview(host)
         capture.onMove = { [weak self] point in self?.moved(to: point) }
-        capture.onClick = { [weak self] in self?.commit() }
+        // A click well outside the ring is a way out: nothing is moved.
+        capture.onClick = { [weak self] point in
+            guard let self else { return }
+            if hypot(point.x - self.centre.x, point.y - self.centre.y) > self.outer + 16 { self.close() } else { self.commit() }
+        }
         capture.onCancel = { [weak self] in self?.close() }
 
         let panel = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)

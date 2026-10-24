@@ -15,7 +15,7 @@ final class WindowFeature: FeatureModule {
     private var switcher: WindowSwitcher?
     private var radial: RadialMenu?
     private var grid: GridMenu?
-    private let recency = WindowRecency()
+    private let recency = WindowRecency.shared
     private var registeredCommands: Set<String> = []
     private var cancellables = Set<AnyCancellable>()
     private var launchObserver: NSObjectProtocol?

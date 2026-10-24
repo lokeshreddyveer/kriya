@@ -38,6 +38,7 @@ final class AppEnvironment {
     let clipboardRules = ClipboardRuleStore()
     let appAudio = AppAudioEngine()
     lazy var quickConfigs = QuickConfigStore(engine: appAudio)
+    lazy var windowList = WindowListController(recency: .shared)
     private var quickConfigSub: AnyCancellable?
     private var quickConfigCommands = Set<String>()
     private var deviceCommandSubs: [AnyCancellable] = []
@@ -426,6 +427,7 @@ final class AppEnvironment {
             }
         }
         registerSoundCommands()
+        registerWindowListCommands()
         KeyboardCommands.extra = { [weak automation, weak soundRules, weak self] in
             [(command: "automation.macros", title: "Show the macro menu (workflows by group, for the front app)"),
              (command: "finder.drawer", title: "Show or hide the Finder drawer (selection and kept files)"),
@@ -529,6 +531,7 @@ extension View {
             .environmentObject(env.appAudio)
             .environmentObject(env.soundMixer)
             .environmentObject(env.quickConfigs)
+            .environmentObject(env.windowList.model)
             .environmentObject(env.soundRules)
             .environmentObject(env.focusSession)
             .environmentObject(env.worldClock)
@@ -590,6 +593,18 @@ extension EnvironmentValues {
 
 
 extension AppEnvironment {
+    /// Commands for the window list, favorite windows and throwing a window to an edge.
+    fileprivate func registerWindowListCommands() {
+        let list = windowList
+        let controller = windowController
+        executor.registerCommand("window.list") { DispatchQueue.main.async { list.toggle() } }
+        executor.registerCommand("window.favorite_toggle") { DispatchQueue.main.async { list.model.toggleFrontFavorite() } }
+        for n in 1...9 { executor.registerCommand("window.favorite_\(n)") { DispatchQueue.main.async { list.model.goToFavorite(number: n) } } }
+        for name in ["left", "right", "up", "down", "top_left", "top_right", "bottom_left", "bottom_right"] {
+            executor.registerCommand("window.throw_\(name)") { DispatchQueue.main.async { controller.run(command: "window.throw_\(name)") } }
+        }
+    }
+
     /// Shortcut-ready commands for the sound mixer: the app in front, timed mutes, saved setups and the devices.
     fileprivate func registerSoundCommands() {
         let engine = appAudio

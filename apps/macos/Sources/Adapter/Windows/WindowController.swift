@@ -112,6 +112,14 @@ final class WindowController: ObservableObject {
         case "window.screen_right": moveToScreen(dx: 1, dy: 0); return true
         case "window.screen_up": moveToScreen(dx: 0, dy: -1); return true
         case "window.screen_down": moveToScreen(dx: 0, dy: 1); return true
+        case "window.throw_left": throwWindow(dx: -1, dy: 0); return true
+        case "window.throw_right": throwWindow(dx: 1, dy: 0); return true
+        case "window.throw_up": throwWindow(dx: 0, dy: -1); return true
+        case "window.throw_down": throwWindow(dx: 0, dy: 1); return true
+        case "window.throw_top_left": throwWindow(dx: -1, dy: -1); return true
+        case "window.throw_top_right": throwWindow(dx: 1, dy: -1); return true
+        case "window.throw_bottom_left": throwWindow(dx: -1, dy: 1); return true
+        case "window.throw_bottom_right": throwWindow(dx: 1, dy: 1); return true
         default: break
         }
         if let layout = windowLayoutFromCommand(command: command) {
@@ -146,6 +154,20 @@ final class WindowController: ObservableObject {
             return false
         }
         return true
+    }
+
+    // MARK: Throwing
+
+    /// Slides the window to an edge or corner of its display without changing its size, like a flick.
+    func throwWindow(dx: Int, dy: Int) {
+        guard let (window, current, display) = target() else { return }
+        let area = usableArea(display)
+        var frame = current
+        let gap = store.currentConfig.gap
+        if dx < 0 { frame.x = area.x + gap } else if dx > 0 { frame.x = area.x + area.width - current.width - gap }
+        if dy < 0 { frame.y = area.y + gap } else if dy > 0 { frame.y = area.y + area.height - current.height - gap }
+        frame.x = max(frame.x, area.x); frame.y = max(frame.y, area.y)
+        place(window, to: frame, from: current, label: "Throw", layout: nil)
     }
 
     // MARK: Layouts

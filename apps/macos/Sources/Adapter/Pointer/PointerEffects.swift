@@ -443,6 +443,8 @@ final class PointerEffects {
             entry("pointer.zoom_in", "Magnifier: zoom in"),
             entry("pointer.zoom_out", "Magnifier: zoom out"),
             entry("pointer.show", "Show the pointer now"),
+            entry("pointer.hide", "Hide the pointer until the mouse moves"),
+            entry("pointer.center_display", "Move the pointer to the middle of its display"),
             entry("pointer.presentation", "Presentation mode (on or off)"),
             entry("pointer.spotlight", "Spotlight (on or off)"),
         ]
@@ -526,6 +528,16 @@ final class PointerEffects {
         }
     }
 
+    /// Puts the pointer in the middle of the display it is on (the Mac's own coordinates: origin top left of the main display).
+    static func centerPointerOnItsDisplay() {
+        let mouse = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main, let primary = NSScreen.screens.first else { return }
+        let x = screen.frame.midX
+        let y = primary.frame.height - screen.frame.midY
+        CGWarpMouseCursorPosition(CGPoint(x: x, y: y))
+        CGAssociateMouseAndMouseCursorPosition(1)
+    }
+
     private func run(_ command: String) {
         switch command {
         case "pointer.locate": locate()
@@ -533,6 +545,8 @@ final class PointerEffects {
         case "pointer.zoom_in": magnifier.adjustZoom(by: 1.25)
         case "pointer.zoom_out": magnifier.adjustZoom(by: 0.8)
         case "pointer.show": hider.show()
+        case "pointer.hide": hider.hideForTyping()
+        case "pointer.center_display": Self.centerPointerOnItsDisplay()
         case "pointer.spotlight":
             setSpotlight(!spotlight.isOn)
             toast.show(spotlight.isOn ? "Spotlight on" : "Spotlight off")
