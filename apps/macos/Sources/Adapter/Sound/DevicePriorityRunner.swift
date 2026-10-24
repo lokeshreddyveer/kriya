@@ -21,6 +21,8 @@ final class DevicePriorityRunner: ObservableObject {
     @Published var switchBack: Bool { didSet { UserDefaults.standard.set(switchBack, forKey: Self.switchBackKey) } }
     /// What the runner did last, for the Sound screen.
     @Published private(set) var lastAction: String?
+    /// The device's own name for each ranked device, so one that comes back under another unique name can be recognised.
+    private var savedNames: [String: String] = UserDefaults.standard.dictionary(forKey: "soundDevices.names.v1") as? [String: String] ?? [:]
 
     private let audio = AudioControl.shared
     private var started = false
@@ -47,7 +49,7 @@ final class DevicePriorityRunner: ObservableObject {
     func start() {
         guard enabled, !started else { return }
         started = true
-        for input in [false, true] { state[input] = snapshot(input: input) }
+        for input in [false, true] { reconcileNames(input: input); state[input] = snapshot(input: input) }
         let system = AudioObjectID(kAudioObjectSystemObject)
         for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDefaultInputDevice] {
             var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -84,8 +86,23 @@ final class DevicePriorityRunner: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
+    /// Keeps the names of the ranked devices that are connected, and lets a ranked device that came back under a new unique name keep
+    /// its place.
+    private func reconcileNames(input: Bool) {
+        let connected = Dictionary(audio.devices().filter { input ? $0.isInput : $0.isOutput }.map { ($0.uid, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let list = input ? inputPriority : outputPriority
+        let migrated = DevicePolicy.migrate(list, savedNames: savedNames, connectedNames: connected)
+        if migrated != list {
+            if input { inputPriority = migrated } else { outputPriority = migrated }
+            lastAction = "A device came back under a new name and kept its place in the order."
+        }
+        for uid in input ? inputPriority : outputPriority { if let name = connected[uid] { savedNames[uid] = name } }
+        UserDefaults.standard.set(savedNames, forKey: "soundDevices.names.v1")
+    }
+
     private func settle() {
         for input in [false, true] {
+            reconcileNames(input: input)
             let before = state[input] ?? snapshot(input: input)
             var now = snapshot(input: input)
             let list = input ? inputPriority : outputPriority
@@ -111,6 +128,7 @@ final class DevicePriorityRunner: ObservableObject {
     // MARK: The lists
 
     func add(_ uid: String, input: Bool) {
+        if let device = audio.device(uid: uid) { savedNames[uid] = device.name; UserDefaults.standard.set(savedNames, forKey: "soundDevices.names.v1") }
         if input { inputPriority = DevicePolicy.adding(uid, to: inputPriority) } else { outputPriority = DevicePolicy.adding(uid, to: outputPriority) }
     }
 

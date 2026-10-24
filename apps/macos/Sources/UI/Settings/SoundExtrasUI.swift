@@ -181,7 +181,7 @@ struct QuickConfigsSection: View {
     @EnvironmentObject private var quick: QuickConfigStore
 
     var body: some View {
-        if quick.configs.isEmpty { Text("No Quick Configs yet. “Save Current Sound” keeps the devices, volumes, every app's settings and the favorites as they are now.").font(.callout).foregroundStyle(.secondary) }
+        if quick.configs.isEmpty { Text("No Quick Configs yet. “Save Current Sound” keeps the devices, volumes, every app's settings, the favorites, icons, device order and looks as they are now.").font(.callout).foregroundStyle(.secondary) }
         ForEach(quick.configs) { config in
             HStack {
                 VStack(alignment: .leading, spacing: 1) {

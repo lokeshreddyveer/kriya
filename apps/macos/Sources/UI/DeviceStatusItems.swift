@@ -82,7 +82,14 @@ final class DeviceStatusItems: NSObject {
     }
 
     private func refresh() {
-        for pin in Self.pinned() {
+        // An icon saved before the device's own name was kept gets it the first time the device is seen.
+        var list = Self.pinned()
+        var upgraded = false
+        for index in list.indices where list[index].hardwareName == nil {
+            if let device = live(list[index]) { list[index].hardwareName = device.name; upgraded = true }
+        }
+        if upgraded { lastList = list; Self.save(list) }
+        for pin in list {
             guard let button = items[pin.id]?.button else { continue }
             let state = status(of: pin)
             if let device = live(pin) { transports[pin.id] = audio.details(of: device).transport }
@@ -132,7 +139,7 @@ final class DeviceStatusItems: NSObject {
         }
     }
 
-    private func peer(for pin: PinnedDevice) -> BluetoothPeer? { BluetoothAudio.peer(named: pin.name, in: BluetoothAudio.paired()) }
+    private func peer(for pin: PinnedDevice) -> BluetoothPeer? { BluetoothAudio.peer(named: pin.lookupName, in: BluetoothAudio.paired()) }
 
     private func connect(_ pin: PinnedDevice) {
         guard let peer = peer(for: pin) else { return }

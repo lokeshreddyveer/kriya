@@ -7,6 +7,7 @@ import Foundation
 final class HoldTracker<Payload> {
     struct Press {
         let id: Int
+        let device: String
         let button: UInt32
         let downAtMs: UInt64
         let holdMs: UInt64
@@ -26,7 +27,7 @@ final class HoldTracker<Payload> {
     }
 
     private let lock = NSLock()
-    private var presses: [UInt32: Press] = [:]
+    private var presses: [HeldKey: Press] = [:]
     private var nextID = 0
 
     var isTracking: Bool {
@@ -35,13 +36,14 @@ final class HoldTracker<Payload> {
         return !presses.isEmpty
     }
 
-    /// Starts keeping a press back. The result identifies it for the timer that will ask whether time is up.
+    /// Starts keeping a press back. The result identifies it for the timer that will ask whether time is up. A press is kept per device
+    /// and button, so the same button held on two devices at once is two presses.
     @discardableResult
-    func press(button: UInt32, location: CGPoint, flags: CGEventFlags, nowMs: UInt64, holdMs: UInt64, payload: Payload) -> Int {
+    func press(device: String = "", button: UInt32, location: CGPoint, flags: CGEventFlags, nowMs: UInt64, holdMs: UInt64, payload: Payload) -> Int {
         lock.lock()
         defer { lock.unlock() }
         nextID += 1
-        presses[button] = Press(id: nextID, button: button, downAtMs: nowMs, holdMs: holdMs, location: location, flags: flags, payload: payload)
+        presses[HeldKey(device: device, button: button)] = Press(id: nextID, device: device, button: button, downAtMs: nowMs, holdMs: holdMs, location: location, flags: flags, payload: payload)
         return nextID
     }
 
@@ -56,10 +58,17 @@ final class HoldTracker<Payload> {
         return entry.value.payload
     }
 
-    func release(button: UInt32) -> Release {
+    /// A release belongs to its own device's press. If the device is named differently on the way up, it belongs to the oldest press of
+    /// that button, so a press is never left running its hold rule after the button was let go.
+    func release(device: String = "", button: UInt32) -> Release {
         lock.lock()
         defer { lock.unlock() }
-        guard let press = presses.removeValue(forKey: button) else { return .notTracked }
+        var key = HeldKey(device: device, button: button)
+        if presses[key] == nil {
+            guard let other = presses.filter({ $0.key.button == button }).min(by: { $0.value.id < $1.value.id })?.key else { return .notTracked }
+            key = other
+        }
+        guard let press = presses.removeValue(forKey: key) else { return .notTracked }
         return press.fired ? .afterHold : .early(location: press.location, flags: press.flags, payload: press.payload)
     }
 

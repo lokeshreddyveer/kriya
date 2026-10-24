@@ -23,6 +23,12 @@ final class DeviceNames: ObservableObject {
     func name(for device: AudioDevice) -> String { DeviceNaming.name(device.name, uid: device.uid, labels: labels) }
     func symbol(for device: AudioDevice, fallback: String) -> String { DeviceNaming.symbol(uid: device.uid, fallback: fallback, labels: labels) }
 
+    /// Puts a whole set of names, icons and hidden devices in place (a Quick Config being applied).
+    func replaceAll(_ next: [String: DeviceLabel]) {
+        labels = next
+        if let data = try? JSONEncoder().encode(labels) { defaults.set(data, forKey: Self.key) }
+    }
+
     func set(_ label: DeviceLabel, for uid: String) {
         labels = DeviceNaming.setting(label, for: uid, in: labels)
         if let data = try? JSONEncoder().encode(labels) { defaults.set(data, forKey: Self.key) }
@@ -62,6 +68,16 @@ final class QuickConfigStore: ObservableObject {
         }
         config.apps = engine.settings
         config.favorites = engine.favorites
+        config.menuBarApps = engine.menuBarApps
+        config.boostApps = engine.boostApps.sorted()
+        config.excludedApps = engine.excluded.sorted()
+        config.effectsUID = audio.defaultSystemOutputDevice().flatMap { audio.uid(of: $0) }
+        config.outputPriority = DevicePriorityRunner.shared.outputPriority
+        config.inputPriority = DevicePriorityRunner.shared.inputPriority
+        config.autoEQ = AutoEQRunner.shared.stored
+        config.deviceLabels = DeviceNames.shared.labels
+        config.mixerDensity = defaults.string(forKey: "soundMixer.density")
+        config.mixerAppearance = defaults.string(forKey: "soundMixer.appearance")
         return config
     }
 
@@ -75,7 +91,9 @@ final class QuickConfigStore: ObservableObject {
         return config
     }
 
-    /// Restores the devices that are connected, their volumes, every app's settings and the favorites. Says what could not be.
+    /// Restores the devices that are connected and their volumes, every app's settings, favorites, menu-bar icons, boost and left-alone
+    /// apps, the sound-effects output, the order of devices, device names and icons, headphone corrections and how the mixer looks.
+    /// Sound rules, places, MIDI and modes are kept apart and have their own export. Says what could not be restored.
     func apply(_ id: String) {
         guard let config = configs.first(where: { $0.id == id }) else { return }
         var missing: [String] = []
@@ -85,7 +103,18 @@ final class QuickConfigStore: ObservableObject {
             guard let d = audio.device(uid: uid) else { continue }
             _ = audio.setVolume(volume, of: d.id, input: d.isInput && !d.isOutput)
         }
+        if let uid = config.effectsUID {
+            if let d = audio.device(uid: uid), d.isOutput { _ = audio.setDefaultSystemOutput(d) } else { missing.append("the sound-effects output") }
+        }
+        // The icons, boost and left-alone apps first: taking boost away also brings an app's volume down to 100%.
+        engine.restoreSetup(menuBarApps: config.menuBarApps, boost: config.boostApps, excluded: config.excludedApps)
         engine.replaceAll(settings: config.apps, favorites: config.favorites)
+        if let order = config.outputPriority { DevicePriorityRunner.shared.outputPriority = order }
+        if let order = config.inputPriority { DevicePriorityRunner.shared.inputPriority = order }
+        if let labels = config.deviceLabels { DeviceNames.shared.replaceAll(labels) }
+        if let density = config.mixerDensity { defaults.set(density, forKey: "soundMixer.density") }
+        if let appearance = config.mixerAppearance { defaults.set(appearance, forKey: "soundMixer.appearance") }
+        if let corrections = config.autoEQ { AutoEQRunner.shared.replaceAll(corrections) }
         message = missing.isEmpty ? "Applied “\(config.name)”." : "Applied “\(config.name)”, but \(missing.joined(separator: " and ")) is not connected."
     }
 

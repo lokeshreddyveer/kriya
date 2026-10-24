@@ -286,7 +286,7 @@ final class SoundHealthTests: XCTestCase {
         XCTAssertEqual(SoundHealth.report(problems: 0, slowestMilliseconds: 80, slowestName: "AirPods").level, .noticeable)
         let late = SoundHealth.report(problems: 0, slowestMilliseconds: 200, slowestName: "AirPods")
         XCTAssertEqual(late.level, .problem)
-        XCTAssertEqual(late.headline, "AirPods is about 200 ms behind")
+        XCTAssertEqual(late.headline, "AirPods reports about 200 ms of delay")
         XCTAssertEqual(SoundHealth.report(problems: 1, slowestMilliseconds: 10, slowestName: nil).headline, "1 app could not be changed")
         XCTAssertEqual(SoundHealth.report(problems: 3, slowestMilliseconds: 500, slowestName: "x").headline, "3 apps could not be changed", "a failure outranks a delay")
         XCTAssertTrue(SoundHealth.report(problems: 0, slowestMilliseconds: 99, slowestName: nil).headline.hasPrefix("A device"))

@@ -54,16 +54,22 @@ struct MousePane: View {
         .animation(.smooth(duration: 0.25), value: mouse.lastError)
     }
 
+    private static func message(for state: FeatureState, enabled: Bool) -> String {
+        if enabled, case .needsPermission(let missing) = state { return MousePermissionNote.message(missing: missing) }
+        return "Your changes are saved, but they only take effect while the feature is on and allowed."
+    }
+
     private var statusBar: some View {
         let state = services.state(.mouse)
         return Banner(
             symbol: "computermouse", tint: state == .running ? Theme.ok : Theme.warn, title: "Mouse & Trackpad is \(config.isEnabled(.mouse) ? state.label.lowercased() : "off")",
-            message: "Your changes are saved, but they only take effect while the feature is on and allowed."
+            message: Self.message(for: state, enabled: config.isEnabled(.mouse))
         ) {
             if !config.isEnabled(.mouse) {
                 Button("Turn On") { services.setFeature(.mouse, enabled: true) }.controlSize(.small)
-            } else if case .needsPermission(let missing) = state, let first = missing.first {
-                Button("Allow \(first.title)…") { permissions.request(first) }.controlSize(.small)
+            } else if case .needsPermission(let missing) = state {
+                // Every missing permission gets its own button, not just the first.
+                HStack { ForEach(missing) { permission in Button("Allow \(permission.title)…") { permissions.request(permission) }.controlSize(.small) } }
             }
         }
     }
@@ -74,9 +80,21 @@ struct MousePane: View {
 private struct MouseDevicesTab: View {
     @EnvironmentObject private var devices: DeviceRegistry
     @EnvironmentObject private var mouse: MouseStore
+    @State private var seen: DeviceAttribution.Result = .none
+    private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Form {
+            Section {
+                HStack(spacing: 10) {
+                    Image(systemName: seenSymbol).foregroundStyle(seenTint).frame(width: 22)
+                    Text(seenText)
+                    Spacer()
+                }
+                .animation(.easeOut(duration: 0.15), value: seenText)
+            } header: { Text("Which device does Kriya see?") } footer: {
+                Text("Move, scroll or click with a device and its name appears here. If two devices were used in the same instant it says it is not sure, and Kriya then uses the default preset instead of guessing one.")
+            }
             if devices.devices.isEmpty {
                 Section {
                     Text("No mice or trackpads found yet. Plug one in or pair a Bluetooth device.")
@@ -90,10 +108,35 @@ private struct MouseDevicesTab: View {
             } header: {
                 Text("Settings for each device")
             } footer: {
-                Text("Each mouse or trackpad can use its own preset. “Same as default” uses the default preset, set under Presets. Kriya tells devices apart by watching which one you used last, which can be off by a moment if you use two at once.")
+                Text("Each mouse or trackpad can use its own preset. “Same as default” uses the default preset, set under Presets. Kriya tells devices apart by watching which one just moved, scrolled or clicked. When two are used in the same instant it cannot tell, and uses the default preset for that moment instead of guessing.")
             }
         }
         .formStyle(.grouped)
+        .onReceive(tick) { _ in seen = devices.activeAttribution() }
+    }
+
+    private var seenText: String {
+        switch seen {
+        case .device(let id): return devices.displayName(forID: id) ?? "A device"
+        case .ambiguous: return "Not sure: two devices were just used"
+        case .none: return "Waiting for a device to move, scroll or click"
+        }
+    }
+
+    private var seenSymbol: String {
+        switch seen {
+        case .device: return "checkmark.circle.fill"
+        case .ambiguous: return "questionmark.circle.fill"
+        case .none: return "circle.dotted"
+        }
+    }
+
+    private var seenTint: Color {
+        switch seen {
+        case .device: return Theme.ok
+        case .ambiguous: return Theme.warn
+        case .none: return .secondary
+        }
     }
 }
 
@@ -109,7 +152,45 @@ private struct DeviceAssignmentRow: View {
         )
     }
 
+    @State private var showApps = false
+
+    /// Presets for one app on this device only. They win over both the device's preset and the app's.
+    private var appAssignments: [MouseAssignment] {
+        mouse.assignments.filter { $0.deviceId == device.id && $0.appId != nil }
+    }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            row
+            DisclosureGroup(isExpanded: $showApps) {
+                if appAssignments.isEmpty {
+                    Text("No app presets on this device.").font(.callout).foregroundStyle(.secondary)
+                }
+                ForEach(appAssignments) { assignment in
+                    HStack {
+                        Text(AppChoice.name(for: assignment.appId ?? ""))
+                        Spacer()
+                        Picker("Preset", selection: Binding(
+                            get: { assignment.presetId },
+                            set: { mouse.setAssignment(device: device.id, app: assignment.appId, preset: $0) }
+                        )) { ForEach(mouse.presets) { Text($0.name).tag($0.id) } }
+                            .labelsHidden().frame(width: 200)
+                        Button(role: .destructive) { mouse.deleteAssignment(assignment.id) } label: { Image(systemName: "trash") }
+                            .accessibilityLabel("Delete").buttonStyle(.borderless)
+                    }
+                }
+                Button {
+                    guard let id = AppChoice.choose(prompt: "Add") else { return }
+                    mouse.setAssignment(device: device.id, app: id, preset: mouse.config.defaultPresetId)
+                } label: { Label("Add an App for This Device", systemImage: "plus") }.controlSize(.small)
+            } label: {
+                Text(appAssignments.isEmpty ? "Presets for apps on this device" : "Presets for apps on this device (\(appAssignments.count))").font(.callout)
+            }
+            .animation(.smooth(duration: 0.2), value: showApps)
+        }
+    }
+
+    private var row: some View {
         HStack(spacing: 14) {
             Image(systemName: device.record.kind.symbol)
                 .font(.title2).frame(width: 30)
@@ -352,8 +433,12 @@ private struct ScrollingEditor: View {
                 Text("Sideways turns the wheel's up and down into left and right. Plain scrolling skips smoothing, acceleration and speed changes for as long as the keys are held.")
             }
             Section {
-                Text("A mouse wheel gets every setting. A trackpad or Magic Mouse already scrolls smoothly, so only direction and speed apply to it. “Reverse” flips how macOS is set for the device; set it against the Natural scrolling option in System Settings.")
-                    .font(.callout).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("A mouse with a notched wheel uses every setting: direction, speed, smooth scrolling, acceleration and sensitivity.", systemImage: "computermouse")
+                    Label("A trackpad, a Magic Mouse and mice that scroll smoothly send fine, continuous movement, so only direction and speed apply to them. Smooth scrolling, acceleration and sensitivity have nothing to shape there and are ignored.", systemImage: "hand.point.up.left")
+                    Label("The keys held for sideways or plain scrolling work on every device. “Reverse” flips how macOS is set for the device; set it against the Natural scrolling option in System Settings.", systemImage: "keyboard")
+                }
+                .font(.callout).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -437,6 +522,7 @@ private struct ButtonsEditor: View {
     let presetID: String
     @EnvironmentObject private var mouse: MouseStore
     @EnvironmentObject private var library: ActionLibrary
+    @EnvironmentObject private var drag: DragToolsStore
     @State private var simButton: UInt32 = 3
     @State private var simModifiers: UInt64 = 0
     @State private var simHeld = false
@@ -450,10 +536,10 @@ private struct ButtonsEditor: View {
                 Picker("With", selection: $simModifiers) { ForEach(KeyModifiers.choices, id: \.bits) { Text($0.title).tag($0.bits) } }
                 Toggle("Hold it", isOn: $simHeld)
                 if let settings = mouse.presets.first(where: { $0.id == presetID })?.settings {
-                    let result = RuleSimulator.simulate(settings, button: simButton, modifiers: simModifiers, held: simHeld, actionName: { id in library.actions.first { $0.id == id }?.name ?? id })
+                    let result = RuleSimulator.simulate(settings, button: simButton, modifiers: simModifiers, held: simHeld, dragToolsUseIt: DragToolsActivation.uses(drag.config, button: simButton, modifiers: simModifiers), actionName: { id in library.actions.first { $0.id == id }?.name ?? id })
                     switch result.outcome {
                     case .runs(let id): Label("Runs “\(library.actions.first { $0.id == id }?.name ?? id)”", systemImage: "checkmark.circle").foregroundStyle(Theme.ok)
-                    case .ambiguous: Label("More than one rule fits", systemImage: "exclamationmark.triangle").foregroundStyle(Theme.warn)
+                    case .ambiguous: Label("More than one rule fits; the first runs", systemImage: "exclamationmark.triangle").foregroundStyle(Theme.warn)
                     case .nothing: Label("Nothing happens", systemImage: "minus.circle").foregroundStyle(.secondary)
                     }
                     ForEach(result.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
@@ -465,7 +551,12 @@ private struct ButtonsEditor: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 ForEach(rules.wrappedValue.indices, id: \.self) { index in
-                    if index < rules.wrappedValue.count { row(index) }
+                    if index < rules.wrappedValue.count {
+                        VStack(alignment: .leading, spacing: 4) {
+                            row(index)
+                            warnings(for: index)
+                        }
+                    }
                 }
             } header: {
                 HStack {
@@ -520,10 +611,35 @@ private struct ButtonsEditor: View {
         }
     }
 
+    /// What is wrong with a rule, said under it: it never runs because an earlier rule has the same button, keys and trigger, or a drag
+    /// tool takes that button first.
+    @ViewBuilder
+    private func warnings(for index: Int) -> some View {
+        let list = rules.wrappedValue
+        if index < list.count {
+            if ButtonRuleCheck.shadowed(list).contains(index) {
+                Label("This rule never runs: an earlier rule uses the same button, keys and trigger, and the first one is used.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(Theme.warn)
+            }
+            if DragToolsActivation.uses(drag.config, button: list[index].button, modifiers: list[index].modifiers) {
+                Label("A drag tool (Drag tab) uses this button with these keys and takes it first.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(Theme.warn)
+            }
+        }
+    }
+
     private func edit(_ index: Int, _ change: (inout ButtonRule) -> Void) {
         var list = rules.wrappedValue
         guard index < list.count else { return }
-        change(&list[index])
+        var candidate = list
+        change(&candidate[index])
+        // A change that would make this rule a repeat of an earlier one is refused, so what is shown is what runs.
+        if ButtonRuleCheck.shadowed(candidate).contains(index), !ButtonRuleCheck.shadowed(list).contains(index) {
+            mouse.lastError = "Another rule already uses that button, those keys and that trigger. Change one of them first."
+            return
+        }
+        mouse.lastError = nil
+        list = candidate
         rules.wrappedValue = list
     }
 
@@ -648,7 +764,7 @@ private struct MouseAppsTab: View {
                     Button { addApp() } label: { Label("Add App", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: {
-                Text("When one of these apps is in front, its preset is used instead of the device's. Kriya switches by itself as you change apps. An app with its own preset for a particular device would be set the same way, under that device.")
+                Text("When one of these apps is in front, its preset is used instead of the device's. Kriya switches by itself as you change apps. To give an app its own preset on one device only, open that device under Devices (Presets for apps on this device); that beats both the device's preset and the app's.")
             }
 
             Section {

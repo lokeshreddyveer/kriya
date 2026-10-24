@@ -49,9 +49,15 @@ enum DeviceIconState: String, Equatable {
 /// A device the person put in the menu bar. Saved by its unique name so it is found again after being unplugged.
 struct PinnedDevice: Codable, Equatable, Identifiable {
     var uid: String
+    /// The name shown (the person's own name for it, if they gave one).
     var name: String
     var input: Bool
+    /// The name the device gives itself. Finding a paired Bluetooth device uses this, not the name shown, which may be a nickname.
+    var hardwareName: String?
     var id: String { (input ? "in:" : "out:") + uid }
+
+    /// The name to look the device up by in the Bluetooth list.
+    var lookupName: String { hardwareName ?? name }
 
     static func adding(_ device: PinnedDevice, to list: [PinnedDevice]) -> [PinnedDevice] { list.contains { $0.id == device.id } ? list : list + [device] }
     static func removing(_ id: String, from list: [PinnedDevice]) -> [PinnedDevice] { list.filter { $0.id != id } }

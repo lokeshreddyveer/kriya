@@ -25,6 +25,8 @@ final class DeviceRegistry: ObservableObject {
     /// When a device was last used, and which device is in use now. Set by the app from the activity tracker.
     var lastUsedProvider: (String) -> Date? = { _ in nil }
     var activeDeviceID: () -> String? = { nil }
+    /// Who Kriya thinks is in use, with a longer memory than an event gets, for the live line on the Devices tab.
+    var activeAttribution: () -> DeviceAttribution.Result = { .none }
 
     private var history = ConnectionHistory()
     private var readings: [BatteryReading] = []

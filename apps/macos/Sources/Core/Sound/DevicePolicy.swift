@@ -27,6 +27,22 @@ enum DevicePolicy {
     /// The first device in the order of preference that is connected.
     static func best(among connected: Set<String>, priority: [String]) -> String? { priority.first { connected.contains($0) } }
 
+    // MARK: Devices that come back under another unique name
+
+    /// Some devices (Bluetooth, HDMI and aggregates especially) come back with a new unique name. A ranked device that is not
+    /// connected, whose saved device name matches exactly one connected device that is not in the list, is taken to be that device:
+    /// it keeps its place. Two candidates, or none, change nothing, so a guess is never made between two similar devices.
+    /// `savedNames` and `connectedNames` map unique names to the device's own name.
+    static func migrate(_ list: [String], savedNames: [String: String], connectedNames: [String: String]) -> [String] {
+        var result = list
+        for (index, uid) in list.enumerated() where connectedNames[uid] == nil {
+            guard let name = savedNames[uid], !name.isEmpty else { continue }
+            let candidates = connectedNames.filter { $0.value == name && !result.contains($0.key) }.map(\.key)
+            if candidates.count == 1 { result[index] = candidates[0] }
+        }
+        return result
+    }
+
     // MARK: Keeping the list
 
     /// The list with `uid` added at the end (once).

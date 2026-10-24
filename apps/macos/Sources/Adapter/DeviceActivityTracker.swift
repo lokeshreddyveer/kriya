@@ -7,8 +7,7 @@ import IOKit.hid
 /// in the same few hundredths of a second.
 final class DeviceActivityTracker {
     private let lock = NSLock()
-    private var lastID: String?          // guarded by lock
-    private var lastTimeNs: UInt64 = 0   // guarded by lock
+    private var lastTimes: [String: UInt64] = [:]   // guarded by lock: when each device last moved, scrolled or clicked
     private var lastUsedDates: [String: Date] = [:]   // guarded by lock
 
     private var thread: Thread?
@@ -16,7 +15,9 @@ final class DeviceActivityTracker {
     private var interfaceIDs: [UnsafeMutableRawPointer: String] = [:]   // used only on the tracker's thread
 
     /// Activity older than this is forgotten, so an event with no recent device falls back to the general settings.
-    private static let maxAgeNs: UInt64 = 300_000_000
+    static let maxAgeNs: UInt64 = 300_000_000
+    /// How far back the live line on the Devices tab looks, so a device moved a moment ago is still named.
+    static let testWindowNs: UInt64 = 1_500_000_000
 
     func start() {
         guard thread == nil else { return }
@@ -60,16 +61,23 @@ final class DeviceActivityTracker {
         runLoop = nil
         thread = nil
         lock.lock()
-        lastID = nil
+        lastTimes.removeAll()
         lock.unlock()
     }
 
-    /// The device that was active in the last few hundredths of a second, if any. Safe to call from any thread.
-    func currentDeviceID() -> String? {
+    /// Which device an event just now came from. If two devices were active in the same few hundredths of a second there is no telling
+    /// which, so the answer is "not sure" and the general settings are used rather than one device's by guesswork. Safe from any thread.
+    func attribution(maxAgeNs: UInt64 = DeviceActivityTracker.maxAgeNs) -> DeviceAttribution.Result {
         lock.lock()
         defer { lock.unlock() }
-        guard let lastID else { return nil }
-        return DispatchTime.now().uptimeNanoseconds &- lastTimeNs <= Self.maxAgeNs ? lastID : nil
+        let now = DispatchTime.now().uptimeNanoseconds
+        return DeviceAttribution.resolve(ages: lastTimes.mapValues { now &- $0 }, maxAge: maxAgeNs)
+    }
+
+    /// The device that was active in the last few hundredths of a second and was the only one, if any. Safe from any thread.
+    func currentDeviceID() -> String? {
+        if case .device(let id) = attribution() { return id }
+        return nil
     }
 
     /// When a device last moved, scrolled or clicked (since Kriya started). Safe to call from any thread.
@@ -82,9 +90,17 @@ final class DeviceActivityTracker {
     /// Lets tests say which device is active without any hardware.
     func simulateActivity(deviceID: String?) {
         lock.lock()
-        lastID = deviceID
-        lastTimeNs = DispatchTime.now().uptimeNanoseconds
-        if let deviceID { lastUsedDates[deviceID] = Date() }
+        lastTimes.removeAll()
+        if let deviceID { lastTimes[deviceID] = DispatchTime.now().uptimeNanoseconds; lastUsedDates[deviceID] = Date() }
+        lock.unlock()
+    }
+
+    /// Lets tests say that several devices are active at once.
+    func simulateActivity(deviceIDs: [String]) {
+        lock.lock()
+        lastTimes.removeAll()
+        let now = DispatchTime.now().uptimeNanoseconds
+        for id in deviceIDs { lastTimes[id] = now; lastUsedDates[id] = Date() }
         lock.unlock()
     }
 
@@ -96,6 +112,11 @@ final class DeviceActivityTracker {
     }
 
     fileprivate func removed(_ device: IOHIDDevice) {
+        if let id = interfaceIDs[Unmanaged.passUnretained(device).toOpaque()] {
+            lock.lock()
+            lastTimes[id] = nil
+            lock.unlock()
+        }
         interfaceIDs[Unmanaged.passUnretained(device).toOpaque()] = nil
     }
 
@@ -107,8 +128,7 @@ final class DeviceActivityTracker {
         guard IOHIDValueGetIntegerValue(value) != 0 else { return }
         let now = DispatchTime.now().uptimeNanoseconds
         lock.lock()
-        lastID = id
-        lastTimeNs = now
+        lastTimes[id] = now
         lastUsedDates[id] = Date()
         lock.unlock()
     }

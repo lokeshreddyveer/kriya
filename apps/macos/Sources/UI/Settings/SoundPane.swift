@@ -52,7 +52,7 @@ struct SoundPane: View {
             Section {
                 QuickConfigsSection()
             } header: { Text("Quick Configs") } footer: {
-                Text("A Quick Config saves the whole sound setup: the output and input, their volumes, every app's volume, mute, output and effects, and your favorites. Apply it from here, the menu-bar mixer or a shortcut (each one is listed in Keyboard › Shortcuts as “Quick Config: name”). Export one to move it to another Mac.")
+                Text("A Quick Config saves the mixer's setup: the output and input and their volumes, every app's volume, mute, output and effects, your favorites, menu-bar icons, boost and left-alone apps, the sound-effects output, the order of your devices, device names and icons, headphone corrections and how the mixer looks. Sound rules, places, MIDI and modes are kept separately (export them under Devices › Export Profile). Apply it from here, the menu-bar mixer or a shortcut (each one is listed in Keyboard › Shortcuts as “Quick Config: name”). Export one to move it to another Mac.")
             }
             Section {
                 ExcludedAppsSection()
@@ -86,8 +86,8 @@ struct SoundPane: View {
             }
             Section {
                 SoundHealthSection()
-            } header: { Text("Sound health") } footer: {
-                Text("The delay each output adds before sound reaches you, what Kriya's own processing adds for the apps it is changing, and anything that failed. Bluetooth always adds the most; a wired or USB output is the fix for lip-sync or playing along.")
+            } header: { Text("Sound health (estimates)") } footer: {
+                Text("The delay each output reports, one buffer for what Kriya's own processing adds to the apps it is changing, and anything that failed. These are the numbers the devices and the audio system report, not a measurement of the whole path to your ears; Bluetooth in particular can add more than it reports. Bluetooth always adds the most; a wired or USB output is the fix for lip-sync or playing along.")
             }
             Section {
                 DeviceExtrasSection()

@@ -35,7 +35,7 @@ final class MouseFeature: FeatureModule {
     private var appliedRevision = -1
 
     private let lock = NSLock()
-    private var swallowedReleases: Set<UInt32> = []   // guarded by lock
+    private var swallowedReleases = DeviceButtonSet()   // guarded by lock
     private var precisionActive = false               // guarded by lock
 
     init() {
@@ -52,7 +52,8 @@ final class MouseFeature: FeatureModule {
     func start(context: ServiceContext) throws {
         self.context = context
         context.activity.start()
-        token = context.events.subscribe(owner: "mouse", events: Self.eventTypes, mode: .active) { [weak self] type, event in
+        // After the drag tools (which take a press first), before everything else; see InputPrecedence.
+        token = context.events.subscribe(owner: "mouse", events: Self.eventTypes, mode: .active, priority: EventMonitor.mousePriority) { [weak self] type, event in
             self?.process(type: type, event: event) ?? .passThrough
         }
         if case .failed(let reason) = context.events.state {
@@ -156,9 +157,9 @@ final class MouseFeature: FeatureModule {
         case .scrollWheel:
             return handleScroll(event, compiled, nowMs: now)
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            return handleButton(down: true, event, compiled, nowMs: now)
+            return handleButton(down: true, event, compiled, nowMs: now, device: deviceID ?? "")
         case .leftMouseUp, .rightMouseUp, .otherMouseUp:
-            return handleButton(down: false, event, compiled, nowMs: now)
+            return handleButton(down: false, event, compiled, nowMs: now, device: deviceID ?? "")
         case .flagsChanged:
             handleModifiers(event, compiled)
             return .passThrough
@@ -294,7 +295,7 @@ final class MouseFeature: FeatureModule {
         run(payload.hold)
     }
 
-    private func handleButton(down: Bool, _ event: CGEvent, _ compiled: CompiledMouse, nowMs: UInt64) -> EventDisposition {
+    private func handleButton(down: Bool, _ event: CGEvent, _ compiled: CompiledMouse, nowMs: UInt64, device: String) -> EventDisposition {
         let button = UInt32(truncatingIfNeeded: event.getIntegerValueField(.mouseEventButtonNumber))
         let location = event.location
         let modifiers = KeyModifiers.bits(from: event.flags)
@@ -332,7 +333,7 @@ final class MouseFeature: FeatureModule {
         // ordinary click (its own click rule if it has one, otherwise the click the app would have had).
         if down, let hold = compiled.holdActions[key] {
             let id = holds.press(
-                button: button, location: location, flags: event.flags, nowMs: nowMs, holdMs: compiled.holdMs,
+                device: device, button: button, location: location, flags: event.flags, nowMs: nowMs, holdMs: compiled.holdMs,
                 payload: HoldPayload(hold: hold, click: compiled.buttonActions[key])
             )
             DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + .milliseconds(Int(compiled.holdMs))) { [weak self] in
@@ -341,7 +342,7 @@ final class MouseFeature: FeatureModule {
             return .drop
         }
         if !down {
-            switch holds.release(button: button) {
+            switch holds.release(device: device, button: button) {
             case .notTracked:
                 break
             case .afterHold:
@@ -357,12 +358,12 @@ final class MouseFeature: FeatureModule {
         defer { lock.unlock() }
         if down {
             if let action = compiled.buttonActions[key] {
-                swallowedReleases.insert(button)
+                swallowedReleases.insert(button: button, device: device)
                 if InteractionTrace.shared.isRecording { traceLater("ran its click rule", button: button) }
                 run(action)
                 return .drop
             }
-        } else if swallowedReleases.remove(button) != nil {
+        } else if swallowedReleases.remove(button: button, device: device) {
             return .drop
         }
         return .passThrough

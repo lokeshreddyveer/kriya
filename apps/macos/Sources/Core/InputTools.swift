@@ -9,8 +9,11 @@ enum RuleSimulator {
         let notes: [String]
     }
 
-    static func simulate(_ settings: MouseSettings, button: UInt32, modifiers: UInt64, held: Bool, actionName: (String) -> String) -> Result {
+    static func simulate(_ settings: MouseSettings, button: UInt32, modifiers: UInt64, held: Bool, dragToolsUseIt: Bool = false, actionName: (String) -> String) -> Result {
         var notes: [String] = []
+        if dragToolsUseIt {
+            notes.append("A drag tool (Drag tab) uses this button with these keys and takes the press first, so a rule for it only runs when the drag tool is switched off.")
+        }
         let wanted: ButtonTrigger = held ? .hold : .click
         let exact = settings.buttons.filter { $0.button == button && $0.modifiers == modifiers && $0.trigger == wanted }
         if settings.gestures.enabled && settings.gestures.activationButton == button && modifiers == 0 {

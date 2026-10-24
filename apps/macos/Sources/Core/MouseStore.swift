@@ -31,7 +31,8 @@ struct CompiledMouse {
         for rule in settings.buttons {
             guard let action = actions[rule.actionId] else { continue }
             let key = ButtonKey(button: rule.button, modifiers: rule.modifiers)
-            if rule.trigger == .hold { holds[key] = action } else { buttons[key] = action }
+            // The first rule for a button, keys and trigger is the one that runs, the same one the rule simulator names.
+            if rule.trigger == .hold { if holds[key] == nil { holds[key] = action } } else if buttons[key] == nil { buttons[key] = action }
         }
         buttonActions = buttons
         holdActions = holds
@@ -334,6 +335,17 @@ final class MouseStore: ObservableObject {
         lock.lock()
         defer { lock.unlock() }
         return snapshot.revision
+    }
+
+    /// What the mouse rules want from a button press, for the drag tools to check before they take it. Excluded when the app in front is
+    /// left alone. Safe to call from the event tap's thread.
+    func claims(button: UInt32, modifiers: UInt64, device: String?) -> ButtonClaims {
+        guard let compiled = compiled(forDevice: device) else { return ButtonClaims(excluded: true) }
+        let key = ButtonKey(button: button, modifiers: modifiers)
+        return ButtonClaims(
+            gesture: compiled.gestureConfig.activationButton == button && modifiers == 0,
+            hold: compiled.holdActions[key] != nil,
+            click: compiled.buttonActions[key] != nil)
     }
 
     /// The settings to use for a device right now, or `nil` when Kriya should leave the mouse alone (the app in front is

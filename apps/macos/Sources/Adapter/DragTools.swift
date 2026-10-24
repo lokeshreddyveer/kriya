@@ -10,7 +10,13 @@ final class DragTools {
     private let store: DragToolsStore
     private let windowStore: WindowStore
     private let run: (String) -> Void
+    /// Whether the drag tools may start something now: Mouse & Trackpad is on for the app in front, which is not one left alone.
+    private let isActive: () -> Bool
+    /// What the mouse rules want from a button with these keys, so a double-click rule gives way to a gesture or hold rule on the same
+    /// button (see `InputPrecedence`).
+    private let mouseClaims: (UInt32, UInt64) -> ButtonClaims
     private var token: EventMonitor.Token?
+    private var wakeObserver: NSObjectProtocol?
     private let autoScroll = AutoScroll()
     private let autoMarker = AutoScrollMarker()
     // Used only on `work`.
@@ -58,23 +64,49 @@ final class DragTools {
         .mouseMoved, .flagsChanged, .scrollWheel, .keyDown,
     ]
 
-    init(events: EventMonitor, store: DragToolsStore, windowStore: WindowStore, run: @escaping (String) -> Void) {
+    init(events: EventMonitor, store: DragToolsStore, windowStore: WindowStore, run: @escaping (String) -> Void,
+         isActive: @escaping () -> Bool = { true }, mouseClaims: @escaping (UInt32, UInt64) -> ButtonClaims = { _, _ in ButtonClaims() }) {
         self.events = events
         self.store = store
         self.windowStore = windowStore
         self.run = run
+        self.isActive = isActive
+        self.mouseClaims = mouseClaims
         autoScroll.onStop = { [weak self] reason in self?.autoScrollStopped(reason) }
     }
 
     func start() {
         guard token == nil else { return }
-        token = events.subscribe(owner: "drag.tools", events: Self.types, mode: .active) { [weak self] type, event in
+        token = events.subscribe(owner: "drag.tools", events: Self.types, mode: .active, priority: EventMonitor.dragToolsPriority) { [weak self] type, event in
             self?.handle(type, event) ?? .passThrough
+        }
+        // Sleep can end a press or a drag without the release ever arriving.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.reset() }
+    }
+
+    /// Forgets any press, drag, glide or auto-scroll in progress, so nothing waits for a release that was lost.
+    func reset() {
+        autoScroll.stop(.disabled)
+        lock.lock()
+        phase = .idle
+        following = false
+        gliding = false
+        wheelButton = nil
+        wheelScrolled = false
+        swallowUp.removeAll()
+        lastDown.removeAll()
+        lock.unlock()
+        work.async { [self] in
+            stopGlide()
+            moves.removeAll()
+            window = nil
         }
     }
 
     func stop() {
         autoScroll.stop(.disabled)
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        wakeObserver = nil
         if let token { events.unsubscribe(token) }
         token = nil
         lock.lock()
@@ -90,8 +122,24 @@ final class DragTools {
 
     // MARK: Events (on the tap's thread)
 
-    private func handle(_ type: CGEventType, _ event: CGEvent) -> EventDisposition {
+    func handle(_ type: CGEventType, _ event: CGEvent) -> EventDisposition {
         let config = store.current
+        // Mouse & Trackpad off, or the app in front left alone: nothing new starts, and anything running stops. A press that was already
+        // taken still finishes below, so no release is left waiting.
+        if !isActive() {
+            if autoScroll.isActive { autoScroll.stop(.disabled) }
+            switch type {
+            case .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown, .mouseMoved: return .passThrough
+            case .flagsChanged:
+                lock.lock()
+                let active = following
+                following = false
+                lock.unlock()
+                if active { work.async { [self] in window = nil } }
+                return .passThrough
+            default: break
+            }
+        }
         switch type {
         case .flagsChanged:
             handleFlags(event, config)
@@ -166,7 +214,9 @@ final class DragTools {
         }
 
         // A second quick click of a button runs an action. The first click was an ordinary click.
-        if let binding = config.doubleClicks.first(where: { $0.button == number && $0.modifiers == held }) {
+        // A gesture or hold rule on the same button comes first (InputPrecedence); the double-click rule then does not take it.
+        if let binding = config.doubleClicks.first(where: { $0.button == number && $0.modifiers == held }),
+           InputPrecedence.doubleClickMayAct(mouseClaims(number, held)) {
             let now = DispatchTime.now().uptimeNanoseconds / 1_000_000
             lock.lock()
             let previous = lastDown[number]

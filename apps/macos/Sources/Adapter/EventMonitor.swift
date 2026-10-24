@@ -43,6 +43,7 @@ final class EventMonitor: ObservableObject {
         let owner: String
         let mask: CGEventMask
         let mode: Mode
+        let priority: Int
         let handler: Handler
     }
 
@@ -71,11 +72,23 @@ final class EventMonitor: ObservableObject {
 
     // MARK: Subscribing
 
+    /// The drag tools take a mouse press before the mouse rules see it, and the mouse rules before everyone else. Higher goes first;
+    /// features with no priority keep the order they subscribed in, after these.
+    static let dragToolsPriority = 20
+    static let mousePriority = 10
+
+    /// Where a new subscriber goes: before the first one with a lower priority, so equal priorities stay in the order they arrived.
+    static func insertionIndex(existing priorities: [Int], priority: Int) -> Int {
+        priorities.firstIndex(where: { $0 < priority }) ?? priorities.count
+    }
+
     @discardableResult
-    func subscribe(owner: String, events: [CGEventType], mode: Mode, handler: @escaping Handler) -> Token {
+    func subscribe(owner: String, events: [CGEventType], mode: Mode, priority: Int = 0, handler: @escaping Handler) -> Token {
         let token = Token()
+        let new = Subscription(token: token, owner: owner, mask: Self.mask(events), mode: mode, priority: priority, handler: handler)
         lock.lock()
-        subscriptions.append(Subscription(token: token, owner: owner, mask: Self.mask(events), mode: mode, handler: handler))
+        // Before the first one with a lower priority; equal priorities stay in the order they arrived.
+        subscriptions.insert(new, at: Self.insertionIndex(existing: subscriptions.map(\.priority), priority: priority))
         lock.unlock()
         reconfigure()
         return token

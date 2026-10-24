@@ -83,6 +83,22 @@ struct QuickConfig: Codable, Equatable, Identifiable {
     /// By app (or "system"). Only apps with something set are here.
     var apps: [String: AppAudioSettings] = [:]
     var favorites: [String] = []
+    // Added later, so a setup saved or exported before them still loads: each is nil when the setup did not include it.
+    /// The apps that have their own icon in the menu bar, the apps allowed past 100%, and the apps Kriya leaves alone.
+    var menuBarApps: [String]?
+    var boostApps: [String]?
+    var excludedApps: [String]?
+    /// Where alerts and other sound effects play.
+    var effectsUID: String?
+    /// The order of preference for outputs and inputs.
+    var outputPriority: [String]?
+    var inputPriority: [String]?
+    /// Headphone corrections by device, and the names, icons and hidden devices.
+    var autoEQ: [String: AutoEQ.Saved]?
+    var deviceLabels: [String: DeviceLabel]?
+    /// How the mixer looks: rows and appearance.
+    var mixerDensity: String?
+    var mixerAppearance: String?
 
     static let formatName = "kriya-quick-configs"
     static let maxConfigs = 50

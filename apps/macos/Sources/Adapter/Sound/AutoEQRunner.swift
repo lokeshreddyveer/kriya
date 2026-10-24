@@ -3,25 +3,28 @@ import Foundation
 
 /// Headphone correction that follows the output. A correction is fitted once from an AutoEq file (or a curve) and saved against the
 /// device; whenever that device becomes the output it is put on "All sound", and it comes off again when the output moves to a device
-/// that has none. Nothing is sent anywhere: files are read from this Mac, or fetched only when the person asks and Local-only is off.
+/// that has none, putting back exactly what "All sound" had before. Nothing is sent anywhere: files are read from this Mac.
 final class AutoEQRunner: ObservableObject {
     static let shared = AutoEQRunner()
     private static let key = "soundAutoEQ.v1"
+    private static let appliedKey = "soundAutoEQ.applied.v1"
 
-    struct Stored: Codable, Equatable {
-        var name: String
-        var correction: AutoEQ.Correction
-    }
+    typealias Stored = AutoEQ.Saved
 
     /// Corrections by device unique name.
     @Published private(set) var stored: [String: Stored]
-    @Published private(set) var appliedTo: String?
+    /// The device whose correction is on now, and what "All sound" had before it. Kept across launches, so a correction that was on when
+    /// Kriya quit is still taken off properly.
+    @Published private(set) var applied: AutoEQ.Applied?
     weak var engine: AppAudioEngine?
     private var started = false
     private var listener: (AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)?
 
+    var appliedTo: String? { applied?.uid }
+
     private init() {
         stored = UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([String: Stored].self, from: $0) } ?? [:]
+        applied = UserDefaults.standard.data(forKey: Self.appliedKey).flatMap { try? JSONDecoder().decode(AutoEQ.Applied.self, from: $0) }
     }
 
     var isActive: Bool { started }
@@ -46,8 +49,7 @@ final class AutoEQRunner: ObservableObject {
     func set(_ correction: AutoEQ.Correction, name: String, for uid: String) {
         stored[uid] = Stored(name: name, correction: correction)
         persist()
-        if appliedTo == uid { appliedTo = nil }   // re-applied below with the new numbers
-        follow()
+        follow(force: appliedTo == uid)
     }
 
     func remove(_ uid: String) {
@@ -56,28 +58,50 @@ final class AutoEQRunner: ObservableObject {
         follow()
     }
 
+    /// Puts a whole set of corrections in place (a Quick Config being applied) and brings the equaliser in line with the output.
+    func replaceAll(_ next: [String: Stored]) {
+        stored = next
+        persist()
+        follow(force: true)
+    }
+
     private func persist() {
         if let data = try? JSONEncoder().encode(stored) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 
-    /// Looks at the current output and puts the matching correction on, or takes ours off.
-    func follow() {
+    private func saveApplied() {
+        if let applied, let data = try? JSONEncoder().encode(applied) { UserDefaults.standard.set(data, forKey: Self.appliedKey) }
+        else { UserDefaults.standard.removeObject(forKey: Self.appliedKey) }
+    }
+
+    /// Looks at the current output and puts the matching correction on, or takes ours off. `force` puts the correction on again with its
+    /// current numbers even if it is already on.
+    func follow(force: Bool = false) {
         guard started, let engine else { return }
         let current = AudioControl.shared.defaultOutputUID()
-        switch AutoEQ.plan(applied: appliedTo, current: current, corrections: stored.mapValues(\.correction)) {
+        var plan = AutoEQ.plan(applied: force ? nil : appliedTo, current: current, corrections: stored.mapValues(\.correction))
+        if plan == nil, force, appliedTo != nil { plan = .clear }   // forced, and this output has no correction (any more)
+        switch plan {
         case .apply(let uid, let correction)?:
+            // What "All sound" had is kept once, when the first correction goes on; going from one corrected device to another keeps it.
+            let before = applied?.previous ?? Self.snapshot(engine.current(AppAudioEngine.systemKey))
             engine.update(AppAudioEngine.systemKey) { $0.eq = correction.gains; $0.preamp = correction.preampDB; $0.effectsBypassed = false }
-            appliedTo = uid
+            applied = AutoEQ.Applied(uid: uid, previous: before)
+            saveApplied()
             FeatureActivity.shared.changed("soundDevices", "Headphone correction on for \(stored[uid]?.name ?? "this device")")
         case .clear?: clear()
         case nil: break
         }
     }
 
+    static func snapshot(_ s: AppAudioSettings) -> AutoEQ.Previous { AutoEQ.Previous(eq: s.eq, preamp: s.preamp, effectsBypassed: s.effectsBypassed) }
+
     private func clear() {
-        guard appliedTo != nil, let engine else { appliedTo = nil; return }
-        engine.update(AppAudioEngine.systemKey) { $0.eq = EQPreset.flat.gains; $0.preamp = 0 }
-        appliedTo = nil
+        guard let applied, let engine else { self.applied = nil; saveApplied(); return }
+        let before = applied.previous
+        engine.update(AppAudioEngine.systemKey) { $0.eq = before.eq; $0.preamp = before.preamp; $0.effectsBypassed = before.effectsBypassed }
+        self.applied = nil
+        saveApplied()
     }
 
     // MARK: Reading a file

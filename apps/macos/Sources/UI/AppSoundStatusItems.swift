@@ -19,6 +19,8 @@ final class AppSoundStatusItems: NSObject, NSPopoverDelegate {
         super.init()
         engine.$menuBarApps.receive(on: DispatchQueue.main).sink { [weak self] list in self?.sync(list) }.store(in: &cancellables)
         engine.$settings.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshIcons() }.store(in: &cancellables)
+        // A timed mute starts and ends without the app's settings changing, so the icon follows it separately.
+        engine.$timed.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshIcons() }.store(in: &cancellables)
     }
 
     private func sync(_ keys: [String]) {

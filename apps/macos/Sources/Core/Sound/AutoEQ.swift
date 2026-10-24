@@ -203,6 +203,27 @@ enum AutoEQ {
         return Float(min(fromFile, -max(boost, 0)).clamped(to: -12...12))
     }
 
+    // MARK: Saving
+
+    /// A correction kept against a device, with the name shown for it.
+    struct Saved: Codable, Equatable {
+        var name: String
+        var correction: Correction
+    }
+
+    /// What "All sound" had before a correction went on, so it can be put back exactly when the correction comes off.
+    struct Previous: Codable, Equatable {
+        var eq: [Float]
+        var preamp: Float
+        var effectsBypassed: Bool
+    }
+
+    /// What is kept while a correction is on: the device it is for, and what to put back.
+    struct Applied: Codable, Equatable {
+        var uid: String
+        var previous: Previous
+    }
+
     // MARK: Following the output
 
     /// What to do with the equaliser when the output changes: put a device's correction on when it becomes the output, and take it

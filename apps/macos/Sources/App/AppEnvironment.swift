@@ -79,6 +79,7 @@ final class AppEnvironment {
     private var keyboardCancellable: AnyCancellable?
     let dragTools: DragTools
     private var dragCancellable: AnyCancellable?
+    private var dragFeatureCancellable: AnyCancellable?
     private var pointerMenuCancellable: AnyCancellable?
     let pointerEffects: PointerEffects
     let links: LinkRouter
@@ -168,7 +169,14 @@ final class AppEnvironment {
             guard let executor, let saved = library?.actions.first(where: { $0.id == id }) else { return }
             Task { _ = await executor.perform(saved.action) }
         }
-        let dragTools = DragTools(events: events, store: dragStore, windowStore: windows, run: runIdentifier)
+        // The drag tools belong to Mouse & Trackpad: they do nothing while it is off for the app in front (off, or an app left alone), and
+        // they give way to a gesture or hold rule on the same button.
+        let dragTools = DragTools(
+            events: events, store: dragStore, windowStore: windows, run: runIdentifier,
+            isActive: { [weak profiles, weak mouse] in profiles?.isFeatureActive(.mouse) == true && mouse?.compiled(forDevice: nil) != nil },
+            mouseClaims: { [weak mouse, weak activity] button, modifiers in
+                mouse?.claims(button: button, modifiers: modifiers, device: activity?.currentDeviceID()) ?? ButtonClaims()
+            })
         let workspaces = WorkspaceController(
             store: workspaceStore, windowController: windowController, windows: windows, executor: executor,
             isEnabled: { [weak config] in config?.isEnabled(.windowManagement) == true }
@@ -432,11 +440,12 @@ final class AppEnvironment {
         }
         dragCancellable = dragStore.$config.receive(on: DispatchQueue.main).sink { [weak self] config in
             guard let self else { return }
-            if (config.scrollEnabled || config.followModifier != 0 || !config.doubleClicks.isEmpty || !config.buttonScrolls.isEmpty), self.permissions.isGranted(.inputMonitoring), !self.crashGuard.isSafeMode {
-                self.dragTools.start()
-            } else {
-                self.dragTools.stop()
-            }
+            self.updateDragTools(config)
+        }
+        // Switching Mouse & Trackpad on or off starts and stops the drag tools with it.
+        dragFeatureCancellable = self.config.$settings.map { $0.enabledFeatures.contains(.mouse) }.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            guard let self else { return }
+            self.updateDragTools(self.dragStore.config)
         }
         // The pointer menu opens from any shortcut, button or gesture that runs these commands.
         for (command, appOnly) in [("menu.pointer", false), ("menu.app", true)] {
@@ -493,6 +502,7 @@ final class AppEnvironment {
         sources.intelligence = intelligence
         sources.tools = launcherTools
         devices.activeDeviceID = { [weak activity] in activity?.currentDeviceID() }
+        devices.activeAttribution = { [weak activity] in activity?.attribution(maxAgeNs: DeviceActivityTracker.testWindowNs) ?? .none }
         devices.lastUsedProvider = { [weak activity] id in activity?.lastUsed(id) }
         clipboard.quick.extraMenuActions = { [weak intelligence, weak clipboard] item in
             guard !item.sensitive, item.kind == .text || item.kind == .richText || item.kind == .url,
@@ -653,6 +663,16 @@ extension AppEnvironment {
     }
 
     /// Shortcut-ready commands for the sound mixer: the app in front, timed mutes, saved setups and the devices.
+    /// Starts the drag tools' event handler when a tool needs it (auto-scroll included), Input Monitoring is allowed, safe mode is off
+    /// and Mouse & Trackpad is on; stops it otherwise.
+    fileprivate func updateDragTools(_ drag: DragToolsConfig) {
+        if DragToolsActivation.shouldRun(drag, inputMonitoring: permissions.isGranted(.inputMonitoring), safeMode: crashGuard.isSafeMode, mouseOn: config.isEnabled(.mouse)) {
+            dragTools.start()
+        } else {
+            dragTools.stop()
+        }
+    }
+
     fileprivate func registerSoundCommands() {
         let engine = appAudio
         func onFront(_ change: @escaping (AppAudioEngine, String) -> Void) -> () -> Void {

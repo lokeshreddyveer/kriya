@@ -47,15 +47,17 @@ final class AudioSession {
     /// set of processes or a different output does.
     struct Signature: Equatable {
         var processes: [AudioObjectID]
+        /// For the all-sound tap only: the processes left out of it (Kriya's own, and every app that has a tap of its own).
+        var excluded: [AudioObjectID]
         var outputs: [String]
     }
     private(set) var signature: Signature?
 
     /// If this session is already running for exactly these processes and outputs, only the settings are changed (which is instant and
     /// silent) and true is returned. Otherwise nothing is done and the caller starts it again.
-    func updateIfRunning(processes: [AudioObjectID], outputs: [String], settings: AppAudioSettings) -> Bool {
+    func updateIfRunning(processes: [AudioObjectID], excluded: [AudioObjectID], outputs: [String], settings: AppAudioSettings) -> Bool {
         guard procID != nil, tapID != kAudioObjectUnknown, aggregateID != kAudioObjectUnknown,
-              signature == Signature(processes: processes.sorted(), outputs: outputs) else { return false }
+              signature == Signature(processes: processes.sorted(), excluded: processes.isEmpty ? excluded.sorted() : [], outputs: outputs) else { return false }
         apply(settings)
         return true
     }
@@ -122,23 +124,48 @@ final class AudioSession {
         guard status == noErr, let procID else { stop(); return fail("The sound could not be redirected (\(status)).") }
         status = AudioDeviceStart(aggregate, procID)
         guard status == noErr else { stop(); return fail("The sound could not be started (\(status)).") }
-        signature = Signature(processes: processes.sorted(), outputs: uids)
+        signature = Signature(processes: processes.sorted(), excluded: processes.isEmpty ? own.sorted() : [], outputs: uids)
         failure = nil
         return nil
     }
 
+    /// "All sound" volume and mute, for an app that has a tap of its own (the all-sound tap does not hear it, so the master level
+    /// reaches it here). Always 1 and not muted for the all-sound session itself.
+    private var master = (gain: 1.0, muted: false)
+    private var lastSettings = AppAudioSettings()
+    private var temporary: Float = 1
+    private var masterTemporary: Float = 1
+
+    func setMaster(gain: Double, muted: Bool) {
+        guard master.gain != gain || master.muted != muted else { return }
+        master = (gain, muted)
+        apply(lastSettings)
+    }
+
+    func setMasterTemporary(_ factor: Float) {
+        masterTemporary = factor
+        processor.tempGain = SoundMaster.temporary(app: temporary, master: masterTemporary)
+    }
+
     func apply(_ settings: AppAudioSettings) {
+        lastSettings = settings
         let s = settings.clamped
         let effects = !s.effectsBypassed
-        processor.targetGain = Float(s.volume)
-        processor.muted = s.muted
+        processor.targetGain = Float(SoundMaster.gain(app: s.volume, master: master.gain, maxVolume: AppAudioSettings.maxVolume))
+        processor.muted = SoundMaster.isMuted(app: s.muted, master: master.muted)
         processor.preampGain = effects ? SoundBalance.preampGain(db: s.preamp + (s.magicBoost ? MagicBoost.preampDB : 0)) : 1
         processor.balance = effects ? s.balance : 0
         processor.setEQ(gains: effects ? (s.magicBoost ? MagicBoost.gains(over: s.eq) : s.eq) : EQPreset.flat.gains, sampleRate: Float(sampleRate()))
     }
 
     /// A timed mute or turn-down on top of the settings.
-    func setTemporary(_ factor: Float) { processor.tempGain = factor }
+    func setTemporary(_ factor: Float) {
+        temporary = factor
+        processor.tempGain = SoundMaster.temporary(app: temporary, master: masterTemporary)
+    }
+
+    /// The sample rate the session's device is running at, which an effect chain has to be built for.
+    var sampleRateInUse: Double { sampleRate() }
 
     func setChain(_ chain: AudioUnitChain?) { processor.setChain(chain) }
 
@@ -278,6 +305,7 @@ final class AppAudioEngine: ObservableObject {
     private var lastPlayed: [String: Date] = [:]
     private var tick: Timer?
     private var chains: [String: AudioUnitChain] = [:]
+    private var chainRates: [String: Double] = [:]
     /// Audio Unit effects kept near the top of the list of effects to add.
     @Published private(set) var favoritePlugins: [String]
     /// Apps with an icon of their own in the menu bar.
@@ -297,10 +325,50 @@ final class AppAudioEngine: ObservableObject {
     @available(macOS 14.2, *)
     private func session(_ key: String) -> AudioSession? { sessions[key] as? AudioSession }
 
+    private var tearingDown = false
+
     private func stopSession(_ key: String) {
         if #available(macOS 14.2, *) { session(key)?.stop() }
         sessions[key] = nil
         chains[key] = nil
+        chainRates[key] = nil
+        // An app that no longer has a tap of its own is heard by the all-sound tap again.
+        if key != Self.systemKey, !tearingDown { resyncSystemIfHandledChanged() }
+    }
+
+    /// The processes handled by apps' own taps when the all-sound tap was last checked.
+    private var lastHandled: [AudioObjectID] = []
+
+    /// Only when the apps that have a tap of their own have changed does the all-sound tap need another look; a slider moving does not.
+    private func resyncSystemIfHandledChanged() {
+        let now = Array(Set(processesHandledByApps().flatMap { $0 })).sorted()
+        guard now != lastHandled else { return }
+        lastHandled = now
+        resyncSystemSession()
+    }
+
+    /// The processes an app's own tap handles, which the all-sound tap must leave out so nothing is processed or played twice.
+    private func processesHandledByApps() -> [[AudioObjectID]] {
+        guard #available(macOS 14.2, *) else { return [] }
+        return sessions.compactMap { key, object in key == Self.systemKey ? nil : (object as? AudioSession)?.signature?.processes }
+    }
+
+    /// Makes the all-sound session leave out exactly the apps that have a tap of their own (it is only rebuilt if that set changed).
+    private func resyncSystemSession() {
+        guard settings[Self.systemKey] != nil || timed[Self.systemKey] != nil || sessions[Self.systemKey] != nil else { return }
+        applyOne(Self.systemKey)
+    }
+
+    /// "All sound" volume and mute, and its timed change, as the apps with their own tap get them.
+    private func pushMaster() {
+        guard #available(macOS 14.2, *) else { return }
+        let all = current(Self.systemKey)
+        let factor = timed[Self.systemKey]?.factor(at: Date()) ?? 1
+        for (key, object) in sessions where key != Self.systemKey {
+            guard let session = object as? AudioSession else { continue }
+            session.setMaster(gain: all.volume, muted: all.muted)
+            session.setMasterTemporary(factor)
+        }
     }
 
     private func peak(of key: String) -> Float {
@@ -334,7 +402,9 @@ final class AppAudioEngine: ObservableObject {
 
     func stopAll() {
         timer?.invalidate(); timer = nil
+        tearingDown = true
         for key in Array(sessions.keys) { stopSession(key) }
+        tearingDown = false
         writeNow()
     }
 
@@ -443,6 +513,7 @@ final class AppAudioEngine: ObservableObject {
     private func endTemporary(_ key: String) {
         if #available(macOS 14.2, *) { session(key)?.setTemporary(1) }
         if current(key).isDefault { stopSession(key); problems[key] = nil }
+        if key == Self.systemKey { pushMaster() }
     }
 
     private func startTick() {
@@ -458,6 +529,7 @@ final class AppAudioEngine: ObservableObject {
             if change.isFinished(at: now) { timed[key] = nil; endTemporary(key); continue }
             if #available(macOS 14.2, *) { session(key)?.setTemporary(change.factor(at: now)) }
         }
+        if timed[Self.systemKey] != nil { pushMaster() }
         if timed.isEmpty { tick?.invalidate(); tick = nil }
     }
 
@@ -468,13 +540,15 @@ final class AppAudioEngine: ObservableObject {
         guard #available(macOS 14.2, *), let session = session(key) else { return }
         let refs = current(key).plugins
         if refs.isEmpty { session.setChain(nil); chains[key] = nil; return }
-        if let chain = chains[key], chain.slots.map(\.id) == refs.map(\.id) {
+        if let chain = chains[key], chain.slots.map(\.id) == refs.map(\.id), chainRates[key] == session.sampleRateInUse {
             for ref in refs { chain.setBypassed(ref.id, ref.bypassed) }
             return
         }
-        let rate = AudioControl.shared.defaultDevice(input: false).flatMap { AudioControl.shared.sampleRate(of: $0) } ?? 48_000
+        // Built for the rate the session's own output is running at (the output this app is sent to, not the Mac's default one).
+        let rate = session.sampleRateInUse
         let chain = AudioUnitChain(sampleRate: rate)
         chains[key] = chain
+        chainRates[key] = rate
         chain.load(refs) { [weak self, weak session] failed in
             guard let self, self.chains[key] === chain else { return }
             session?.setChain(chain)
@@ -542,6 +616,23 @@ final class AppAudioEngine: ObservableObject {
 
     // MARK: Whole setups
 
+    /// The menu-bar icons, the apps allowed past 100% and the apps left alone, as a saved setup had them. Done before the apps' own
+    /// settings are put back, because taking boost away from an app also brings its volume back down to 100%.
+    func restoreSetup(menuBarApps wanted: [String]?, boost: [String]?, excluded wantedExcluded: [String]?) {
+        if let boost {
+            for key in boostApps.subtracting(boost) { setBoost(key, false) }
+            for key in boost { setBoost(key, true) }
+        }
+        if let wanted {
+            for key in menuBarApps where !wanted.contains(key) { setMenuBarIcon(key, false) }
+            for key in wanted { setMenuBarIcon(key, true) }
+        }
+        if let wantedExcluded {
+            for key in excluded.subtracting(wantedExcluded) { setExcluded(key, false) }
+            for key in wantedExcluded where !excluded.contains(key) { setExcluded(key, true) }
+        }
+    }
+
     /// Puts every app back to exactly what a saved setup had, and its favorites.
     func replaceAll(settings next: [String: AppAudioSettings], favorites list: [String]) {
         let clean = next.mapValues(\.clamped).filter { !$0.value.isDefault }
@@ -603,7 +694,14 @@ final class AppAudioEngine: ObservableObject {
         AudioProcessList.read().filter { AudioProcessList.groupKey(for: $0) == key }.map(\.object)
     }
 
+    /// Starts, changes or stops the tap for one app (or for all sound), and keeps the all-sound tap and the master level in step.
     private func applySession(for key: String) {
+        applyOne(key)
+        if key != Self.systemKey { resyncSystemIfHandledChanged() }
+        pushMaster()
+    }
+
+    private func applyOne(_ key: String) {
         let s = current(key)
         if excluded.contains(key) { stopSession(key); problems[key] = nil; return }
         if s.isDefault, timed[key] == nil {
@@ -619,13 +717,15 @@ final class AppAudioEngine: ObservableObject {
         // and the sound drops out while it happens) is what made the drag slow and crackly; when nothing but a setting changed, only
         // the setting is changed.
         let outputs = s.outputs.isEmpty ? [AudioControl.shared.defaultOutputUID()].compactMap { $0 } : s.outputs
-        if session.updateIfRunning(processes: targets, outputs: outputs, settings: s) {
+        // The all-sound tap leaves out Kriya itself and every app that has a tap of its own, so those are not processed twice.
+        let excluding = key == Self.systemKey ? SoundMaster.excludedFromAllSound(own: ownProcess(), handledByApps: processesHandledByApps()) : ownProcess()
+        if session.updateIfRunning(processes: targets, excluded: excluding, outputs: outputs, settings: s) {
             problems[key] = nil
             if let change = timed[key] { session.setTemporary(change.factor(at: Date())) }
             syncChain(for: key)
             return
         }
-        if let error = session.start(processes: targets, excluding: ownProcess(), outputs: s.outputs, settings: s) {
+        if let error = session.start(processes: targets, excluding: excluding, outputs: s.outputs, settings: s) {
             problems[key] = error
             stopSession(key)
         } else {

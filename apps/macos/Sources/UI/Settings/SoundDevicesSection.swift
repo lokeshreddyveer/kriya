@@ -69,8 +69,8 @@ struct SoundDevicesSection: View {
     // MARK: One device
 
     private func row(_ device: AudioDevice) -> some View {
-        let pins = [device.isOutput ? PinnedDevice(uid: device.uid, name: names.name(for: device), input: false) : nil,
-                    device.isInput ? PinnedDevice(uid: device.uid, name: names.name(for: device), input: true) : nil].compactMap { $0 }
+        let pins = [device.isOutput ? PinnedDevice(uid: device.uid, name: names.name(for: device), input: false, hardwareName: device.name) : nil,
+                    device.isInput ? PinnedDevice(uid: device.uid, name: names.name(for: device), input: true, hardwareName: device.name) : nil].compactMap { $0 }
         return HStack(spacing: 10) {
             Image(systemName: device.isInput && !device.isOutput ? "mic" : "speaker.wave.2").foregroundStyle(.secondary).frame(width: 20)
             VStack(alignment: .leading, spacing: 1) {
@@ -174,7 +174,7 @@ struct SoundHealthSection: View {
             HStack {
                 Text(entry.name)
                 Spacer()
-                Text(String(format: "%.0f ms", entry.details.latencyMilliseconds)).monospacedDigit().foregroundStyle(.secondary)
+                Text(String(format: "about %.0f ms", entry.details.latencyMilliseconds)).monospacedDigit().foregroundStyle(.secondary)
                 Text(entry.details.transport.title).font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -182,7 +182,7 @@ struct SoundHealthSection: View {
             HStack {
                 Text(key == AppAudioEngine.systemKey ? "All sound" : AudioProcessList.name(for: key))
                 Spacer()
-                Text(String(format: "+%.0f ms from Kriya", ms)).monospacedDigit().foregroundStyle(.secondary)
+                Text(String(format: "about +%.0f ms from Kriya", ms)).monospacedDigit().foregroundStyle(.secondary)
             }
         }
         ForEach(engine.problems.sorted { $0.key < $1.key }, id: \.key) { key, text in
