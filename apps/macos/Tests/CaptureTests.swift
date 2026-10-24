@@ -267,14 +267,22 @@ final class ScreenCaptureServiceTests: XCTestCase {
     }
 
     func testWithoutPermissionNothingIsCapturedAndPermissionIsRequested() {
-        var asked = 0
+        var asked = 0, explained = 0
+        let saved = UserDefaults.standard.object(forKey: ScreenCaptureService.askedKey)
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: ScreenCaptureService.askedKey) } else { UserDefaults.standard.removeObject(forKey: ScreenCaptureService.askedKey) } }
+        UserDefaults.standard.removeObject(forKey: ScreenCaptureService.askedKey)
         service.hasPermission = { false }
         service.requestPermission = { asked += 1 }
+        service.onMissingPermission = { explained += 1 }
         service.capturer = { [unowned self] in fakePicture($0) }
         service.capture(.screen)
-        XCTAssertEqual(asked, 1)
+        XCTAssertEqual(asked, 1, "the first time macOS's own question is shown")
+        XCTAssertEqual(explained, 0, "and nothing else competes with it")
         XCTAssertTrue(calls.isEmpty)
         XCTAssertFalse(service.isCapturing)
+        service.capture(.screen)
+        XCTAssertEqual(asked, 1, "macOS does not ask twice")
+        XCTAssertEqual(explained, 1, "so the second time Kriya explains once, with the Settings button")
     }
 
     func testTheEditorGetsThePictureAndCancellingKeepsNothing() {

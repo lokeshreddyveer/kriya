@@ -248,9 +248,16 @@ struct AppsPane: View {
     private static func source(of update: AppUpdate) -> AppUpdateSource {
         switch update.action {
         case .brew: return .homebrew
-        case .appStore: return .appStore
+        case .appStore, .openStore: return .appStore
         case .open(let url): return (url.host ?? "").contains("github") ? .github : .sparkle
+        case .openApp: return .sparkle
         }
+    }
+
+    /// Opens the App Store app. Newer macOS has no Updates address to jump to, so the old one is tried and the app opened if it fails.
+    private func openAppStore() {
+        if let url = URL(string: "macappstore://showUpdatesPage"), NSWorkspace.shared.open(url) { return }
+        if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.AppStore") { NSWorkspace.shared.open(app) }
     }
 
     private var updatesTab: some View {
@@ -338,7 +345,9 @@ struct AppsPane: View {
                             } else {
                                 Button("Upgrade") { inventory.runBrewUpgrade(token) { message = $0; backups = AppBackup.list() } }.controlSize(.small)
                             }
-                        case .appStore: Button("App Store") { NSWorkspace.shared.open(URL(string: "macappstore://showUpdatesPage")!) }.controlSize(.small)
+                        case .appStore: Button("App Store") { openAppStore() }.controlSize(.small)
+                        case .openStore(let url): Button("Open in App Store") { if !NSWorkspace.shared.open(url) { openAppStore() } }.controlSize(.small)
+                        case .openApp(let url): Button("Open App") { NSWorkspace.shared.open(url) }.controlSize(.small).help("It has no page of its own. Open it and use its own Check for Updates.")
                         }
                         Button(pinned ? "Unpin" : "Pin") { if pinned { inventory.pinnedUpdates.remove(update.appName) } else { inventory.pinnedUpdates.insert(update.appName) } }.controlSize(.small).buttonStyle(.borderless)
                         Button("Ignore") { inventory.ignoredUpdates.insert(update.appName) }.controlSize(.small).buttonStyle(.borderless)

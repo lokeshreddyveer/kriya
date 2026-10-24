@@ -69,8 +69,8 @@ extension FeatureId: Identifiable {
         }
     }
 
-    /// False while the feature is still a placeholder.
-    var isAvailable: Bool { true }
+    /// False while the feature is only a placeholder: true exactly when a real module is registered for it.
+    var isAvailable: Bool { ServiceManager.moduleFactories[self] != nil }
 
     /// The planned release for the feature. Phase 1 builds the foundation they all sit on.
     var arrivesIn: String {

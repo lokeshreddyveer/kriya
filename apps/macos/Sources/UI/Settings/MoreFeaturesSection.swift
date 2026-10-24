@@ -116,16 +116,14 @@ struct MoreFeaturesSection: View {
     private func missingPermissions(_ feature: ManagedFeature) -> [String] {
         let board = FeatureSwitchboard.shared
         guard board.isOn(feature.id) || !board.isSwitchable(feature.id) else { return [] }
+        // Every permission the feature names is checked by the same state machine as the rest: only "denied" is shown as missing (a
+        // permission not asked for yet is asked when the feature first needs it, and Automation is asked per app).
         return feature.permissions.compactMap { name in
-            switch name {
-            case "Accessibility": return permissions.isGranted(.accessibility) ? nil : name
-            case "Input Monitoring": return permissions.isGranted(.inputMonitoring) ? nil : name
-            case "Screen Recording": return permissions.isGranted(.screenRecording) ? nil : name
-            case "Location":
-                let status = CLLocationManager().authorizationStatus
-                return status == .denied || status == .restricted ? name : nil
-            default: return nil
-            }
+            guard let permission = Permission.named(name) else { return nil }
+            let status = permissions.status(permission)
+            // The three the features need to work at all show as missing until allowed; the rest only once they were refused.
+            if [.accessibility, .inputMonitoring, .screenRecording].contains(permission) { return status == .granted ? nil : name }
+            return status == .denied ? name : nil
         }
     }
 }

@@ -358,12 +358,15 @@ final class AppEnvironment {
             DispatchQueue.main.async { links?.chooseBrowserForClipboardLink() }
         }
         pointerEffects.start()
-        clipboardMerger.start()
-        folderRules.start()
-        menuBarHider.start()
         systemMonitor.start()
-        appAudio.start()
-        soundRules.start()
+        // These background services are owned by the service manager: it starts them, and stops them in safe mode or when a permission
+        // they need is refused, instead of starting them here once and forgetting them.
+        let mergeService = clipboardMerger, folderService = folderRules, hiderService = menuBarHider, mixerService = appAudio, soundRuleService = soundRules
+        services.register(AuxiliaryService(id: "clipboardMerge", title: "Copy-twice merge", start: { mergeService.start() }, stop: { mergeService.stop() }))
+        services.register(AuxiliaryService(id: "folderRules", title: "Folder rules", start: { folderService.start() }, stop: { folderService.stop() }))
+        services.register(AuxiliaryService(id: "menuBarHider", title: "Menu bar hider", start: { hiderService.start() }, stop: { hiderService.stop() }))
+        services.register(AuxiliaryService(id: "soundMixer", title: "Sound mixer", start: { mixerService.start() }, stop: { mixerService.stopAll() }, wake: { mixerService.refresh() }))
+        services.register(AuxiliaryService(id: "soundRules", title: "Sound rules", start: { soundRuleService.start() }, stop: { soundRuleService.stop() }))
         workspaces.applySoundMode = { [weak soundRules] id in
             guard let runner = soundRules, let mode = runner.modes.first(where: { $0.id == id }) else { return false }
             runner.apply(mode)
@@ -371,10 +374,10 @@ final class AppEnvironment {
         }
         workspaces.putSoundBack = { [weak soundRules] in soundRules?.putSoundBack() }
         configureAITools()
-        MIDITriggerRunner.shared.start()
+        services.register(AuxiliaryService(id: "midi", title: "MIDI triggers", start: { MIDITriggerRunner.shared.start() }, stop: { MIDITriggerRunner.shared.stop() }))
         safariInbox.start()
-        MCPHTTPServer.shared.start()
-        LocationAudioRunner.shared.start()
+        services.register(AuxiliaryService(id: "mcpServer", title: "MCP server", start: { MCPHTTPServer.shared.start() }, stop: { MCPHTTPServer.shared.stop() }))
+        services.register(AuxiliaryService(id: "locationAudio", title: "Sound by place", blockedWhenDenied: [.location], start: { LocationAudioRunner.shared.start() }, stop: { LocationAudioRunner.shared.stop() }))
         focusSession.start()
         worldClock.meetings = launcherTools.meetings
         worldClock.start()
@@ -385,7 +388,7 @@ final class AppEnvironment {
         dictation.insert = { [weak keyboard] text in DispatchQueue.global(qos: .userInitiated).async { keyboard?.injector.insert(text, cursorBack: 0) } }
         let keys = VolumeKeys(events: events, engine: appAudio)
         volumeKeys = keys
-        keys.start()
+        services.register(AuxiliaryService(id: "volumeKeys", title: "Volume keys", blockedWhenDenied: [.inputMonitoring], start: { keys.start() }, stop: { keys.stop() }))
         Task { @MainActor in SoundIntentBridge.engine = self.appAudio; SoundIntentBridge.mixer = self.soundMixer }
         clipboard.monitor.rules = clipboardRules
         remote.runCommand = { [weak keyboard] id in keyboard?.run(.command(command: id)) }

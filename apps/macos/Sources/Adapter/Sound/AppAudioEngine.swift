@@ -80,9 +80,16 @@ final class AudioSession {
         aggregateID = aggregate
 
         apply(settings)
+        // A larger buffer (about 21 ms at 48 kHz) gives Bluetooth outputs such as AirPods room to keep up; the sound of a video or song
+        // is not affected by that little delay.
+        var frames = UInt32(1024)
+        var bufferAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSize, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        _ = AudioObjectSetPropertyData(aggregate, &bufferAddress, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
         let processor = processor
         let scratch = scratch
-        status = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregate, queue) { _, inData, _, outData, _ in
+        // No dispatch queue: with nil, Core Audio runs the block on its own real-time thread. A normal queue adds scheduling delay that
+        // shows up as crackle.
+        status = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregate, nil) { _, inData, _, outData, _ in
             Self.render(processor: processor, scratch: scratch, input: inData, output: outData)
         }
         guard status == noErr, let procID else { stop(); return fail("The sound could not be redirected (\(status)).") }

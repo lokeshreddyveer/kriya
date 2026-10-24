@@ -37,11 +37,26 @@ final class AudioProcessor {
     private var lock = os_unfair_lock_s()
     private var coefficients = [BiquadCoefficients](repeating: .identity, count: EQBands.count)
     private var flat = true
-    // One pair of memory cells per band, per channel.
-    private var z1 = [Float](repeating: 0, count: EQBands.count * AudioProcessor.maxChannels)
-    private var z2 = [Float](repeating: 0, count: EQBands.count * AudioProcessor.maxChannels)
+    // One pair of memory cells per band, per channel. Plain memory, not arrays: the audio thread must not pay for array checks or copies.
+    private static let stateCount = EQBands.count * AudioProcessor.maxChannels
+    private let z1 = UnsafeMutablePointer<Float>.allocate(capacity: AudioProcessor.stateCount)
+    private let z2 = UnsafeMutablePointer<Float>.allocate(capacity: AudioProcessor.stateCount)
+    /// The equaliser the audio thread is using right now. It takes the newest settings whenever it can get them without waiting, and
+    /// otherwise keeps the last ones, so a settings change never drops the equaliser for a buffer (which is an audible click).
+    private let active = UnsafeMutablePointer<BiquadCoefficients>.allocate(capacity: EQBands.count)
+    private var activeFlat = true
     private var currentGain: Float = 1
     private var currentPreamp: Float = 1
+
+    init() {
+        z1.initialize(repeating: 0, count: Self.stateCount)
+        z2.initialize(repeating: 0, count: Self.stateCount)
+        active.initialize(repeating: .identity, count: EQBands.count)
+    }
+
+    deinit {
+        z1.deallocate(); z2.deallocate(); active.deallocate()
+    }
 
     /// Set from any thread; read on the audio thread.
     var targetGain: Float = 1
@@ -86,8 +101,13 @@ final class AudioProcessor {
             }
             os_unfair_lock_unlock(&chainLock)
         }
-        let locked = os_unfair_lock_trylock(&lock)
-        let useEQ = locked && !flat
+        // Take the newest equaliser if nobody is changing it right now; otherwise carry on with the last one.
+        if os_unfair_lock_trylock(&lock) {
+            for band in 0..<EQBands.count { active[band] = coefficients[band] }
+            activeFlat = flat
+            os_unfair_lock_unlock(&lock)
+        }
+        let useEQ = !activeFlat
         let start = currentGain
         let end = muted ? 0 : targetGain * tempGain
         currentGain = end
@@ -97,6 +117,20 @@ final class AudioProcessor {
         currentPreamp = preEnd
         let preStep = (preEnd - preStart) / Float(frames)
         let sides = SoundBalance.gains(balance)
+
+        // Nothing to do to the sound (volume 100%, no effects): it goes through bit for bit, with no clipping or filtering at all.
+        let unity = !useEQ && start == 1 && end == 1 && preStart == 1 && preEnd == 1 && sides.left == 1 && sides.right == 1
+        if unity {
+            let count = frames * channels
+            if UnsafeRawPointer(source) != UnsafeRawPointer(output) { memcpy(output, source, count * MemoryLayout<Float>.size) }
+            var maxSample: Float = 0
+            for i in 0..<count { maxSample = max(maxSample, abs(output[i])) }
+            peak = maxSample
+            return
+        }
+
+        // Soft clipping is only for sound that was made louder. A signal that was not boosted keeps its peaks as they were.
+        let boosting = max(start, end) > 1.0005 || max(preStart, preEnd) > 1.0005 || useEQ
         var maxSample: Float = 0
         for frame in 0..<frames {
             let g = start + step * Float(frame)
@@ -107,7 +141,7 @@ final class AudioProcessor {
                 if useEQ {
                     let slot = min(firstChannel + ch, Self.maxChannels - 1)
                     for band in 0..<EQBands.count {
-                        let c = coefficients[band]
+                        let c = active[band]
                         if c == .identity { continue }
                         let s = band * Self.maxChannels + slot
                         let y = c.b0 * x + z1[s]
@@ -118,18 +152,26 @@ final class AudioProcessor {
                 }
                 let channel = firstChannel + ch
                 let side: Float = channel == 0 ? sides.left : (channel == 1 ? sides.right : 1)
-                x = Self.softClip(x * g * side)
+                x = x * g * side
+                x = boosting ? Self.softClip(x) : min(max(x, -1), 1)
                 maxSample = max(maxSample, abs(x))
                 output[index] = x
             }
         }
         peak = maxSample
-        if locked { os_unfair_lock_unlock(&lock) }
+        if useEQ {
+            // A filter's memory fades toward zero in silence; very tiny numbers make some processors slow down (denormals), which is
+            // heard as ticks. They are set to zero once they are too small to matter.
+            for i in 0..<Self.stateCount {
+                if abs(z1[i]) < 1e-15 { z1[i] = 0 }
+                if abs(z2[i]) < 1e-15 { z2[i] = 0 }
+            }
+        }
     }
 
     /// Passes quiet sound untouched and bends loud peaks smoothly under 1, so boosting past 100% does not crackle.
     static func softClip(_ x: Float) -> Float {
-        let knee: Float = 0.8
+        let knee: Float = 0.9
         let a = abs(x)
         if a <= knee { return x }
         let over = (a - knee) / (1 - knee)

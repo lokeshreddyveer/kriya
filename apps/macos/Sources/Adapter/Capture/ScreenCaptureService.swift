@@ -47,6 +47,8 @@ final class ScreenCaptureService: ObservableObject {
     // MARK: Starting and shortcuts
 
     func start() {
+        // The menu-bar icon is there from launch (unless hidden in Settings), not only after the first capture.
+        DispatchQueue.main.async { CaptureOverlay.shared.actions = self.overlayActions(settings: self.settings.settings); CaptureOverlay.shared.settingsChanged() }
         hotkeys = HotkeyCenter(owner: "Screen capture", title: { command in
             CaptureSettings.commands.first { $0.command == command }?.title ?? command
         }) { [weak self] command in self?.run(command: command) }
@@ -59,6 +61,7 @@ final class ScreenCaptureService: ObservableObject {
     }
 
     func stop() {
+        CaptureOverlay.shared.removeIcon()
         hotkeys?.unregisterAll()
         hotkeys = nil
         cancellables.removeAll()
@@ -90,8 +93,7 @@ final class ScreenCaptureService: ObservableObject {
             return
         }
         guard hasPermission() else {
-            requestPermission()
-            toast.show("Allow Screen Recording for Kriya in System Settings, then try again.", isError: true)
+            handleMissingPermission()
             return
         }
         isCapturing = true
@@ -133,7 +135,44 @@ final class ScreenCaptureService: ObservableObject {
                 DispatchQueue.main.async { self.isCapturing = false }
                 return
             }
+            // With permission missing macOS can hand back an empty or wallpaper-only picture; the permission check catches the usual case.
             process(image, action: action, settings: current)
+        }
+    }
+
+    /// Without Screen Recording macOS gives a capture tool nothing, so no picture is made, nothing is copied and no card appears. A
+    /// toast is easy to miss, so this says it plainly and opens the right Settings page.
+    var onMissingPermission: (() -> Void)?
+    private var lastExplained = Date.distantPast
+    static let askedKey = "capture.permissionAsked"
+
+    /// One flow, never two at once: the first time, macOS's own question is shown (and nothing else); after that, macOS will not ask
+    /// again, so a single explanation with the Settings button is shown instead.
+    func handleMissingPermission() {
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: Self.askedKey) {
+            defaults.set(true, forKey: Self.askedKey)
+            requestPermission()
+            toast.show("Allow Screen Recording in the question macOS asks, then capture again.")
+        } else {
+            explainMissingPermission()
+        }
+    }
+
+    func explainMissingPermission() {
+        guard Date().timeIntervalSince(lastExplained) > 20 else { return }
+        lastExplained = Date()
+        // Never a real alert under automated tests: a modal window would hang the run.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil || onMissingPermission != nil else { return }
+        if let custom = onMissingPermission { custom(); return }
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "Kriya needs permission to record the screen"
+            alert.informativeText = "macOS has Screen Recording switched off for Kriya, so a capture cannot copy anything or show a card. Open Privacy & Security › Screen & System Audio Recording and switch Kriya on. If Kriya is already in the list, switch it off and on again, then quit and reopen Kriya."
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "Not Now")
+            NSApp.activate(ignoringOtherApps: true)
+            if alert.runModal() == .alertFirstButtonReturn, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
         }
     }
 
@@ -368,9 +407,11 @@ final class ScreenCaptureService: ObservableObject {
         let style = CaptureExtraSettings.beautify
         if !edited, style.isOn, let styled = CaptureRenderer.beautified(picture, style) { picture = styled }
         if hidden > 0 { done.append("\(hidden) private place\(hidden == 1 ? "" : "s") hidden") }
+        // Copied by default, like CleanShot: as PNG and as TIFF, so every app (Slack, Mail, Preview, Notes) will paste it.
         if settings.copyImage, let data = picture.pngData {
             pasteboard.clearContents()
             pasteboard.setData(data, forType: .png)
+            if let tiff = NSBitmapImageRep(cgImage: picture).representation(using: .tiff, properties: [:]) { pasteboard.setData(tiff, forType: .tiff) }
             done.append("copied")
         }
         var savedFile: URL?

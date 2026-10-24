@@ -18,7 +18,40 @@ final class TextRecognizer {
         request.usesLanguageCorrection = true
         let chosen = OCRLanguages.resolve(chosen: OCRLanguages.parse(UserDefaults.standard.string(forKey: OCRLanguages.defaultsKey) ?? ""), supported: Self.supportedLanguages)
         if chosen.isEmpty { request.automaticallyDetectsLanguage = true } else { request.recognitionLanguages = chosen; request.automaticallyDetectsLanguage = false }
-        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        // On some Macs the neural engine refuses the accurate model ("e5rt" errors). Then the same request is tried on the CPU, and
+        // finally with the fast model, so reading text still works.
+        do {
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        } catch {
+            let retry = VNRecognizeTextRequest()
+            retry.recognitionLevel = .accurate
+            retry.usesLanguageCorrection = true
+            retry.usesCPUOnly = true
+            if chosen.isEmpty { retry.automaticallyDetectsLanguage = true } else { retry.recognitionLanguages = chosen; retry.automaticallyDetectsLanguage = false }
+            do { try VNImageRequestHandler(cgImage: image, options: [:]).perform([retry]); return try Self.lines(from: retry) } catch {
+                let fast = VNRecognizeTextRequest()
+                fast.recognitionLevel = .fast
+                fast.usesCPUOnly = true
+                // The fast model reads fewer languages than the accurate one. The person's chosen languages are kept: only the ones
+                // it can read are asked for, and if none of them is, it is not used at all (a wrong-language reading is worse than
+                // an error), so Telugu or Hindi never silently turn into guessed Latin text.
+                if chosen.isEmpty {
+                    fast.automaticallyDetectsLanguage = true
+                } else {
+                    let readable = (try? fast.supportedRecognitionLanguages()) ?? []
+                    let usable = chosen.filter { readable.contains($0) }
+                    guard !usable.isEmpty else { throw error }
+                    fast.recognitionLanguages = usable
+                    fast.automaticallyDetectsLanguage = false
+                }
+                try VNImageRequestHandler(cgImage: image, options: [:]).perform([fast])
+                return try Self.lines(from: fast)
+            }
+        }
+        return try Self.lines(from: request)
+    }
+
+    private static func lines(from request: VNRecognizeTextRequest) throws -> [RecognizedLine] {
         var lines: [RecognizedLine] = []
         for observation in request.results ?? [] {
             guard let candidate = observation.topCandidates(1).first else { continue }

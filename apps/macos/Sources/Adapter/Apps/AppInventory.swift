@@ -51,6 +51,10 @@ struct AppUpdate: Identifiable, Hashable {
         case open(URL)
         case brew(String)
         case appStore
+        /// The app's own page in the App Store.
+        case openStore(URL)
+        /// Open the app itself, for one that has no page to send a person to.
+        case openApp(URL)
     }
 }
 
@@ -417,6 +421,10 @@ final class AppInventory: ObservableObject {
                 for app in apps {
                     if case .sparkle(let feed) = app.source {
                         group.addTask { await Self.sparkleUpdate(for: app, feed: feed) }
+                    } else if app.info.source == .appStore {
+                        // The App Store's public lookup says the newest version and where the app's page is, so an update opens
+                        // that app's own page in the App Store instead of a generic Updates screen.
+                        group.addTask { await Self.storeUpdate(for: app) }
                     }
                 }
                 for await result in group {
@@ -436,8 +444,6 @@ final class AppInventory: ObservableObject {
             if brew.failed { failures += 1 }
             found.append(contentsOf: brew.updates)
             var notes: [String] = []
-            let storeApps = apps.filter { $0.source == .appStore }.count
-            if storeApps > 0 { notes.append("\(storeApps) App Store app\(storeApps == 1 ? "" : "s"): updates come from the App Store.") }
             if failures > 0 { notes.append(Self.failureNote(attempts: attempts, failures: failures)) }
             let sorted = found.sorted { $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending }
             let record = Self.shouldRecordCheck(attempts: attempts, failures: failures)
@@ -481,7 +487,30 @@ final class AppInventory: ObservableObject {
         guard let latest = parser.latest, !latest.isEmpty else { return .failed }
         let installed = app.version.isEmpty ? app.build : app.version
         guard latest.compare(installed, options: .numeric) == .orderedDescending else { return .upToDate }
-        return .update(AppUpdate(appName: app.name, installed: installed, latest: latest, action: parser.link.map { .open($0) } ?? .open(feed)))
+        // The feed is XML for machines, so the page to open is the version's own page, its notes, or the developer's site; never the feed.
+        let homepage = (Bundle(url: app.url)?.infoDictionary?["NSHumanReadableCopyright"] as? String).flatMap { Self.firstWebAddress(in: $0) }
+        let page = UpdateLinks.page(for: .init(link: parser.link, releaseNotes: parser.releaseNotes, download: parser.download), feed: feed, appHomepage: homepage)
+        // With no page at all, the app itself is the way to update: open it so its own "Check for Updates" can be used.
+        return .update(AppUpdate(appName: app.name, installed: installed, latest: latest, action: page.map { .open($0) } ?? .openApp(app.url)))
+    }
+
+    /// The first web address in a piece of text, such as an app's copyright line.
+    static func firstWebAddress(in text: String) -> URL? {
+        textFindUrls(text: text).compactMap(URL.init(string:)).first
+    }
+
+    /// Asks the App Store (its public lookup, by bundle identifier) for the newest version of an app that came from it.
+    private static func storeUpdate(for app: InstalledApp) async -> CheckResult {
+        guard let escaped = app.bundleID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://itunes.apple.com/lookup?bundleId=\(escaped)&entity=macSoftware") else { return .skipped }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        guard let (data, response) = try? await URLSession.shared.data(for: request), (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else { return .failed }
+        // The store knows nothing of this app (an iPhone app, a private build): not a failure, there is just no answer.
+        guard let entry = UpdateLinks.storeEntry(fromLookup: data) else { return .skipped }
+        let installed = app.version.isEmpty ? app.build : app.version
+        guard entry.version.compare(installed, options: .numeric) == .orderedDescending else { return .upToDate }
+        return .update(AppUpdate(appName: app.name, installed: installed, latest: entry.version, action: UpdateLinks.appStoreURL(fromStorePage: entry.page).map { .openStore($0) } ?? .appStore))
     }
 
     /// What `brew outdated` says. `attempted` is false when Homebrew is not installed, and `failed` when it was asked and
@@ -579,6 +608,9 @@ final class AppInventory: ObservableObject {
 private final class AppcastReader: NSObject, XMLParserDelegate {
     private(set) var latest: String?
     private(set) var link: URL?
+    /// Where the release notes are, and where the new version downloads from.
+    private(set) var releaseNotes: URL?
+    private(set) var download: URL?
     private var inFirstItem = false
     private var seenItem = false
     private var element = ""
@@ -598,6 +630,7 @@ private final class AppcastReader: NSObject, XMLParserDelegate {
         if inFirstItem, name == "enclosure" {
             let version = attributes["sparkle:shortVersionString"] ?? attributes["sparkle:version"]
             if latest == nil { latest = version }
+            if download == nil { download = attributes["url"].flatMap(URL.init(string:)) }
         }
     }
 
@@ -609,6 +642,7 @@ private final class AppcastReader: NSObject, XMLParserDelegate {
         if name == "sparkle:shortVersionString", !value.isEmpty { latest = value }
         if name == "sparkle:version", latest == nil, !value.isEmpty { latest = value }
         if name == "link", link == nil { link = URL(string: value) }
+        if name == "sparkle:releaseNotesLink", releaseNotes == nil { releaseNotes = URL(string: value) }
         if name == "item" { inFirstItem = false }
     }
 }

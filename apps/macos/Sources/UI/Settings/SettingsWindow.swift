@@ -204,15 +204,22 @@ extension FeatureId {
 
 /// Which pane the settings window shows. Shared so the menu bar can open the window on a particular pane.
 final class SettingsNavigator: ObservableObject {
-    @Published var pane: SettingsPane = .features
-    /// The tab to show inside the pane being opened. A pane with tabs takes it when it appears and clears it.
+    @Published var pane: SettingsPane = .features {
+        didSet { if !navigating, oldValue != pane { tabHint = nil } }
+    }
+    /// The tab to show inside the pane being opened. Every tab control in the pane that knows the word takes it when it appears (a
+    /// slow pane and a pane with tabs inside tabs both get it), and it is dropped when the pane is left.
     @Published var tabHint: String?
+    private var navigating = false
 
-    /// Opens a pane, and a tab inside it if it has one. The hint is dropped after a moment so it cannot land on a later visit.
+    /// Opens a pane, and a tab inside it if it has one. The hint stays until the person leaves the pane (or, as a safety net, for ten
+    /// seconds), so it can neither expire before a slow pane is built nor land on a later visit.
     func go(_ pane: SettingsPane, tab: String? = nil) {
+        navigating = true
         tabHint = tab
         self.pane = pane
-        if tab != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.tabHint = nil } }
+        navigating = false
+        if let tab { DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in if self?.tabHint == tab { self?.tabHint = nil } } }
     }
     /// Opens the guided setup. Set by the app delegate.
     var openSetupGuide: () -> Void = {}
@@ -456,7 +463,8 @@ struct TabHint<T: RawRepresentable & Equatable>: ViewModifier where T.RawValue =
     }
 
     private func apply() {
-        if let hint = navigator.tabHint, let wanted = T(rawValue: hint) { tab = wanted; navigator.tabHint = nil }
+        // Not cleared here: another tab control in the same pane may be waiting for the same hint.
+        if let hint = navigator.tabHint, let wanted = T(rawValue: hint), tab != wanted { tab = wanted }
     }
 }
 

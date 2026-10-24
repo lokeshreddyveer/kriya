@@ -12,32 +12,50 @@ struct SoundPopoverView: View {
     var openSettings: () -> Void = {}
     var setPinned: (Bool) -> Void = { _ in }
     @AppStorage("soundMixer.compact") private var compact = false
-    @State private var pinned = false
+    /// Kept between openings: a popover pinned open stays pinned until the person lets it go.
+    static let pinnedKey = "soundMixer.pinned"
+    @State private var pinned = UserDefaults.standard.bool(forKey: SoundPopoverView.pinnedKey)
     @State private var effectsFor: String?
     @State private var showApps = true
+
+    init(openSettings: @escaping () -> Void = {}, setPinned: @escaping (Bool) -> Void = { _ in }, startWithEffects: String? = nil) {
+        self.openSettings = openSettings
+        self.setPinned = setPinned
+        _effectsFor = State(initialValue: startWithEffects)
+    }
 
     static let accent = Color(red: 0.36, green: 0.82, blue: 0.58)
     static let surface = Color.white.opacity(0.06)
     static let hairline = Color.white.opacity(0.07)
     static let chip = Color.white.opacity(0.09)
 
+    /// The popover never changes size: opening the effects of an app scrolls inside it instead of resizing the window, which is what
+    /// made it jump. It is as tall as fits the screen, up to 640 points.
+    static var height: CGFloat { min(640, (NSScreen.main?.visibleFrame.height ?? 800) - 90) }
+    static let width: CGFloat = 392
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-            section("System") { systemRows }
-            section("Apps", trailing: { appsToggle }) { if showApps { appRows } }
-            footer
+        VStack(spacing: 0) {
+            header.padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 10)
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    section("System") { systemRows }
+                    section("Apps", trailing: { appsToggle }) { if showApps { appRows } }
+                    footer
+                }
+                .padding(.horizontal, 16).padding(.bottom, 16)
+                // Only the list of apps animates when apps come and go; sliders and meters never do.
+                .animation(.smooth(duration: 0.22), value: engine.apps.map(\.id))
+            }
         }
-        .padding(16)
-        .frame(width: 392)
+        .frame(width: Self.width, height: Self.height)
+        .clipped()
         .background(Color.black)
         .preferredColorScheme(.dark)
         .tint(Self.accent)
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: effectsFor)
-        .animation(.smooth(duration: 0.2), value: showApps)
-        .animation(.smooth(duration: 0.2), value: compact)
-        .animation(.smooth(duration: 0.2), value: engine.apps.map(\.id))
     }
+
+    private func animated(_ change: @escaping () -> Void) { withAnimation(.smooth(duration: 0.24), change) }
 
     // MARK: Header and footer
 
@@ -51,8 +69,8 @@ struct SoundPopoverView: View {
             }
             Spacer()
             HStack(spacing: 2) {
-                glyph(compact ? "rectangle.expand.vertical" : "rectangle.compress.vertical", help: compact ? "Show everything" : "Compact") { compact.toggle() }
-                glyph(pinned ? "pin.fill" : "pin", help: pinned ? "Let it close when you click elsewhere" : "Keep it open", active: pinned) { pinned.toggle(); setPinned(pinned) }
+                glyph(compact ? "rectangle.expand.vertical" : "rectangle.compress.vertical", help: compact ? "Show everything" : "Compact") { animated { compact.toggle() } }
+                glyph(pinned ? "pin.fill" : "pin", help: pinned ? "Let it close when you click elsewhere" : "Keep it open", active: pinned) { pinned.toggle(); UserDefaults.standard.set(pinned, forKey: Self.pinnedKey); setPinned(pinned) }
                 glyph("gearshape", help: "Sound settings", action: openSettings)
             }
         }
@@ -133,7 +151,7 @@ struct SoundPopoverView: View {
     }
 
     private var appsToggle: some View {
-        Button { showApps.toggle() } label: {
+        Button { animated { showApps.toggle() } } label: {
             Image(systemName: showApps ? "chevron.up" : "chevron.down").font(.system(size: 9.5, weight: .bold)).foregroundStyle(Color.white.opacity(0.45)).frame(width: 22, height: 16)
         }.buttonStyle(.plain).accessibilityLabel(showApps ? "Hide apps" : "Show apps")
     }
@@ -153,7 +171,7 @@ struct SoundPopoverView: View {
                    boostButton(AppAudioEngine.systemKey)
                    fxButton(AppAudioEngine.systemKey)
                }),
-               drawer: effectsFor == AppAudioEngine.systemKey ? AnyView(AppEffectsView(key: AppAudioEngine.systemKey)) : nil)
+               drawer: effectsFor == AppAudioEngine.systemKey ? AnyView(PopoverEffects(key: AppAudioEngine.systemKey)) : nil)
         divider
         MixRow(compact: compact, title: "Input", tile: .symbol("mic.fill"), muted: mixer.micMuted, level: mixer.inputVolume, range: 0...1, meter: 0,
                setLevel: { mixer.setInputVolume($0) }, toggleMute: { mixer.toggleMicMute() },
@@ -197,20 +215,21 @@ struct SoundPopoverView: View {
     }
 
     private func appDrawer(_ app: AudioApp) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
+            // Each chip keeps its words on one line and shares the width, so none of them wraps.
             HStack(spacing: 6) {
                 Menu { TimedMuteMenu(key: app.id) } label: { smallLabel("timer", "Timed mute") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                Button { engine.setMenuBarIcon(app.id, !engine.menuBarApps.contains(app.id)) } label: { smallLabel("menubar.rectangle", engine.menuBarApps.contains(app.id) ? "In menu bar" : "Menu-bar icon") }.buttonStyle(.plain)
+                Button { engine.setMenuBarIcon(app.id, !engine.menuBarApps.contains(app.id)) } label: { smallLabel("menubar.rectangle", engine.menuBarApps.contains(app.id) ? "In menu bar" : "Menu bar", on: engine.menuBarApps.contains(app.id)) }.buttonStyle(.plain)
                 Button { engine.setExcluded(app.id, true) } label: { smallLabel("nosign", "Leave alone") }.buttonStyle(.plain)
                 Spacer(minLength: 0)
             }
-            AppEffectsView(key: app.id)
+            PopoverEffects(key: app.id)
         }
     }
 
-    private func smallLabel(_ symbol: String, _ title: String) -> some View {
-        HStack(spacing: 5) { Image(systemName: symbol).font(.system(size: 10.5)); Text(title).font(.system(size: 11.5, weight: .medium)) }
-            .foregroundStyle(Color.white.opacity(0.8)).padding(.horizontal, 9).padding(.vertical, 5).background(Self.chip, in: Capsule())
+    private func smallLabel(_ symbol: String, _ title: String, on: Bool = false) -> some View {
+        HStack(spacing: 5) { Image(systemName: symbol).font(.system(size: 10.5)); Text(title).font(.system(size: 11.5, weight: .medium)).lineLimit(1).fixedSize() }
+            .foregroundStyle(on ? Self.accent : Color.white.opacity(0.8)).padding(.horizontal, 9).padding(.vertical, 5).background(Self.chip, in: Capsule())
     }
 
     // MARK: Chips
@@ -247,7 +266,8 @@ struct SoundPopoverView: View {
     private func chipBody(symbol: String, text: String, highlighted: Bool = false) -> some View {
         HStack(spacing: 5) {
             Image(systemName: symbol).font(.system(size: 11, weight: .medium))
-            Text(text).font(.system(size: 11.5, weight: .medium)).lineLimit(1).truncationMode(.tail).frame(maxWidth: 92, alignment: .leading)
+            // A menu's label ignores a width cap, so a long device name is shortened here; the full name is in the menu.
+            Text(text.count > 14 ? String(text.prefix(13)) + "…" : text).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
             Image(systemName: "chevron.up.chevron.down").font(.system(size: 7.5, weight: .bold)).opacity(0.5)
         }
         .foregroundStyle(highlighted ? Self.accent : Color.white.opacity(0.85))
@@ -268,7 +288,7 @@ struct SoundPopoverView: View {
 
     private func fxButton(_ key: String) -> some View {
         let on = effectsFor == key
-        return HoverButton(action: { effectsFor = on ? nil : key }) { hovering in
+        return HoverButton(action: { animated { effectsFor = on ? nil : key } }) { hovering in
             Image(systemName: "slider.horizontal.3").font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(on ? Color.black : Color.white.opacity(hovering ? 0.95 : 0.6))
                 .frame(width: 26, height: 26)
@@ -308,7 +328,8 @@ private struct MixRow: View {
                 MuteTile(tile: tile, muted: muted, action: toggleMute)
                 VStack(alignment: .leading, spacing: compact ? 0 : 7) {
                     HStack(spacing: 8) {
-                        Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).opacity(dimmed ? 0.55 : 1)
+                        // The name keeps its room; the device chip is what gives way (it shortens with an ellipsis).
+                        Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).opacity(dimmed ? 0.55 : 1).layoutPriority(1)
                         if let toggleFavorite {
                             Button(action: toggleFavorite) { Image(systemName: favorite ? "star.fill" : "star").font(.system(size: 10.5)).foregroundStyle(favorite ? SoundPopoverView.accent : Color.white.opacity(0.3)) }
                                 .buttonStyle(.plain).accessibilityLabel(favorite ? "Remove favorite" : "Make favorite")
@@ -327,8 +348,10 @@ private struct MixRow: View {
             if let timed { TimedChangeLabel(change: timed).padding(.leading, 48) }
             if let note { Text(note).font(.system(size: 11)).foregroundStyle(Theme.warn).padding(.leading, 48).fixedSize(horizontal: false, vertical: true) }
             if let drawer {
-                drawer.padding(10).background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .padding(.leading, 48).transition(.opacity.combined(with: .move(edge: .top)))
+                // The drawer uses the card's whole width, not the part to the right of the icon, so nothing inside it overflows.
+                drawer.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
@@ -374,6 +397,9 @@ private struct GlowSlider: View {
     let range: ClosedRange<Double>
     var meter: Double = 0
     var unityMark = false
+    /// The fill runs from the middle, for a control that is flat at zero (preamp, balance).
+    var bipolar = false
+    var label = "Volume"
     @State private var dragging = false
 
     private var span: Double { range.upperBound - range.lowerBound }
@@ -384,8 +410,14 @@ private struct GlowSlider: View {
             let fraction = CGFloat(min(max((value - range.lowerBound) / span, 0), 1))
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.white.opacity(0.13)).frame(height: 6)
-                Capsule().fill(LinearGradient(colors: [SoundPopoverView.accent.opacity(0.75), SoundPopoverView.accent], startPoint: .leading, endPoint: .trailing))
-                    .frame(width: max(6, width * fraction), height: 6)
+                if bipolar {
+                    let mid = width / 2, x = width * fraction
+                    Capsule().fill(SoundPopoverView.accent).frame(width: max(abs(x - mid), 2), height: 6).offset(x: min(x, mid))
+                    Rectangle().fill(Color.white.opacity(0.35)).frame(width: 1.5, height: 10).offset(x: mid - 0.75)
+                } else {
+                    Capsule().fill(LinearGradient(colors: [SoundPopoverView.accent.opacity(0.75), SoundPopoverView.accent], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(6, width * fraction), height: 6)
+                }
                 if unityMark { Rectangle().fill(Color.white.opacity(0.35)).frame(width: 1.5, height: 10).offset(x: width * CGFloat((1 - range.lowerBound) / span) - 0.75) }
                 if meter > 0.01 {
                     Capsule().fill(SoundPopoverView.accent.opacity(0.55)).frame(width: width * CGFloat(min(meter, 1)), height: 2).offset(y: 9)
@@ -407,11 +439,145 @@ private struct GlowSlider: View {
         }
         .frame(height: 24)
         .accessibilityElement()
-        .accessibilityLabel("Volume")
-        .accessibilityValue("\(Int((value * 100).rounded())) percent")
+        .accessibilityLabel(label)
+        .accessibilityValue(bipolar ? String(format: "%.1f", value) : "\(Int((value * 100).rounded())) percent")
         .accessibilityAdjustableAction { direction in
             let step = span / 20
             switch direction { case .increment: value = min(value + step, range.upperBound); case .decrement: value = max(value - step, range.lowerBound); @unknown default: break }
+        }
+    }
+}
+
+/// The effects of one app (or all sound), drawn for this window and sized to the card: switches as chips, preamp and balance as the
+/// same sliders as the volumes, and a ten-band equaliser that divides whatever width it is given, so nothing can overflow.
+private struct PopoverEffects: View {
+    @EnvironmentObject private var engine: AppAudioEngine
+    let key: String
+
+    var body: some View {
+        let s = engine.current(key)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                toggleChip("Bypass", symbol: "slash.circle", on: s.effectsBypassed, help: "Plays the sound without the equaliser, preamp and balance, and keeps them set for later") {
+                    engine.update(key) { $0.effectsBypassed.toggle() }
+                }
+                toggleChip("Magic Boost", symbol: "wand.and.stars", on: s.magicBoost, help: "Adds the small-speaker shaping and a little gain, for laptop and monitor speakers") {
+                    engine.update(key) { $0.magicBoost.toggle() }
+                }
+                Spacer(minLength: 0)
+                Button { engine.update(key) { $0.eq = EQPreset.flat.gains; $0.preamp = 0; $0.balance = 0; $0.effectsBypassed = false } } label: {
+                    Text("Reset").font(.system(size: 11.5, weight: .medium)).lineLimit(1).fixedSize()
+                        .foregroundStyle(SoundPopoverView.accent).padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(SoundPopoverView.chip, in: Capsule())
+                }
+                .buttonStyle(.plain).disabled(s.effectsAreFlat && !s.effectsBypassed).opacity(s.effectsAreFlat && !s.effectsBypassed ? 0.4 : 1)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                slider("Preamp", value: Double(s.preamp), range: -Double(SoundPreamp.limit)...Double(SoundPreamp.limit), text: String(format: "%+.0f dB", s.preamp)) { v in
+                    engine.update(key) { $0.preamp = Float(abs(v) < 0.3 ? 0 : v) }
+                }
+                slider("Balance", value: Double(s.balance), range: -1...1, text: s.balance == 0 ? "Centre" : (s.balance < 0 ? "L \(Int(-s.balance * 100))" : "R \(Int(s.balance * 100))")) { v in
+                    engine.update(key) { $0.balance = Float(abs(v) < 0.04 ? 0 : v) }
+                }
+            }
+            equaliser(s.eq)
+            AudioUnitList(key: key)
+        }
+        .opacity(s.effectsBypassed ? 0.55 : 1)
+    }
+
+    private func toggleChip(_ title: String, symbol: String, on: Bool, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 10.5))
+                Text(title).font(.system(size: 11.5, weight: .medium)).lineLimit(1).fixedSize()
+            }
+            .foregroundStyle(on ? Color.black : Color.white.opacity(0.85))
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(on ? SoundPopoverView.accent : SoundPopoverView.chip, in: Capsule())
+        }
+        .buttonStyle(.plain).help(help).accessibilityLabel(title).accessibilityValue(on ? "on" : "off")
+        .animation(.easeOut(duration: 0.12), value: on)
+    }
+
+    private func slider(_ title: String, value: Double, range: ClosedRange<Double>, text: String, set: @escaping (Double) -> Void) -> some View {
+        HStack(spacing: 10) {
+            Text(title).font(.system(size: 12)).foregroundStyle(Color.white.opacity(0.75)).frame(width: 52, alignment: .leading)
+            GlowSlider(value: Binding(get: { value }, set: set), range: range, bipolar: true, label: title)
+            Text(text).font(.system(size: 11.5, weight: .medium, design: .rounded)).monospacedDigit().foregroundStyle(Color.white.opacity(0.65)).frame(width: 48, alignment: .trailing)
+        }
+    }
+
+    private func equaliser(_ gains: [Float]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(EQPreset.allCases) { preset in Button(preset.title) { engine.update(key) { $0.eq = preset.gains } } }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(EQPreset.matching(gains)?.title ?? "Custom").font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 7.5, weight: .bold)).opacity(0.5)
+                    }
+                    .foregroundStyle(SoundPopoverView.accent).padding(.horizontal, 10).padding(.vertical, 5).background(SoundPopoverView.chip, in: Capsule())
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                Text("Equaliser").font(.system(size: 11)).foregroundStyle(Color.white.opacity(0.45))
+                Spacer(minLength: 0)
+            }
+            // Ten equal columns of whatever width there is.
+            HStack(spacing: 0) {
+                ForEach(0..<EQBands.count, id: \.self) { band in
+                    EQBand(gain: Double(gains[band]), label: Self.label(EQBands.frequencies[band])) { v in
+                        engine.update(key) { $0.eq[band] = Float(abs(v) < 0.4 ? 0 : v) }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    private static func label(_ f: Float) -> String { f >= 1000 ? "\(Int(f / 1000))k" : "\(Int(f))" }
+}
+
+/// One equaliser band: a thin vertical track with a thumb, flat in the middle, and its frequency under it.
+private struct EQBand: View {
+    let gain: Double
+    let label: String
+    let set: (Double) -> Void
+    @State private var dragging = false
+    private let limit = Double(EQBands.limit)
+
+    var body: some View {
+        VStack(spacing: 5) {
+            GeometryReader { geo in
+                let h = max(geo.size.height, 1)
+                let fraction = CGFloat(min(max((limit - gain) / (2 * limit), 0), 1))
+                let mid = h / 2, y = h * fraction
+                ZStack(alignment: .top) {
+                    Capsule().fill(Color.white.opacity(0.13)).frame(width: 4)
+                    Capsule().fill(SoundPopoverView.accent).frame(width: 4, height: max(abs(y - mid), 2)).offset(y: min(y, mid))
+                    Rectangle().fill(Color.white.opacity(0.3)).frame(width: 10, height: 1).offset(y: mid)
+                    Circle().fill(Color.white).frame(width: dragging ? 14 : 12, height: dragging ? 14 : 12).shadow(color: .black.opacity(0.4), radius: 2, y: 1)
+                        .offset(y: y - (dragging ? 7 : 6))
+                }
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { drag in
+                        dragging = true
+                        set(limit - Double(min(max(drag.location.y / h, 0), 1)) * 2 * limit)
+                    }
+                    .onEnded { _ in dragging = false })
+                .animation(.easeOut(duration: 0.1), value: dragging)
+            }
+            .frame(height: 78)
+            Text(label).font(.system(size: 9)).foregroundStyle(Color.white.opacity(0.5))
+        }
+        .accessibilityElement()
+        .accessibilityLabel("\(label) hertz")
+        .accessibilityValue(String(format: "%.1f dB", gain))
+        .accessibilityAdjustableAction { direction in
+            switch direction { case .increment: set(min(gain + 1, limit)); case .decrement: set(max(gain - 1, -limit)); @unknown default: break }
         }
     }
 }

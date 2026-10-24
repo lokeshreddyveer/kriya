@@ -35,7 +35,21 @@ extension FeatureModule {
     func systemDidWake() {}
 }
 
-/// Stands in for a feature that is not built yet, so enabling, permissions and lifecycle can all be exercised now.
+/// A background service that is not one of the eight switchable features (the sound mixer, folder rules, MIDI, the MCP server, volume
+/// keys…) but must still obey the same rules: not running in safe mode, stopped when a permission it needs is refused, and told when
+/// the Mac wakes. It used to be started once at launch and never looked at again.
+struct AuxiliaryService {
+    let id: String
+    let title: String
+    /// Permissions whose refusal stops the service. (One not asked for yet does not: the service asks when it first needs it.)
+    var blockedWhenDenied: [Permission] = []
+    let start: () -> Void
+    let stop: () -> Void
+    var wake: () -> Void = {}
+}
+
+/// Stands in for a feature that is not built yet, so enabling, permissions and lifecycle can all be exercised now. No shipped feature
+/// uses it any more; `FeatureId.isAvailable` is false for anything that would.
 final class ScaffoldModule: FeatureModule {
     let feature: FeatureId
 
@@ -64,6 +78,10 @@ enum FeatureState: Equatable {
 /// is in safe mode. It re-checks whenever any of those change, and when the Mac wakes from sleep.
 final class ServiceManager: ObservableObject {
     @Published private(set) var states: [FeatureId: FeatureState] = [:]
+    /// The same, for the background services outside the eight features, by id.
+    @Published private(set) var auxiliaryStates: [String: FeatureState] = [:]
+    private var auxiliary: [AuxiliaryService] = []
+    private var auxiliaryRunning: Set<String> = []
 
     private let context: ServiceContext
     private let crashGuard: CrashGuard
@@ -85,21 +103,57 @@ final class ServiceManager: ObservableObject {
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
     }
 
-    /// The real feature modules, and placeholders for the ones that arrive in later phases.
+    /// The real module for each feature that has one. This one list is what `FeatureId.isAvailable` reads, so a feature can never be
+    /// shown as available without a module behind it.
+    static let moduleFactories: [FeatureId: () -> FeatureModule] = [
+        .mouse: { MouseFeature() }, .windowManagement: { WindowFeature() }, .trafficLights: { TrafficLightFeature() },
+        .contextMenu: { FinderFeature() }, .clipboard: { ClipboardFeature() }, .selectionBar: { SelectionFeature() },
+        .keyboard: { KeyboardFeature() }, .automation: { AutomationFeature() },
+    ]
+
+    /// The real feature modules, and a placeholder for any feature that has none.
     private static func defaultModules() -> [FeatureModule] {
-        FeatureId.all.map { feature -> FeatureModule in
-            switch feature {
-            case .mouse: return MouseFeature()
-            case .windowManagement: return WindowFeature()
-            case .trafficLights: return TrafficLightFeature()
-            case .contextMenu: return FinderFeature()
-            case .clipboard: return ClipboardFeature()
-            case .selectionBar: return SelectionFeature()
-            case .keyboard: return KeyboardFeature()
-            case .automation: return AutomationFeature()
-            default: return ScaffoldModule(feature)
+        FeatureId.all.map { moduleFactories[$0]?() ?? ScaffoldModule($0) }
+    }
+
+    // MARK: Background services outside the eight features
+
+    /// Hands a background service to the manager. It is started on the next `reconcile`, and from then on follows safe mode,
+    /// permissions and wake-from-sleep like a feature does.
+    func register(_ service: AuxiliaryService) {
+        auxiliary.removeAll { $0.id == service.id }
+        auxiliary.append(service)
+        auxiliaryStates[service.id] = .off
+    }
+
+    func auxiliaryState(_ id: String) -> FeatureState { auxiliaryStates[id] ?? .off }
+
+    private func reconcileAuxiliary() {
+        for service in auxiliary {
+            if crashGuard.isSafeMode {
+                stopAuxiliary(service)
+                auxiliaryStates[service.id] = .safeMode
+                continue
             }
+            let denied = service.blockedWhenDenied.filter { context.permissions.status($0) == .denied }
+            if !denied.isEmpty {
+                stopAuxiliary(service)
+                auxiliaryStates[service.id] = .needsPermission(denied)
+                continue
+            }
+            if !auxiliaryRunning.contains(service.id) {
+                service.start()
+                auxiliaryRunning.insert(service.id)
+                Log.info("Features", "\(service.title) started")
+            }
+            auxiliaryStates[service.id] = .running
         }
+    }
+
+    private func stopAuxiliary(_ service: AuxiliaryService) {
+        guard auxiliaryRunning.remove(service.id) != nil else { return }
+        service.stop()
+        Log.info("Features", "\(service.title) stopped")
     }
 
     func state(_ feature: FeatureId) -> FeatureState { states[feature] ?? .off }
@@ -127,6 +181,7 @@ final class ServiceManager: ObservableObject {
         cancellables.removeAll()
         for feature in running { stop(feature) }
         running.removeAll()
+        for service in auxiliary { stopAuxiliary(service) }
     }
 
     /// Turns a feature on or off. Turning one on asks for the first permission it is missing, and only then.
@@ -168,6 +223,7 @@ final class ServiceManager: ObservableObject {
                 start(feature)
             }
         }
+        reconcileAuxiliary()
     }
 
     private func start(_ feature: FeatureId) {
@@ -197,5 +253,6 @@ final class ServiceManager: ObservableObject {
         context.permissions.refresh()
         context.events.verifyHealth()
         for feature in running { modules[feature]?.systemDidWake() }
+        for service in auxiliary where auxiliaryRunning.contains(service.id) { service.wake() }
     }
 }

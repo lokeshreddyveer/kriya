@@ -96,9 +96,13 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate {
                                     setPinned: { [weak self] pinned in self?.popover.behavior = pinned ? .applicationDefined : .transient })
             .environmentObject(engine).environmentObject(mixer).environmentObject(quickConfigs ?? QuickConfigStore(engine: engine))
         let host = NSHostingController(rootView: view)
-        host.sizingOptions = .preferredContentSize
+        // A fixed size: the window never resizes while you use it, so opening effects is smooth (the content scrolls inside).
+        host.sizingOptions = []
+        popover.contentSize = NSSize(width: SoundPopoverView.width, height: SoundPopoverView.height)
+        popover.animates = true
         popover.appearance = NSAppearance(named: .darkAqua)
-        popover.behavior = .transient
+        // As the person left it: pinned open, or closing when they click elsewhere.
+        popover.behavior = UserDefaults.standard.bool(forKey: SoundPopoverView.pinnedKey) ? .applicationDefined : .transient
         popover.contentViewController = host
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
         if !viewing { viewing = true; engine.viewerAppeared() }

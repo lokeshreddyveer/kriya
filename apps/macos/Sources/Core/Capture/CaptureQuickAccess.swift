@@ -51,7 +51,7 @@ enum QuickAccessSize: String, Codable, CaseIterable, Identifiable {
 }
 
 struct QuickAccessSettings: Codable, Equatable {
-    var icon: QuickAccessIcon = .automatic
+    var icon: QuickAccessIcon = .visible
     var scope: QuickAccessScope = .both
     var position: QuickAccessPosition = .bottomLeft
     var display: QuickAccessDisplay = .pointer

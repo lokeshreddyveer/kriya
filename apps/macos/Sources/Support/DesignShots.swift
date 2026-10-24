@@ -25,13 +25,22 @@ enum DesignShots {
                         try? await Task.sleep(nanoseconds: 900_000_000)
                         guard let window = settings?.window else { continue }
                         snap(window, to: dir.appendingPathComponent("\(pane.rawValue).png"))
-                        // Visit every tab of a pane that has them.
-                        if let control = segmentedControl(in: window.contentView), control.segmentCount > 1 {
-                            for index in 1..<control.segmentCount {
-                                control.selectedSegment = index
-                                if let action = control.action { NSApp.sendAction(action, to: control.target, from: control) }
-                                try? await Task.sleep(nanoseconds: 700_000_000)
-                                snap(window, to: dir.appendingPathComponent("\(pane.rawValue)-\(index).png"))
+                        await snapScrolled(window, to: dir.appendingPathComponent("\(pane.rawValue)-bottom.png"))
+                        // Visit every tab of a pane that has them, and every tab inside those tabs (tabs inside tabs are found by
+                        // looking again after each choice), and each screen scrolled to its end.
+                        if let control = segmentedControls(in: window.contentView).first {
+                            for index in 0..<control.segmentCount {
+                                if index > 0 { await choose(index, in: control) }
+                                if index > 0 { snap(window, to: dir.appendingPathComponent("\(pane.rawValue)-\(index).png")) }
+                                await snapScrolled(window, to: dir.appendingPathComponent("\(pane.rawValue)-\(index)-bottom.png"))
+                                // Controls other than the pane's own tab bar are nested tab bars.
+                                let nested = segmentedControls(in: window.contentView).filter { $0 !== control && $0.segmentCount > 1 }
+                                for (n, inner) in nested.enumerated() {
+                                    for j in 0..<inner.segmentCount where j != inner.selectedSegment || j > 0 {
+                                        await choose(j, in: inner)
+                                        snap(window, to: dir.appendingPathComponent("\(pane.rawValue)-\(index)-nested\(n)-\(j).png"))
+                                    }
+                                }
                             }
                         }
                     }
@@ -41,11 +50,36 @@ enum DesignShots {
         }
     }
 
-    private static func segmentedControl(in view: NSView?) -> NSSegmentedControl? {
-        guard let view else { return nil }
-        if let control = view as? NSSegmentedControl { return control }
-        for sub in view.subviews { if let found = segmentedControl(in: sub) { return found } }
-        return nil
+    /// Every segmented control in the window, in the order they are met (the pane's own tab bar first).
+    private static func segmentedControls(in view: NSView?) -> [NSSegmentedControl] {
+        guard let view else { return [] }
+        var found: [NSSegmentedControl] = []
+        if let control = view as? NSSegmentedControl { found.append(control) }
+        for sub in view.subviews { found += segmentedControls(in: sub) }
+        return found
+    }
+
+    private static func choose(_ index: Int, in control: NSSegmentedControl) async {
+        control.selectedSegment = index
+        if let action = control.action { NSApp.sendAction(action, to: control.target, from: control) }
+        try? await Task.sleep(nanoseconds: 600_000_000)
+    }
+
+    /// The window with its longest scrolling area moved to the end, so content below the fold is looked at too. Skipped when nothing scrolls.
+    private static func snapScrolled(_ window: NSWindow, to url: URL) async {
+        func scrollViews(_ view: NSView?) -> [NSScrollView] {
+            guard let view else { return [] }
+            return (view as? NSScrollView).map { [$0] + view.subviews.flatMap { scrollViews($0) } } ?? view.subviews.flatMap { scrollViews($0) }
+        }
+        guard let scroll = scrollViews(window.contentView).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }),
+              let document = scroll.documentView, document.frame.height > scroll.contentView.bounds.height + 40 else { return }
+        let top = scroll.contentView.bounds.origin
+        scroll.contentView.scroll(to: NSPoint(x: top.x, y: document.isFlipped ? document.frame.height - scroll.contentView.bounds.height : 0))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        snap(window, to: url)
+        scroll.contentView.scroll(to: top)
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     private static func capturePopover(env: AppEnvironment, to url: URL) {
@@ -73,17 +107,21 @@ enum DesignShots {
         engine.update("com.apple.Music") { $0.volume = 1 }
         engine.update("com.spotify.client") { $0.muted = true; $0.volume = 0.5 }
         engine.refresh()
-        let host = NSHostingController(rootView: SoundPopoverView().environmentObject(engine).environmentObject(env.soundMixer).environmentObject(QuickConfigStore(engine: engine, defaults: suite)))
-        host.sizingOptions = .preferredContentSize
-        let window = NSWindow(contentViewController: host)
-        window.styleMask = [.borderless]
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = .black
-        window.setFrameOrigin(NSPoint(x: 200, y: 200))
-        window.orderFrontRegardless()
-        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
-        snap(window, to: url)
-        window.orderOut(nil)
+        // Closed, and with an app's effects open, at the popover's real fixed size.
+        for (suffix, open) in [("", nil), ("-effects", "com.apple.Safari")] as [(String, String?)] {
+            let host = NSHostingController(rootView: SoundPopoverView(startWithEffects: open).environmentObject(engine).environmentObject(env.soundMixer).environmentObject(QuickConfigStore(engine: engine, defaults: suite)))
+            host.sizingOptions = []
+            let window = NSWindow(contentViewController: host)
+            window.styleMask = [.borderless]
+            window.setContentSize(NSSize(width: SoundPopoverView.width, height: SoundPopoverView.height))
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.backgroundColor = .black
+            window.setFrameOrigin(NSPoint(x: 200, y: 100))
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+            snap(window, to: URL(fileURLWithPath: url.path.replacingOccurrences(of: ".png", with: suffix + ".png")))
+            window.orderOut(nil)
+        }
     }
 
     /// The quick paste panel with sample clips. Only ever with a throwaway data folder, so real history is never touched.

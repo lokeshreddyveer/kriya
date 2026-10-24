@@ -23,11 +23,11 @@ struct ManagedFeature: Identifiable, Equatable {
 
 enum FeatureRegistry {
     static let extras: [ManagedFeature] = [
-        ManagedFeature(id: "launcher", title: "Launcher", summary: "Search apps, files, windows, clipboard, notes and commands from one box.", symbol: "magnifyingglass", pane: "launcher", tab: nil, permissions: [], dependsOn: [], resetArea: "launcher",
+        ManagedFeature(id: "launcher", title: "Launcher", summary: "Search apps, files, windows, clipboard, notes and commands from one box.", symbol: "magnifyingglass", pane: "launcher", tab: nil, permissions: ["Calendar"], dependsOn: [], resetArea: "launcher",
                        tests: ["LauncherEngineTests", "LauncherPrefsTests", "LauncherFilterTests", "PaletteLayoutPlacementTests", "LauncherApprovalTests", "FuzzyMatcherTests"]),
         ManagedFeature(id: "midi", title: "MIDI Triggers", summary: "Start workflows and commands from a MIDI pad, key or knob.", symbol: "pianokeys", pane: "automation", tab: "Safety", permissions: [], dependsOn: ["automation"], resetArea: "midi",
                        tests: ["MIDITriggerTests", "MIDIRunningStatusTests"]),
-        ManagedFeature(id: "locationAudio", title: "Sound by Place", summary: "Switch the sound output when this Mac arrives somewhere.", symbol: "location.circle", pane: "sound", tab: nil, permissions: ["Location"], dependsOn: [], resetArea: "sound",
+        ManagedFeature(id: "locationAudio", title: "Sound by Place", summary: "Switch the sound output when this Mac arrives somewhere.", symbol: "location.circle", pane: "sound", tab: nil, permissions: ["Location", "Bluetooth"], dependsOn: [], resetArea: "sound",
                        tests: ["PlaceRuleTests", "PlaceStabilityTests", "PlaceSwitcherTests"]),
         ManagedFeature(id: "extensions", title: "Launcher Extensions", summary: "Signed folders of scripts that add commands to the launcher.", symbol: "puzzlepiece.extension", pane: "launcher", tab: nil, permissions: [], dependsOn: ["launcher"], resetArea: nil,
                        tests: ["ExtensionBundleTests"]),
@@ -47,7 +47,7 @@ enum FeatureRegistry {
                        tests: ["MCPServerCoreTests", "LoopbackRulesTests", "MCPClientRulesTests", "KriyaToolsTests"]),
         ManagedFeature(id: "safariExtension", title: "Safari Extension", summary: "Send links, pages and selections from Safari to Kriya.", symbol: "safari", pane: "links", tab: "Browsers", permissions: ["Safari extension switched on in Safari"], dependsOn: [], resetArea: nil,
                        tests: ["SafariInboxTests", "BrowserBridgeTests"]),
-        ManagedFeature(id: "capture", title: "Screen Capture and Recording", summary: "Screenshots, text from pictures, screen recording, GIFs, the pixel ruler and pinned pictures.", symbol: "camera.viewfinder", pane: "capture", tab: nil, permissions: ["Screen Recording"], dependsOn: [], resetArea: "capture",
+        ManagedFeature(id: "capture", title: "Screen Capture and Recording", summary: "Screenshots, text from pictures, screen recording, GIFs, the pixel ruler and pinned pictures.", symbol: "camera.viewfinder", pane: "capture", tab: nil, permissions: ["Screen Recording", "Microphone", "Camera"], dependsOn: [], resetArea: "capture",
                        tests: ["CaptureSettingsTests", "CaptureExtrasTests", "CaptureProfileTests", "ScreenCaptureServiceTests"]),
         ManagedFeature(id: "shelf", title: "File Shelf", summary: "Named shelves for files you are moving around, with expiry reminders and warnings for missing or duplicate files.", symbol: "tray", pane: "shelf", tab: nil, permissions: ["Notifications"], dependsOn: [], resetArea: "shelfreminders",
                        tests: ["ShelfLibraryTests", "ShelfCareTests", "ShelfGroupAndReminderTests"]),
@@ -211,7 +211,18 @@ struct EvidenceLedger: Codable, Equatable {
             guard let r = records[id], ok(r) else { return .none }
             return r.build == build ? .current : .staleBuild(recorded: r.build)
         }
-        return EvidenceRow(feature: id, inSource: true, testClasses: testClasses, tests: status { $0.testsPassed }, manual: status { $0.verifiedByHand })
+        // "In source" is worked out, not assumed: a listing with nothing behind it shows as missing.
+        return EvidenceRow(feature: id, inSource: FeatureRegistry.isImplemented(id), testClasses: testClasses, tests: status { $0.testsPassed }, manual: status { $0.verifiedByHand })
+    }
+}
+
+extension FeatureRegistry {
+    /// Whether a feature really exists in this build. One of the eight core features needs a real module registered with the service
+    /// manager; any other needs the settings screen it lives in to exist and tests to be named for it.
+    static func isImplemented(_ id: String) -> Bool {
+        if let core = FeatureId.all.first(where: { $0.key == id }) { return core.isAvailable }
+        guard let feature = feature(id) else { return false }
+        return SettingsPane(rawValue: feature.pane) != nil && !feature.tests.isEmpty
     }
 }
 

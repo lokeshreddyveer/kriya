@@ -187,11 +187,19 @@ final class CaptureOverlay {
     }
 
     private func refreshIcon() {
+        // Not while the automated tests run, so they never add icons to the real menu bar.
+        guard !Self.underTest else { return }
         statusItem.update(mode: QuickAccessStore.settings.icon, active: recentActivity || canRestore, overlay: self)
     }
 
     /// Applies a changed setting at once: the icon, and where the cards are.
     func settingsChanged() { refreshIcon(); layout() }
+
+    /// Takes the icon away (the capture feature was switched off).
+    func removeIcon() {
+        guard !Self.underTest else { return }
+        statusItem.update(mode: .hidden, active: false, overlay: self)
+    }
 
     /// The first frame of a recording, for its card.
     static func thumbnail(forMovie url: URL) -> CGImage? {
