@@ -192,3 +192,53 @@ struct SoundAlert: Codable, Equatable, Identifiable {
         return Array(([alert] + list).prefix(keep))
     }
 }
+
+
+/// One Audio Unit effect on an app or on all sound.
+struct PluginRef: Codable, Equatable, Identifiable {
+    /// The four-character codes of the Audio Unit's type, subtype and maker, joined: unique to the plug-in.
+    var id: String
+    var name: String
+    var manufacturer: String
+    var bypassed = false
+    /// The plug-in's own saved settings, as a property list.
+    var state: Data?
+
+    static let maxPerApp = 8
+
+    static func code(_ value: UInt32) -> String {
+        let bytes = [UInt8((value >> 24) & 0xFF), UInt8((value >> 16) & 0xFF), UInt8((value >> 8) & 0xFF), UInt8(value & 0xFF)]
+        return String(bytes: bytes, encoding: .macOSRoman) ?? String(value)
+    }
+
+    static func id(type: UInt32, subtype: UInt32, manufacturer: UInt32) -> String { "\(code(type)).\(code(subtype)).\(code(manufacturer))" }
+
+    /// The codes back from an id made by `id(type:subtype:manufacturer:)`.
+    var codes: (type: UInt32, subtype: UInt32, manufacturer: UInt32)? {
+        let parts = id.components(separatedBy: ".")
+        func value(_ s: String) -> UInt32? {
+            let b = Array(s.data(using: .macOSRoman) ?? Data())
+            return b.count == 4 ? b.reduce(0) { $0 << 8 | UInt32($1) } : nil
+        }
+        guard parts.count >= 3, let t = value(parts[0]), let s = value(parts[1]), let m = value(parts[2]) else { return nil }
+        return (t, s, m)
+    }
+
+    /// Plug-ins grouped by who made them, makers and plug-ins in alphabetical order.
+    static func grouped(_ list: [PluginRef]) -> [(manufacturer: String, plugins: [PluginRef])] {
+        Dictionary(grouping: list, by: { $0.manufacturer.isEmpty ? "Other" : $0.manufacturer })
+            .map { (manufacturer: $0.key, plugins: $0.value.sorted { $0.name.lowercased() < $1.name.lowercased() }) }
+            .sorted { $0.manufacturer.lowercased() < $1.manufacturer.lowercased() }
+    }
+}
+
+/// The small-speaker shaping that "Magic Boost" adds on top of the equaliser, and the gain that goes with it.
+enum MagicBoost {
+    static let strength: Float = 0.6
+    static let preampDB: Float = 2
+
+    static func gains(over eq: [Float]) -> [Float] {
+        let base = EQBands.clamped(eq)
+        return zip(base, EQPreset.smallSpeakers.gains).map { min(max($0 + $1 * strength, -EQBands.limit), EQBands.limit) }
+    }
+}

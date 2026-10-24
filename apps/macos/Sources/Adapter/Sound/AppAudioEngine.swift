@@ -2,6 +2,7 @@ import AppKit
 import AudioToolbox
 import Combine
 import CoreAudio
+import CoreAudioKit
 
 /// An app that is making sound, or has settings.
 struct AudioApp: Identifiable, Equatable {
@@ -96,13 +97,15 @@ final class AudioSession {
         let effects = !s.effectsBypassed
         processor.targetGain = Float(s.volume)
         processor.muted = s.muted
-        processor.preampGain = effects ? SoundBalance.preampGain(db: s.preamp) : 1
+        processor.preampGain = effects ? SoundBalance.preampGain(db: s.preamp + (s.magicBoost ? MagicBoost.preampDB : 0)) : 1
         processor.balance = effects ? s.balance : 0
-        processor.setEQ(gains: effects ? s.eq : EQPreset.flat.gains, sampleRate: Float(sampleRate()))
+        processor.setEQ(gains: effects ? (s.magicBoost ? MagicBoost.gains(over: s.eq) : s.eq) : EQPreset.flat.gains, sampleRate: Float(sampleRate()))
     }
 
     /// A timed mute or turn-down on top of the settings.
     func setTemporary(_ factor: Float) { processor.tempGain = factor }
+
+    func setChain(_ chain: AudioUnitChain?) { processor.setChain(chain) }
 
     func stop() {
         if aggregateID != kAudioObjectUnknown, let procID {
@@ -182,6 +185,10 @@ final class AppAudioEngine: ObservableObject {
     @Published var recentMinutes: Int { didSet { defaults.set(recentMinutes, forKey: Self.recentKey) } }
     private var lastPlayed: [String: Date] = [:]
     private var tick: Timer?
+    private var chains: [String: AudioUnitChain] = [:]
+    /// Audio Unit effects kept near the top of the list of effects to add.
+    @Published private(set) var favoritePlugins: [String]
+    private static let favoritePluginsKey = "soundFavoritePlugins.v1"
 
     private let defaults: UserDefaults
     /// Sessions need macOS 14.2; they are held as plain objects so the rest of the app can build for older systems.
@@ -195,6 +202,7 @@ final class AppAudioEngine: ObservableObject {
     private func stopSession(_ key: String) {
         if #available(macOS 14.2, *) { session(key)?.stop() }
         sessions[key] = nil
+        chains[key] = nil
     }
 
     private func peak(of key: String) -> Float {
@@ -211,6 +219,7 @@ final class AppAudioEngine: ObservableObject {
         profiles = (defaults.data(forKey: Self.profilesKey).flatMap { try? JSONDecoder().decode([AppAudioProfile].self, from: $0) }) ?? []
         favorites = defaults.stringArray(forKey: Self.favoritesKey) ?? []
         excluded = Set(defaults.stringArray(forKey: Self.excludedKey) ?? [])
+        favoritePlugins = defaults.stringArray(forKey: Self.favoritePluginsKey) ?? []
         alerts = (defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode([SoundAlert].self, from: $0) }) ?? []
         let minutes = defaults.object(forKey: Self.recentKey) as? Int ?? SoundAppList.defaultRecentMinutes
         recentMinutes = min(max(minutes, 1), 240)
@@ -337,6 +346,85 @@ final class AppAudioEngine: ObservableObject {
         if timed.isEmpty { tick?.invalidate(); tick = nil }
     }
 
+    // MARK: Audio Unit effects
+
+    /// Makes the running session's plug-in chain match the plug-ins in the app's settings.
+    private func syncChain(for key: String) {
+        guard #available(macOS 14.2, *), let session = session(key) else { return }
+        let refs = current(key).plugins
+        if refs.isEmpty { session.setChain(nil); chains[key] = nil; return }
+        if let chain = chains[key], chain.slots.map(\.id) == refs.map(\.id) {
+            for ref in refs { chain.setBypassed(ref.id, ref.bypassed) }
+            return
+        }
+        let rate = AudioControl.shared.defaultDevice(input: false).flatMap { AudioControl.shared.sampleRate(of: $0) } ?? 48_000
+        let chain = AudioUnitChain(sampleRate: rate)
+        chains[key] = chain
+        chain.load(refs) { [weak self, weak session] failed in
+            guard let self, self.chains[key] === chain else { return }
+            session?.setChain(chain)
+            if !failed.isEmpty { self.problems[key] = "These effects could not be loaded: " + failed.joined(separator: ", ") }
+        }
+    }
+
+    func addPlugin(_ ref: PluginRef, to key: String) {
+        guard current(key).plugins.count < PluginRef.maxPerApp, !current(key).plugins.contains(where: { $0.id == ref.id }) else { return }
+        update(key) { $0.plugins.append(ref) }
+    }
+
+    func removePlugin(_ id: String, from key: String) { update(key) { $0.plugins.removeAll { $0.id == id } } }
+
+    func movePlugin(_ id: String, by offset: Int, in key: String) {
+        update(key) { s in
+            guard let i = s.plugins.firstIndex(where: { $0.id == id }), s.plugins.indices.contains(i + offset) else { return }
+            s.plugins.swapAt(i, i + offset)
+        }
+    }
+
+    func setPluginBypassed(_ id: String, _ value: Bool, in key: String) {
+        update(key) { s in if let i = s.plugins.firstIndex(where: { $0.id == id }) { s.plugins[i].bypassed = value } }
+    }
+
+    func setFavoritePlugin(_ id: String, _ on: Bool) {
+        if on, !favoritePlugins.contains(id) { favoritePlugins.append(id) }
+        if !on { favoritePlugins.removeAll { $0 == id } }
+        defaults.set(favoritePlugins, forKey: Self.favoritePluginsKey)
+    }
+
+    /// Saves each running plug-in's own settings into the app's settings, so they are there next time.
+    func capturePluginStates(_ key: String) {
+        guard let chain = chains[key] else { return }
+        let states = chain.states()
+        var next = current(key)
+        for i in next.plugins.indices { if let data = states[next.plugins[i].id] { next.plugins[i].state = data } }
+        settings[key] = next.isDefault ? nil : next
+        save()
+    }
+
+    /// The plug-in's own window, if it has one.
+    func openPluginWindow(_ id: String, for key: String, name: String) {
+        guard let unit = chains[key]?.slots.first(where: { $0.id == id })?.unit else {
+            problems[key] = "\(name) is not running yet. Turn the effect on and try again."
+            return
+        }
+        unit.requestViewController { controller in
+            DispatchQueue.main.async {
+                guard let controller else { return }
+                let window = NSWindow(contentViewController: controller)
+                window.title = name
+                window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+                window.isReleasedWhenClosed = false
+                let observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+                    self?.capturePluginStates(key)
+                }
+                _ = observer
+                window.center()
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+    }
+
     // MARK: Whole setups
 
     /// Puts every app back to exactly what a saved setup had, and its favorites.
@@ -392,6 +480,7 @@ final class AppAudioEngine: ObservableObject {
         } else {
             problems[key] = nil
             if let change = timed[key] { session.setTemporary(change.factor(at: Date())) }
+            syncChain(for: key)
         }
     }
 

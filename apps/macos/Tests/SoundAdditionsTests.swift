@@ -1,4 +1,5 @@
 import XCTest
+import AudioToolbox
 @testable import Kriya
 
 final class SoundAdditionsTests: XCTestCase {
@@ -127,5 +128,67 @@ final class SoundAdditionsTests: XCTestCase {
         XCTAssertEqual(list.map(\.app), ["B", "A"])
         for i in 0..<80 { list = SoundAlert.adding(SoundAlert(at: t0, app: "C", message: "\(i)"), to: list) }
         XCTAssertEqual(list.count, SoundAlert.keep)
+    }
+}
+
+final class AudioUnitHostTests: XCTestCase {
+    func testPluginIdsRoundTripAndGroupByMaker() throws {
+        let id = PluginRef.id(type: kAudioUnitType_Effect, subtype: kAudioUnitSubType_HighShelfFilter, manufacturer: kAudioUnitManufacturer_Apple)
+        let ref = PluginRef(id: id, name: "AUHighShelfFilter", manufacturer: "Apple")
+        let codes = try XCTUnwrap(ref.codes)
+        XCTAssertEqual(codes.type, kAudioUnitType_Effect)
+        XCTAssertEqual(codes.subtype, kAudioUnitSubType_HighShelfFilter)
+        XCTAssertEqual(codes.manufacturer, kAudioUnitManufacturer_Apple)
+        XCTAssertNil(PluginRef(id: "bad", name: "x", manufacturer: "").codes)
+        let groups = PluginRef.grouped([PluginRef(id: "a", name: "Z", manufacturer: "Beta"), PluginRef(id: "b", name: "A", manufacturer: "Alpha"), PluginRef(id: "c", name: "B", manufacturer: "Beta"), PluginRef(id: "d", name: "N", manufacturer: "")])
+        XCTAssertEqual(groups.map(\.manufacturer), ["Alpha", "Beta", "Other"])
+        XCTAssertEqual(groups[1].plugins.map(\.name), ["B", "Z"])
+    }
+
+    func testMagicBoostAddsTheSmallSpeakerShapeWithinTheLimits() {
+        let boosted = MagicBoost.gains(over: EQPreset.flat.gains)
+        XCTAssertEqual(boosted.count, EQBands.count)
+        XCTAssertGreaterThan(boosted[0], 2, "more bass")
+        let extreme = MagicBoost.gains(over: [Float](repeating: 12, count: 10))
+        XCTAssertTrue(extreme.allSatisfy { $0 <= EQBands.limit })
+    }
+
+    func testTheCatalogFindsApplesOwnEffects() {
+        let all = AudioUnitCatalog.effects()
+        XCTAssertFalse(all.isEmpty, "macOS ships effect Audio Units")
+        XCTAssertTrue(all.contains { $0.manufacturer.localizedCaseInsensitiveContains("apple") })
+    }
+
+    func testAnAudioUnitReallyChangesTheSoundInTheChain() throws {
+        // Apple's low-pass filter with its corner at the lowest setting (10 Hz) removes a tone of about 2 kHz.
+        let chain = AudioUnitChain(sampleRate: 48_000)
+        var ref = PluginRef(id: PluginRef.id(type: kAudioUnitType_Effect, subtype: kAudioUnitSubType_LowPassFilter, manufacturer: kAudioUnitManufacturer_Apple), name: "Low Pass", manufacturer: "Apple")
+        let loaded = expectation(description: "loaded")
+        var failures: [String] = []
+        chain.load([ref]) { failed in failures = failed; loaded.fulfill() }
+        wait(for: [loaded], timeout: 10)
+        XCTAssertEqual(failures, [], "the plug-in loaded")
+        XCTAssertEqual(chain.slots.count, 1)
+        let unit = try XCTUnwrap(chain.slots.first?.unit)
+        let tree = try XCTUnwrap(unit.parameterTree)
+        let gain = try XCTUnwrap(tree.parameter(withAddress: AUParameterAddress(kLowPassParam_Resonance)))
+        let cutoff = try XCTUnwrap(tree.parameter(withAddress: AUParameterAddress(kLowPassParam_CutoffFrequency)))
+        cutoff.value = cutoff.minValue
+        gain.value = gain.minValue
+        XCTAssertEqual(cutoff.value, cutoff.minValue, "the plug-in took the new setting")
+        let frames = 2048
+        func run() -> Float {
+            var buffer = (0..<frames * 2).map { i in 0.5 * sinf(Float(i / 2) * 0.3) }
+            buffer.withUnsafeMutableBufferPointer { chain.process($0.baseAddress!, frames: frames) }
+            return buffer.suffix(frames).map(abs).max() ?? 0
+        }
+        _ = run(); _ = run()
+        let processed = run()
+        XCTAssertLessThan(processed, 0.2, "the plug-in turned a 0.5 signal well down (\\(processed))")
+        // Bypassed, the sound passes through untouched.
+        chain.setBypassed(ref.id, true)
+        ref.bypassed = true
+        XCTAssertGreaterThan(run(), 0.45)
+        XCTAssertFalse(chain.states().isEmpty, "the plug-in's own settings can be saved")
     }
 }

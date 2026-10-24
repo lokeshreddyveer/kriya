@@ -81,9 +81,69 @@ struct AppEffectsView: View {
                 Slider(value: Binding(get: { Double(s.balance) }, set: { v in engine.update(key) { $0.balance = Float(abs(v) < 0.04 ? 0 : v) } }), in: -1...1)
                 Text(s.balance == 0 ? "Centre" : (s.balance < 0 ? "L \(Int(-s.balance * 100))" : "R \(Int(s.balance * 100))")).font(.callout).foregroundStyle(.secondary).frame(width: 52, alignment: .trailing)
             }
+            Toggle("Magic Boost", isOn: Binding(get: { s.magicBoost }, set: { v in engine.update(key) { $0.magicBoost = v } }))
+                .toggleStyle(.switch).controlSize(.small)
+                .help("Adds the small-speaker shaping and a little gain, for laptop and monitor speakers")
             EQView(key: key)
+            AudioUnitList(key: key)
         }
         .opacity(s.effectsBypassed ? 0.55 : 1)
+    }
+}
+
+/// The Audio Unit effects on one app (or on all sound): add, order, bypass, open their own window, remove.
+struct AudioUnitList: View {
+    @EnvironmentObject private var engine: AppAudioEngine
+    let key: String
+    @State private var installed: [PluginRef] = []
+    @State private var loaded = false
+
+    var body: some View {
+        let plugins = engine.current(key).plugins
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Audio Units").font(.callout.weight(.medium))
+                Spacer()
+                Menu {
+                    let favorites = installed.filter { engine.favoritePlugins.contains($0.id) }
+                    if !favorites.isEmpty {
+                        Section("Favorites") { ForEach(favorites) { ref in add(ref) } }
+                    }
+                    ForEach(PluginRef.grouped(installed), id: \.manufacturer) { group in
+                        Menu(group.manufacturer) { ForEach(group.plugins) { ref in add(ref) } }
+                    }
+                    if installed.isEmpty { Text("No Audio Unit effects are installed") }
+                } label: { Label("Add Effect", systemImage: "plus") }
+                .menuStyle(.borderlessButton).fixedSize().disabled(plugins.count >= PluginRef.maxPerApp)
+            }
+            if plugins.isEmpty { Text("Add third-party or Apple effects such as compressors, reverbs and limiters. They run after the equaliser, in this order.").font(.caption).foregroundStyle(.secondary) }
+            ForEach(plugins) { ref in
+                HStack(spacing: 8) {
+                    Toggle("", isOn: Binding(get: { !ref.bypassed }, set: { on in engine.setPluginBypassed(ref.id, !on, in: key) })).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                        .accessibilityLabel("Use \(ref.name)")
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(ref.name).lineLimit(1)
+                        Text(ref.manufacturer).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Button("Open") { engine.openPluginWindow(ref.id, for: key, name: ref.name) }.controlSize(.small)
+                    Menu {
+                        Button("Move Up") { engine.movePlugin(ref.id, by: -1, in: key) }.disabled(plugins.first?.id == ref.id)
+                        Button("Move Down") { engine.movePlugin(ref.id, by: 1, in: key) }.disabled(plugins.last?.id == ref.id)
+                        Button(engine.favoritePlugins.contains(ref.id) ? "Remove from Favorites" : "Add to Favorites") { engine.setFavoritePlugin(ref.id, !engine.favoritePlugins.contains(ref.id)) }
+                        Divider()
+                        Button("Remove", role: .destructive) { engine.removePlugin(ref.id, from: key) }
+                    } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("More").menuStyle(.borderlessButton).frame(width: 28)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onAppear { if !loaded { loaded = true; installed = AudioUnitCatalog.effects() } }
+    }
+
+    private func add(_ ref: PluginRef) -> some View {
+        Button(ref.name) { engine.addPlugin(ref, to: key) }
     }
 }
 
