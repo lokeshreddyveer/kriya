@@ -10,6 +10,7 @@ struct FolderRulesPane: View {
     @State private var previewing: FolderRule?
     @State private var message: String?
     @State private var overlaps: [RuleOverlap.Overlap] = []
+    @State private var deleting: FolderRule?
 
     var body: some View {
         Form {
@@ -66,6 +67,10 @@ struct FolderRulesPane: View {
                 return nil
             }, onCancel: { editing = nil })
         }
+        .confirmationDialog("Delete “\(deleting?.name ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let r = deleting { store.delete(r.id) }; deleting = nil }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { Text("The files it already moved stay where they are; they can be undone from Finder Actions while the history lasts.") }
         .sheet(item: $previewing) { rule in
             FolderRulePreview(rule: rule, onClose: { previewing = nil })
         }
@@ -112,7 +117,7 @@ struct FolderRulesPane: View {
             Spacer()
             Button("Preview") { previewing = rule }.controlSize(.small)
             Button("Edit") { editing = rule }.controlSize(.small)
-            Button(role: .destructive) { store.delete(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+            Button(role: .destructive) { deleting = rule } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the rule \(rule.name)").buttonStyle(.borderless)
         }
         .padding(.vertical, 3)
     }
@@ -188,7 +193,7 @@ private struct FolderRuleEditor: View {
                                 .foregroundStyle(.secondary).frame(width: 80, alignment: .leading)
                             ConditionEditor(condition: Binding(get: { rule.conditions[index] }, set: { rule.conditions[index] = $0 }))
                             Spacer(minLength: 0)
-                            Button(role: .destructive) { rule.conditions.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
+                            Button(role: .destructive) { rule.conditions.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove condition \(index + 1)").buttonStyle(.borderless)
                         }
                     }
                     Menu {
@@ -226,7 +231,7 @@ private struct FolderRuleEditor: View {
                         TextField("Tag", text: Binding(get: { name }, set: { rule.action = .tag($0) }))
                         Text("The tag shows in Finder and can be searched. Files that already have it are skipped, so the rule can run again and again.").font(.caption).foregroundStyle(.secondary)
                     case .archiveByMonth:
-                        Text("Files go into Archive › 2026-10 (by the month each was last changed) inside the watched folder. Nothing is compressed or deleted.").font(.caption).foregroundStyle(.secondary)
+                        Text("Files go into Archive › year-month, such as 2026-10 (by the month each was last changed), inside the watched folder. Nothing is compressed or deleted.").font(.caption).foregroundStyle(.secondary)
                     case .trash:
                         Text("Files go to the Trash, not away for good, and Undo brings them back.").font(.caption).foregroundStyle(.secondary)
                     case .sortByKind:
@@ -279,7 +284,7 @@ private struct ConditionEditor: View {
         case .kind(let kind):
             HStack {
                 Text("is")
-                Picker("", selection: Binding(get: { kind }, set: { condition = .kind($0) })) { ForEach(Self.kinds, id: \.self) { Text($0).tag($0) } }.labelsHidden().fixedSize()
+                Picker("Kind of file", selection: Binding(get: { kind }, set: { condition = .kind($0) })) { ForEach(Self.kinds, id: \.self) { Text($0).tag($0) } }.labelsHidden().fixedSize()
             }
         case .extensionIs(let list):
             HStack {

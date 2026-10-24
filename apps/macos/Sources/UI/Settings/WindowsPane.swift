@@ -10,6 +10,7 @@ struct WindowsPane: View {
 
     @State private var tab: Tab = .snap
     @State private var confirmReset = false
+    @State private var confirmShortcuts = false
 
     enum Tab: String, CaseIterable, Identifiable {
         case snap = "Snap", windowList = "Window List", layouts = "Layouts", triggers = "Triggers", sizes = "Sizes", apps = "Apps"
@@ -27,7 +28,7 @@ struct WindowsPane: View {
                 }
                 .paneTabBar(maxWidth: 420)
                 Menu {
-                    Button("Restore Default Shortcuts") { store.resetShortcuts() }
+                    Button("Restore Default Shortcuts…") { confirmShortcuts = true }
                     Button("Restore All Window Settings…") { confirmReset = true }
                 } label: { MoreMenuLabel() }
                     .menuStyle(.button).menuIndicator(.hidden).fixedSize()
@@ -58,6 +59,10 @@ struct WindowsPane: View {
             }
         }
         .animation(.smooth(duration: 0.25), value: store.lastError)
+        .confirmationDialog("Restore the default window shortcuts?", isPresented: $confirmShortcuts, titleVisibility: .visible) {
+            Button("Restore Shortcuts", role: .destructive) { store.resetShortcuts() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Every window shortcut you changed goes back to its original keys. Layouts, sizes and options stay.") }
         .confirmationDialog("Restore window settings?", isPresented: $confirmReset) {
             Button("Reset Options and Shortcuts") { store.restoreDefaults(everything: false) }
             Button("Reset Everything", role: .destructive) { store.restoreDefaults(everything: true) }
@@ -360,7 +365,7 @@ private struct SizesTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = size }.controlSize(.small)
-                        Button(role: .destructive) { store.deleteSize(size.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.deleteSize(size.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the size \(size.name)").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -407,8 +412,8 @@ private struct SizeEditor: View {
                     SliderRow(title: "Width", value: $size.width, range: 0.2...1, format: { "\(Int($0 * 100))%" })
                     SliderRow(title: "Height", value: $size.height, range: 0.2...1, format: { "\(Int($0 * 100))%" })
                 } else {
-                    LabeledContent("Width") { TextField("", value: $size.width, format: .number).frame(width: 90) }
-                    LabeledContent("Height") { TextField("", value: $size.height, format: .number).frame(width: 90) }
+                    LabeledContent("Width in points") { TextField("Width", value: $size.width, format: .number).frame(width: 90) }
+                    LabeledContent("Height in points") { TextField("Height", value: $size.height, format: .number).frame(width: 90) }
                 }
                 Toggle("Center on the display", isOn: $size.centered)
             }
@@ -418,7 +423,7 @@ private struct SizeEditor: View {
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { store.saveSize(size); if store.lastError == nil { dismiss() } }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(size.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(size.name.trimmingCharacters(in: .whitespaces).isEmpty || size.width < (size.asFraction ? 0.2 : 100) || size.height < (size.asFraction ? 0.2 : 100))
             }
         }
         .padding(20).frame(width: 460)
@@ -444,6 +449,7 @@ private struct LayoutsTab: View {
     @State private var preview: (name: String, rows: [LayoutPreviewRow])?
     @State private var historyOf: SavedLayout?
     @State private var retryTick = 0
+    @State private var deleting: SavedLayout?
     @ObservedObject private var locks = WindowLockStore.shared
 
     private struct DesignerTarget: Identifiable {
@@ -481,7 +487,7 @@ private struct LayoutsTab: View {
                     HStack {
                         Text(AppChoice.name(for: lock.appID)); if !lock.titleContains.isEmpty { Text("“\(lock.titleContains)”").foregroundStyle(.secondary) }
                         Spacer()
-                        Button(role: .destructive) { locks.remove(lock.id) } label: { Image(systemName: "lock.open") }.buttonStyle(.borderless).accessibilityLabel("Unlock")
+                        Button(role: .destructive) { locks.remove(lock.id) } label: { Image(systemName: "lock.open") }.buttonStyle(.borderless).accessibilityLabel("Let layouts move \(AppChoice.name(for: lock.appID)) again")
                     }
                 }
                 HStack {
@@ -548,6 +554,10 @@ private struct LayoutsTab: View {
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.layouts)
+        .confirmationDialog("Delete “\(deleting?.name ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let l = deleting { store.deleteLayout(l.id) }; deleting = nil }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { Text("Where its windows go is forgotten. A shortcut, rule or trigger that uses it stops working. Export your layouts first to keep a copy.") }
         .sheet(item: $historyOf) { layout in LayoutHistorySheet(layout: layout) { historyOf = nil } }
         .onReceive(controller.retry.objectWillChange) { retryTick += 1 }
         .sheet(isPresented: Binding(get: { preview != nil }, set: { if !$0 { preview = nil } })) {
@@ -615,7 +625,7 @@ private struct LayoutsTab: View {
             Button("History") { historyOf = layout }.controlSize(.small).help("Earlier versions of this layout")
             Button("Preview") { preview = (layout.name, controller.previewRestore(layout)) }.controlSize(.small).help("Shows what Restore would do, without moving anything")
             Button("Restore") { restore(layout) }.controlSize(.small)
-            Button(role: .destructive) { store.deleteLayout(layout.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+            Button(role: .destructive) { deleting = layout } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the layout \(layout.name)").buttonStyle(.borderless)
         }
     }
 
@@ -659,7 +669,7 @@ private struct LayoutsTab: View {
                 }
             }
             .menuStyle(.button).controlSize(.small).fixedSize()
-            Button(role: .destructive) { store.deleteLayout(group.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+            Button(role: .destructive) { deleting = group } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the group \(group.name)").buttonStyle(.borderless)
         }
     }
 
@@ -902,7 +912,7 @@ private struct AppsTab: View {
                                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
                             Text(AppChoice.name(for: rule.appId)).font(.headline)
                             Spacer()
-                            Button(role: .destructive) { store.deleteRule(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                            Button(role: .destructive) { store.deleteRule(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the rule for \(AppChoice.name(for: rule.appId))").buttonStyle(.borderless)
                         }
                         HStack(spacing: 12) {
                             Picker("Place", selection: Binding(get: { placementTag(rule) }, set: { setPlacement(rule, $0) })) {
@@ -937,7 +947,7 @@ private struct AppsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { store.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
+                        Button(role: .destructive) { store.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Move windows of \(AppChoice.name(for: id)) again")
                             .buttonStyle(.borderless)
                     }
                 }

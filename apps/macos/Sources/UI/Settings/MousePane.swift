@@ -176,7 +176,7 @@ private struct DeviceAssignmentRow: View {
                         )) { ForEach(mouse.presets) { Text($0.name).tag($0.id) } }
                             .labelsHidden().frame(width: 200)
                         Button(role: .destructive) { mouse.deleteAssignment(assignment.id) } label: { Image(systemName: "trash") }
-                            .accessibilityLabel("Delete").buttonStyle(.borderless)
+                            .accessibilityLabel("Stop using a preset for \(AppChoice.name(for: assignment.appId ?? "")) on this device").buttonStyle(.borderless)
                     }
                 }
                 Button {
@@ -225,6 +225,7 @@ private struct MousePresetsTab: View {
     @State private var naming = false
     @State private var newName = ""
     @State private var confirmReset = false
+    @State private var confirmDelete = false
     @State private var message: String?
 
     private var selected: MousePreset? { mouse.preset(selectedID) ?? mouse.defaultPreset }
@@ -246,6 +247,10 @@ private struct MousePresetsTab: View {
             Button("Create") { create() }
             Button("Cancel", role: .cancel) {}
         }
+        .confirmationDialog("Delete “\(selected?.name ?? "")”?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { delete() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Devices and apps that use it go back to the default preset.") }
         .confirmationDialog("Restore mouse settings?", isPresented: $confirmReset) {
             Button("Reset the Default Preset") { mouse.restoreDefaults(everything: false) }
             Button("Reset Everything", role: .destructive) {
@@ -275,9 +280,9 @@ private struct MousePresetsTab: View {
             }
             Divider()
             HStack(spacing: 4) {
-                Button { newName = ""; naming = true } label: { Image(systemName: "plus") }.accessibilityLabel("Add")
-                Button { duplicate() } label: { Image(systemName: "plus.square.on.square") }.help("Duplicate").accessibilityLabel("Duplicate")
-                Button { delete() } label: { Image(systemName: "minus") }.accessibilityLabel("Remove")
+                Button { newName = ""; naming = true } label: { Image(systemName: "plus") }.accessibilityLabel("New preset").help("New preset")
+                Button { duplicate() } label: { Image(systemName: "plus.square.on.square") }.help("Duplicate the selected preset").accessibilityLabel("Duplicate the selected preset")
+                Button { confirmDelete = true } label: { Image(systemName: "minus") }.accessibilityLabel("Delete the selected preset").help("Delete the selected preset")
                     .disabled(selected?.isBuiltin ?? true)
                 Spacer()
                 Menu {
@@ -352,7 +357,7 @@ private struct PresetEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Picker("", selection: $section) {
+            Picker("Part of the preset", selection: $section) {
                 ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented).labelsHidden()
@@ -372,6 +377,8 @@ private struct PresetEditor: View {
         }
         .animation(.smooth(duration: 0.2), value: section)
         .onAppear { name = preset.name }
+        // A name typed and left without pressing Return is kept, not lost.
+        .onDisappear { if !readOnly, preset.id != MouseStore.defaultPresetID { mouse.rename(presetID: preset.id, to: name) } }
     }
 
     private func duplicateToEdit(_ id: String) {
@@ -613,7 +620,7 @@ private struct ButtonsEditor: View {
                 set: { if let id = $0 { edit(index) { $0.actionId = id } } }
             ), allowNone: false)
             Spacer()
-            Button(role: .destructive) { remove(index) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+            Button(role: .destructive) { remove(index) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the rule for \(MouseButtons.name(rule.button))").buttonStyle(.borderless)
         }
     }
 
@@ -759,7 +766,7 @@ private struct MouseAppsTab: View {
                             ForEach(mouse.presets) { Text($0.name).tag($0.id) }
                         }
                         .labelsHidden().frame(width: 200)
-                        Button(role: .destructive) { mouse.deleteAssignment(assignment.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
+                        Button(role: .destructive) { mouse.deleteAssignment(assignment.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Stop using a preset for \(AppChoice.name(for: assignment.appId ?? ""))")
                             .buttonStyle(.borderless)
                     }
                 }
@@ -781,7 +788,7 @@ private struct MouseAppsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { mouse.setExcludedApps(mouse.config.excludedAppIds.filter { $0 != id }) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
+                        Button(role: .destructive) { mouse.setExcludedApps(mouse.config.excludedAppIds.filter { $0 != id }) } label: { Image(systemName: "trash") }.accessibilityLabel("Stop leaving \(AppChoice.name(for: id)) alone")
                             .buttonStyle(.borderless)
                     }
                 }

@@ -197,7 +197,7 @@ struct DiskCleanupTab: View {
                     VStack(alignment: .leading, spacing: 1) { Text(place.name); Text(place.note).font(.caption).foregroundStyle(.secondary) }
                     Spacer()
                     Text(bytes(devSizes[place.path] ?? 0)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-                    Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder")
+                    Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder").accessibilityLabel("Show \(place.name) in Finder")
                     Button("Move to Trash…") { request([DiskEntry(url: url, name: place.name, size: devSizes[place.path] ?? 0, isFolder: true)]) }.controlSize(.small)
                 }
             }
@@ -259,8 +259,8 @@ struct DiskCleanupTab: View {
             Text(((f.path as NSString).deletingLastPathComponent as NSString).abbreviatingWithTildeInPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
             Spacer()
             Text(bytes(f.allocated)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-            Button { collector.add([f.asEntry]) } label: { Image(systemName: "tray.and.arrow.down") }.buttonStyle(.borderless).help("Add to Collector")
-            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: f.path)]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder")
+            Button { collector.add([f.asEntry]) } label: { Image(systemName: "tray.and.arrow.down") }.buttonStyle(.borderless).help("Add to Collector").accessibilityLabel("Add \(f.name) to the Collector")
+            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: f.path)]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder").accessibilityLabel("Show \(f.name) in Finder")
         }
     }
 
@@ -282,7 +282,7 @@ struct DiskCleanupTab: View {
                     Text((item.url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
                     Spacer()
                     Text(bytes(item.size)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-                    Button { collector.remove(item.id) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Remove from Collector")
+                    Button { collector.remove(item.id) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Remove \(item.name) from the Collector")
                 }
             }
         }

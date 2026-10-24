@@ -7,6 +7,7 @@ extension View {
         self
             .pickerStyle(.segmented)
             .labelsHidden()
+            .accessibilityLabel("Sections")
             .fixedSize()
             .padding(3)
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))

@@ -102,7 +102,7 @@ private struct ClipBrowser: View {
                 }
                 .padding(10)
                 if !snippetsOnly {
-                    Picker("", selection: $chip) { ForEach(ClipChip.allCases.filter { $0 != .snippets }) { Text($0.rawValue).tag($0) } }
+                    Picker("Show", selection: $chip) { ForEach(ClipChip.allCases.filter { $0 != .snippets }) { Text($0.rawValue).tag($0) } }
                         .labelsHidden().pickerStyle(.menu).padding(.horizontal, 10).padding(.bottom, 6)
                 }
                 Divider()
@@ -269,7 +269,7 @@ private struct ClipDetail: View {
                 } else {
                     Button { clip.setFavorite(item.id, true, title: nil); onChange() } label: { Label("Save as Snippet", systemImage: "star") }
                 }
-                Button(role: .destructive) { clip.delete(item.id); onChange() } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
+                Button(role: .destructive) { clip.delete(item.id); onChange() } label: { Image(systemName: "trash") }.accessibilityLabel("Delete this item from the history").help("Delete this item")
             }
             .padding(.bottom, 4)
         }
@@ -389,7 +389,7 @@ private struct ClipPrivacyTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { clip.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { clip.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Record copies from \(AppChoice.name(for: id)) again").buttonStyle(.borderless)
                     }
                 }
                 Button { if let id = AppChoice.choose(prompt: "Exclude"), !config.excludedAppIds.contains(id) { clip.updateConfig { $0.excludedAppIds.append(id) } } } label: { Label("Exclude an App", systemImage: "plus") }
@@ -595,7 +595,7 @@ private struct ClipSettingsTab: View {
                     HStack {
                         Text(c.name); Text("\(c.count)").foregroundStyle(.secondary)
                         Spacer()
-                        Button(role: .destructive) { clip.deleteCollection(c.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { clip.deleteCollection(c.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the collection \(c.name)").buttonStyle(.borderless)
                     }
                 }
                 HStack {
@@ -652,7 +652,7 @@ struct ClipboardRulesSection: View {
                     }
                     Spacer()
                     Button("Edit") { editing = rule }.controlSize(.small)
-                    Button(role: .destructive) { store.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                    Button(role: .destructive) { store.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the rule \(rule.name)").buttonStyle(.borderless)
                 }
             }
             Menu("Add a Rule") {
@@ -690,7 +690,7 @@ private struct ClipboardRuleEditor: View {
                 VStack(alignment: .leading, spacing: 6) {
                     if rule.apps.isEmpty { Text("Every app").foregroundStyle(.secondary) }
                     ForEach(rule.apps, id: \.self) { id in
-                        HStack { Text(AppChoice.name(for: id)); Spacer(); Button { rule.apps.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless) }
+                        HStack { Text(AppChoice.name(for: id)); Spacer(); Button { rule.apps.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove \(AppChoice.name(for: id))").buttonStyle(.borderless) }
                     }
                     Button("Add an App…") { if let id = AppChoice.choose(), !rule.apps.contains(id) { rule.apps.append(id) } }.controlSize(.small)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(4)

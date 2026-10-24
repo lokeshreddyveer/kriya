@@ -722,7 +722,7 @@ private struct ExtensionsSection: View {
             if catalog.installed.isEmpty { Text("No extensions are installed.").font(.callout).foregroundStyle(.secondary) }
             ForEach(catalog.installed) { ext in
                 HStack(alignment: .top) {
-                    Toggle("", isOn: Binding(get: { ext.enabled }, set: { catalog.setEnabled(ext.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    Toggle(ext.manifest.name, isOn: Binding(get: { ext.enabled }, set: { catalog.setEnabled(ext.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         .accessibilityLabel("Turn \(ext.manifest.name) on")
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(ext.manifest.name)  \(ext.manifest.version)").font(.headline)

@@ -24,7 +24,7 @@ struct AIToolsSection: View {
                         if tool.risk >= .destructive {
                             Text("Always asks").font(.caption).foregroundStyle(.secondary)
                         } else {
-                            Picker("", selection: Binding(get: { store.toolSettings.perTool[tool.name] ?? .ask }, set: { store.toolSettings.perTool[tool.name] = $0 })) {
+                            Picker("Approval", selection: Binding(get: { store.toolSettings.perTool[tool.name] ?? .ask }, set: { store.toolSettings.perTool[tool.name] = $0 })) {
                                 ForEach(AIApprovalSetting.allCases, id: \.self) { Text($0.title).tag($0) }
                             }
                             .labelsHidden().frame(width: 140)
@@ -63,7 +63,15 @@ struct AIToolsSection: View {
                             }
                         }
                         .menuStyle(.button).fixedSize()
-                        Button("Make a New Secret", role: .destructive) { server.regenerateSecret() }
+                        Button("Make a New Secret…", role: .destructive) {
+                            let alert = NSAlert()
+                            alert.alertStyle = .warning
+                            alert.messageText = "Make a new secret?"
+                            alert.informativeText = "Every program that uses the old one stops working until you copy the new setup into it."
+                            alert.addButton(withTitle: "Make a New Secret")
+                            alert.addButton(withTitle: "Cancel")
+                            if alert.runModal() == .alertFirstButtonReturn { server.regenerateSecret() }
+                        }
                         Spacer()
                         Text("\(server.requests) requests").font(.caption).foregroundStyle(.secondary)
                     }
@@ -77,7 +85,7 @@ struct AIToolsSection: View {
             Section {
                 ForEach(clients.servers) { config in
                     HStack {
-                        Toggle("", isOn: Binding(get: { config.enabled }, set: { var c = config; c.enabled = $0; update(c) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        Toggle(config.name, isOn: Binding(get: { config.enabled }, set: { var c = config; c.enabled = $0; update(c) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             .accessibilityLabel("Use \(config.name)")
                         VStack(alignment: .leading, spacing: 2) {
                             Text(config.name).font(.headline)
@@ -171,7 +179,7 @@ private struct MCPServerEditor: View {
                                     }
                                 }
                             }
-                            Picker("", selection: Binding(get: { config.toolRisk[tool.name] ?? (config.transport == .http ? .externalNetwork : .privileged) }, set: { config.toolRisk[tool.name] = $0 })) {
+                            Picker("Risk", selection: Binding(get: { config.toolRisk[tool.name] ?? (config.transport == .http ? .externalNetwork : .privileged) }, set: { config.toolRisk[tool.name] = $0 })) {
                                 ForEach(AIRisk.allCases, id: \.self) { Text($0.title).tag($0) }
                             }.labelsHidden().frame(width: 190).accessibilityLabel("Risk of \(tool.name)")
                         }
@@ -185,7 +193,17 @@ private struct MCPServerEditor: View {
             }
             .formStyle(.grouped)
             HStack {
-                if !isNew { Button("Remove", role: .destructive) { clients.disconnect(config.id); clients.servers.removeAll { $0.id == config.id }; KeychainSecrets.delete(config.tokenAccount); close() } }
+                if !isNew {
+                    Button("Remove…", role: .destructive) {
+                        let alert = NSAlert()
+                        alert.alertStyle = .warning
+                        alert.messageText = "Remove “\(config.name)”?"
+                        alert.informativeText = "Kriya disconnects from it and deletes its saved token."
+                        alert.addButton(withTitle: "Remove")
+                        alert.addButton(withTitle: "Cancel")
+                        if alert.runModal() == .alertFirstButtonReturn { clients.disconnect(config.id); clients.servers.removeAll { $0.id == config.id }; KeychainSecrets.delete(config.tokenAccount); close() }
+                    }
+                }
                 Spacer()
                 Button("Cancel") { close() }.keyboardShortcut(.cancelAction)
                 Button("Save") { commit(); close() }.keyboardShortcut(.defaultAction).disabled(!config.problems.isEmpty)

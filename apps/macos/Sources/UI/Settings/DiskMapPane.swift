@@ -71,7 +71,8 @@ struct DiskMapPane: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { request in
-            Text("About \(ByteFormat.size(Double(request.bytes))) will come back once the Trash is emptied. You can put it back from the Trash, or choose Undo right after.")
+            let names = request.items.prefix(5).map { "• " + $0.name }.joined(separator: "\n")
+            Text(names + (request.items.count > 5 ? "\n…and \(request.items.count - 5) more" : "") + "\n\nAbout \(ByteFormat.size(Double(request.bytes))) will come back once the Trash is emptied. You can put it back from the Trash, or choose Undo right after.")
         }
     }
 }
@@ -269,7 +270,12 @@ struct TileActions {
 
 /// The colours the map can paint with. Folder and kind keep their look from before; age and risk are new.
 enum DiskPalette {
-    static func folder(_ name: String) -> Color { Color(hue: Double(abs(name.hashValue % 360)) / 360, saturation: 0.55, brightness: 0.62) }
+    static func folder(_ name: String) -> Color {
+        // A fixed hash: `hashValue` changes every launch, so the same folder would be a different colour each time.
+        var hash: UInt32 = 5381
+        for scalar in name.unicodeScalars { hash = (hash &* 33) &+ scalar.value }
+        return Color(hue: Double(hash % 360) / 360, saturation: 0.55, brightness: 0.62)
+    }
 
     static func kind(_ ext: String) -> Color {
         switch ext.lowercased() {

@@ -9,6 +9,7 @@ struct TrafficPane: View {
     @State private var tab: Tab = .buttons
     @State private var confirmReset = false
     @State private var confirmSuggested = false
+    @State private var confirmNative = false
 
     enum Tab: String, CaseIterable, Identifiable {
         case buttons = "Buttons", titleBar = "Title Bar", apps = "Apps", hover = "Hover", activity = "Activity"
@@ -19,12 +20,12 @@ struct TrafficPane: View {
         VStack(spacing: 0) {
             banners.padding(.horizontal, 20).padding(.top, hasBanner ? 10 : 0)
             HStack {
-                Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
+                Picker("Section", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
                     .paneTabBar(maxWidth: 360)
                 Menu {
                     Button("Use Suggested Settings…") { confirmSuggested = true }
                     Divider()
-                    Button("Restore Normal Button Behavior") { traffic.restoreNative(everything: false) }
+                    Button("Restore Normal Button Behavior…") { confirmNative = true }
                     Button("Restore Everything…") { confirmReset = true }
                 } label: { MoreMenuLabel() }
                     .menuStyle(.button).menuIndicator(.hidden).fixedSize()
@@ -44,6 +45,7 @@ struct TrafficPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
         .animation(.smooth(duration: 0.25), value: services.state(.trafficLights))
         .animation(.smooth(duration: 0.25), value: traffic.interceptionIssue)
         .overlay(alignment: .bottom) {
@@ -57,6 +59,10 @@ struct TrafficPane: View {
             Button("Replace My Rules and Hover Menus") { traffic.update { $0.bindings = suggestedTrafficBindings(); $0.hoverSets = suggestedTrafficHoverSets() } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This replaces the button rules and hover menus you have now. App profiles and exclusions are kept.") }
+        .confirmationDialog("Restore normal button behavior?", isPresented: $confirmNative, titleVisibility: .visible) {
+            Button("Restore Normal Behavior", role: .destructive) { traffic.restoreNative(everything: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Your button rules are removed, so every click does what macOS does. App profiles, hover menus and exclusions stay.") }
         .confirmationDialog("Restore window buttons?", isPresented: $confirmReset) {
             Button("Reset Everything", role: .destructive) { traffic.restoreNative(everything: true) }
             Button("Cancel", role: .cancel) {}
@@ -182,7 +188,7 @@ struct TrafficBindingsEditor: View {
             Image(systemName: "arrow.right").foregroundStyle(.secondary)
             TrafficActionMenu(action: Binding(get: { bindings[index].action }, set: { bindings[index].action = $0 }), allowNative: allowNative)
             Spacer()
-            Button(role: .destructive) { withAnimation(.smooth) { _ = bindings.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
+            Button(role: .destructive) { withAnimation(.smooth) { _ = bindings.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the rule for \(bindings[index].button.colorName.lowercased()) button")
                 .buttonStyle(.borderless)
         }
     }
@@ -272,7 +278,7 @@ private struct TrafficAppsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { traffic.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
+                        Button(role: .destructive) { traffic.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Stop leaving \(AppChoice.name(for: id)) alone")
                             .buttonStyle(.borderless)
                     }
                 }
@@ -337,7 +343,7 @@ private struct HoverTab: View {
                             HStack {
                                 Label(action.title, systemImage: action.symbol)
                                 Spacer()
-                                Button(role: .destructive) { edit(button) { $0.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                                Button(role: .destructive) { edit(button) { $0.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Remove \(action.title) from the \(button.colorName.lowercased()) button's menu").buttonStyle(.borderless)
                             }
                         }
                     } header: {
@@ -430,7 +436,7 @@ private struct TitleBarTab: View {
             }
 
             Section {
-                Text("Hold keys and drag anywhere in a window to move or resize it: Windows › Options › Drag from anywhere in a window. Rest the pointer on a window button for a menu of actions: the Hover tab.")
+                Text("Hold keys and drag anywhere in a window to move or resize it: Windows › Triggers › Drag from anywhere in a window. Rest the pointer on a window button for a menu of actions: the Hover tab.")
                     .font(.callout).foregroundStyle(.secondary)
             } header: { Text("Also in the title bar") }
         }

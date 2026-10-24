@@ -60,7 +60,7 @@ struct PointerMenuTab: View {
             }
             Spacer()
             Button("Edit") { editing = item }.controlSize(.small)
-            Button { menu.delete(item.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+            Button { menu.delete(item.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the item \(item.title)").buttonStyle(.borderless)
         }
     }
 
@@ -124,7 +124,7 @@ private struct PointerMenuItemEditor: View {
                         HStack {
                             Text(AppChoice.name(for: id))
                             Spacer()
-                            Button { item.appIds.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
+                            Button { item.appIds.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove \(AppChoice.name(for: id))").buttonStyle(.borderless)
                         }
                     }
                     Button("Add App…") {
@@ -157,6 +157,7 @@ struct DefaultAppsSection: View {
     @State private var newExtension = ""
     @State private var applying = false
     @State private var result: String?
+    @State private var confirmApply = false
 
     var body: some View {
         Section {
@@ -165,7 +166,7 @@ struct DefaultAppsSection: View {
                     Text(".\(entry.extension)").font(.system(.body, design: .monospaced))
                     Spacer()
                     Text(AppChoice.name(for: entry.appId)).foregroundStyle(.secondary)
-                    Button { store.updateConfig { $0.defaultApps.removeAll { $0 == entry } } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove")
+                    Button { store.updateConfig { $0.defaultApps.removeAll { $0 == entry } } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove the choice for .\(entry.extension) files")
                         .buttonStyle(.borderless)
                 }
             }
@@ -180,20 +181,14 @@ struct DefaultAppsSection: View {
                 Button("Choose App…") {
                     let ext = newExtension.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "."))
                     guard !ext.isEmpty, let id = AppChoice.choose(prompt: "Open with") else { return }
-                    store.updateConfig { $0.defaultApps.append(DefaultApp(extension: ext, appId: id)) }
+                    // One app per file type: choosing again for a type replaces the earlier choice.
+                    store.updateConfig { $0.defaultApps.removeAll { $0.extension == ext }; $0.defaultApps.append(DefaultApp(extension: ext, appId: id)) }
                     newExtension = ""
                 }
                 .disabled(newExtension.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             HStack {
-                Button(applying ? "Applying…" : "Apply to macOS") {
-                    applying = true
-                    Task {
-                        let problems = await store.applyDefaultApps()
-                        result = problems.isEmpty ? "Done. macOS may have asked you to confirm." : problems.joined(separator: "\n")
-                        applying = false
-                    }
-                }
+                Button(applying ? "Applying…" : "Apply to macOS…") { confirmApply = true }
                 .disabled(applying || store.config.defaultApps.isEmpty)
                 if let result { Text(result).font(.callout).foregroundStyle(.secondary) }
             }
@@ -202,6 +197,17 @@ struct DefaultAppsSection: View {
         }
         .animation(.smooth(duration: 0.25), value: store.config.defaultApps)
         .animation(.smooth(duration: 0.25), value: result)
+        .confirmationDialog("Change how macOS opens these file types?", isPresented: $confirmApply, titleVisibility: .visible) {
+            Button("Apply to macOS") {
+                applying = true
+                Task {
+                    let problems = await store.applyDefaultApps()
+                    result = problems.isEmpty ? "Done. macOS may have asked you to confirm." : problems.joined(separator: "\n")
+                    applying = false
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This changes the app that opens each listed type everywhere on this Mac, for every app, until you change it back in Get Info.") }
     }
 }
 
@@ -220,7 +226,7 @@ struct FavoriteMenuItemsSection: View {
                         Text("\(AppChoice.name(for: favorite.appID))\(favorite.detail.isEmpty ? "" : " · " + favorite.detail)").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(role: .destructive) { triggers.removeMenuFavorite(favorite.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                    Button(role: .destructive) { triggers.removeMenuFavorite(favorite.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the favorite \(favorite.title)").buttonStyle(.borderless)
                 }
             }
         } header: { Text("Favorite menu items") } footer: {

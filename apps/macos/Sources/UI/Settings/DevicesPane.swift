@@ -104,6 +104,7 @@ private struct DeviceRow: View {
 
     @State private var expanded = false
     @State private var nickname = ""
+    @State private var confirmForget = false
 
     private var connectionChoice: Binding<ConnectionKind?> {
         Binding(
@@ -169,10 +170,8 @@ private struct DeviceRow: View {
                     }
                     LabeledContent("Connection type reported") { Text(device.record.transport) }
                     if !device.isConnected {
-                        Button("Forget This Device", role: .destructive) {
-                            withAnimation(.smooth) { registry.forget(device.id) }
-                        }
-                        .controlSize(.small)
+                        Button("Forget This Device…", role: .destructive) { confirmForget = true }
+                            .controlSize(.small)
                     }
                 }
                 .padding(.leading, 44)
@@ -184,6 +183,10 @@ private struct DeviceRow: View {
         // A name typed and not confirmed is kept when the pane is left, not lost.
         .onDisappear { commitNickname() }
         .onChange(of: expanded) { _, isOpen in if !isOpen { commitNickname() } }
+        .confirmationDialog("Forget \(device.displayName)?", isPresented: $confirmForget, titleVisibility: .visible) {
+            Button("Forget", role: .destructive) { withAnimation(.smooth) { registry.forget(device.id) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Its name, connection choice and the presets chosen for it are removed. It comes back as a new device if it connects again.") }
     }
 
     private func batterySymbol(_ state: BatteryState) -> String {

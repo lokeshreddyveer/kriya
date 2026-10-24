@@ -155,6 +155,25 @@ struct AllowPermissionButtons: View {
     }
 }
 
+/// Shown under a switch that needs the microphone or camera: what is missing and the right button for it.
+struct MediaPermissionNote: View {
+    let permission: Permission
+    @EnvironmentObject private var permissions: PermissionManager
+
+    var body: some View {
+        let status = permissions.status(permission)
+        if status != .granted {
+            HStack {
+                Label(status == .denied ? "\(permission.title) is not allowed for Kriya." : "Kriya has not asked for \(permission.title) yet.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(Theme.warn)
+                Spacer()
+                if status == .denied { Button("Open Settings") { permissions.openSettings(permission) }.controlSize(.small) }
+                else { Button("Allow…") { permissions.request(permission) }.controlSize(.small) }
+            }
+        }
+    }
+}
+
 /// "This needs Input Monitoring", with the button to allow it, shown where a setting depends on watching the keyboard or mouse.
 struct InputMonitoringNote: View {
     @EnvironmentObject private var permissions: PermissionManager

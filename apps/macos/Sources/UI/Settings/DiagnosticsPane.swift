@@ -624,6 +624,7 @@ struct WindowDiagnosticsSection: View {
 private struct AuditTab: View {
     @ObservedObject private var audit = AuditLog.shared
     @State private var filter: AuditLog.Kind?
+    @State private var confirmClear = false
 
     private var shown: [AuditLog.Entry] { audit.entries.filter { filter == nil || $0.kind == filter } }
 
@@ -654,10 +655,14 @@ private struct AuditTab: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(audit.text(kinds: filter.map { [$0] } ?? []), forType: .string)
                     }
-                    Button("Clear", role: .destructive) { audit.clear() }
+                    Button("Clear…", role: .destructive) { confirmClear = true }
                 }
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog("Clear the audit record?", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("Clear the Record", role: .destructive) { audit.clear() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This is the record of what Kriya sent out and ran. Copy it first if you want to keep it.") }
     }
 }

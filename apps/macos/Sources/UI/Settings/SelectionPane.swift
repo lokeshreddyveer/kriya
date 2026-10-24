@@ -27,6 +27,7 @@ struct SelectionPane: View {
 
     @State private var tab: Tab = .actions
     @State private var confirmReset = false
+    @State private var confirmDefaults = false
 
     enum Tab: String, CaseIterable, Identifiable {
         case actions = "Actions", appearance = "Appearance", apps = "Apps", sharing = "Import & Approvals"
@@ -47,10 +48,10 @@ struct SelectionPane: View {
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             }
             HStack {
-                Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
+                Picker("Section", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
                     .paneTabBar(maxWidth: 380)
                 Menu {
-                    Button("Restore Default Settings") { store.restoreDefaults(everything: false) }
+                    Button("Restore Default Settings…") { confirmDefaults = true }
                     Button("Restore Everything, Including Actions…") { confirmReset = true }
                 } label: { MoreMenuLabel() }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
             }
@@ -67,12 +68,17 @@ struct SelectionPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
         .overlay(alignment: .bottom) {
             if let error = store.lastError {
                 Text(error).font(.callout).padding(10).background(Theme.danger.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
                     .padding().transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .confirmationDialog("Restore the default settings?", isPresented: $confirmDefaults, titleVisibility: .visible) {
+            Button("Restore Defaults", role: .destructive) { store.restoreDefaults(everything: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The bar's look, timing and shortcuts go back to how they started. Your actions stay.") }
         .confirmationDialog("Restore everything?", isPresented: $confirmReset) {
             Button("Restore Everything", role: .destructive) { store.restoreDefaults(everything: true) }
             Button("Cancel", role: .cancel) {}
@@ -85,6 +91,7 @@ struct SelectionPane: View {
 private struct SelectionActionsTab: View {
     @EnvironmentObject private var store: SelectionStore
     @State private var editing: SelectionAction?
+    @State private var deleting: SelectionAction?
 
     var body: some View {
         List {
@@ -99,7 +106,7 @@ private struct SelectionActionsTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = action }.controlSize(.small)
-                        Button(role: .destructive) { withAnimation(.smooth) { store.delete(action.id) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { deleting = action } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the action \(action.title)").buttonStyle(.borderless)
                     }
                     .padding(.vertical, 3)
                 }
@@ -119,6 +126,10 @@ private struct SelectionActionsTab: View {
             }
         }
         .animation(.smooth(duration: 0.25), value: store.actions)
+        .confirmationDialog("Delete “\(deleting?.title ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let a = deleting { withAnimation(.smooth) { store.delete(a.id) } }; deleting = nil }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { Text("It disappears from the selection bar.") }
         .sheet(item: $editing) { SelectionActionEditor(action: $0) }
     }
 }
@@ -177,7 +188,7 @@ private struct SelectionActionEditor: View {
                     Section("Only in these apps") {
                         if action.appIds.isEmpty { Text("Every app").font(.caption).foregroundStyle(.secondary) }
                         ForEach(action.appIds, id: \.self) { id in
-                            HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { action.appIds.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless) }
+                            HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { action.appIds.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Remove \(AppChoice.name(for: id))").buttonStyle(.borderless) }
                         }
                         Button { if let id = AppChoice.choose(prompt: "Add"), !action.appIds.contains(id) { action.appIds.append(id) } } label: { Label("Add App", systemImage: "plus") }.controlSize(.small)
                     }
@@ -295,7 +306,7 @@ struct TextPipelineEditor: View {
                             Spacer()
                             Button { if index > 0 { ops.swapAt(index, index - 1) } } label: { Image(systemName: "arrow.up") }.accessibilityLabel("Move up").buttonStyle(.borderless).disabled(index == 0)
                             Button { if index < ops.count - 1 { ops.swapAt(index, index + 1) } } label: { Image(systemName: "arrow.down") }.accessibilityLabel("Move down").buttonStyle(.borderless).disabled(index == ops.count - 1)
-                            Button(role: .destructive) { withAnimation(.smooth) { _ = ops.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                            Button(role: .destructive) { withAnimation(.smooth) { _ = ops.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete step \(index + 1)").buttonStyle(.borderless)
                         }
                         TextOpFields(op: Binding(get: { ops[min(index, ops.count - 1)] }, set: { if index < ops.count { ops[index] = $0 } }))
                     }
@@ -377,7 +388,7 @@ private struct AppearanceTab: View {
                     HStack {
                         Label(store.current.actions.first { $0.id == id }?.title ?? id, systemImage: "pin.fill")
                         Spacer()
-                        Button(role: .destructive) { pinned.removeAll { $0 == id }; SelectionPins.pinned = pinned } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Unpin")
+                        Button(role: .destructive) { pinned.removeAll { $0 == id }; SelectionPins.pinned = pinned } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Unpin \(store.current.actions.first { $0.id == id }?.title ?? id)")
                     }
                 }
                 Menu("Pin an Action") {
@@ -445,7 +456,7 @@ private struct SelectionAppsTab: View {
                         HStack {
                             Text(AppChoice.name(for: behavior.appId)).font(.headline)
                             Spacer()
-                            Button(role: .destructive) { store.updateConfig { $0.appBehaviors.removeAll { $0.appId == behavior.appId } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                            Button(role: .destructive) { store.updateConfig { $0.appBehaviors.removeAll { $0.appId == behavior.appId } } } label: { Image(systemName: "trash") }.accessibilityLabel("Remove the special behavior for \(AppChoice.name(for: behavior.appId))").buttonStyle(.borderless)
                         }
                         Picker("Bar", selection: modeBinding(behavior)) {
                             Text("Appears by itself").tag(SelectionMode.automatic); Text("Only with the shortcut").tag(SelectionMode.manualOnly); Text("Never").tag(SelectionMode.off)
@@ -476,7 +487,7 @@ private struct SelectionAppsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { store.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.updateConfig { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Allow the bar in \(AppChoice.name(for: id)) again").buttonStyle(.borderless)
                     }
                 }
                 Button { if let id = AppChoice.choose(prompt: "Exclude"), !config.excludedAppIds.contains(id) { store.updateConfig { $0.excludedAppIds.append(id) } } } label: { Label("Exclude an App", systemImage: "plus") }.controlSize(.small)

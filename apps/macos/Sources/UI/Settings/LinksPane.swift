@@ -73,7 +73,7 @@ struct LinksPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
+            Picker("Section", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
                 .paneTabBar(maxWidth: 420)
                 .paneHeader()
             Group {
@@ -284,7 +284,7 @@ private struct RulesTab: View {
             }
             Spacer()
             Button("Edit") { editing = rule }.controlSize(.small)
-            Button { store.delete(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+            Button { store.delete(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the rule \(rule.name)").buttonStyle(.borderless)
         }
     }
 
@@ -362,7 +362,7 @@ private struct LinkRuleEditor: View {
                         HStack {
                             Text(AppChoice.name(for: id))
                             Spacer()
-                            Button { rule.sourceAppIds.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
+                            Button { rule.sourceAppIds.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove \(AppChoice.name(for: id))").buttonStyle(.borderless)
                         }
                     }
                     Button("Add App…") {

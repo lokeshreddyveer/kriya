@@ -119,7 +119,7 @@ struct AudioUnitList: View {
             if plugins.isEmpty { Text("Add third-party or Apple effects such as compressors, reverbs and limiters. They run after the equaliser, in this order.").font(.caption).foregroundStyle(.secondary) }
             ForEach(plugins) { ref in
                 HStack(spacing: 8) {
-                    Toggle("", isOn: Binding(get: { !ref.bypassed }, set: { on in engine.setPluginBypassed(ref.id, !on, in: key) })).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                    Toggle("Use this effect", isOn: Binding(get: { !ref.bypassed }, set: { on in engine.setPluginBypassed(ref.id, !on, in: key) })).labelsHidden().toggleStyle(.switch).controlSize(.mini)
                         .accessibilityLabel("Use \(ref.name)")
                     VStack(alignment: .leading, spacing: 0) {
                         Text(ref.name).lineLimit(1)
@@ -251,7 +251,7 @@ struct ExcludedAppsSection: View {
             HStack {
                 Text(AudioProcessList.name(for: id))
                 Spacer()
-                Button(role: .destructive) { engine.setExcluded(id, false) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                Button(role: .destructive) { engine.setExcluded(id, false) } label: { Image(systemName: "trash") }.accessibilityLabel("Stop leaving this app alone").buttonStyle(.borderless)
             }
         }
         Button {

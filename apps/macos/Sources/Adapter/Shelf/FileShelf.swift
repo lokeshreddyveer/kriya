@@ -380,9 +380,9 @@ private struct ShelfView: View {
             instantMenu
             Button { searching.toggle(); if !searching { model.query = "" } } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Search every shelf and the history").accessibilityLabel("Search every shelf and the history")
             Button("Add Clipboard") { add(NSPasteboard.general) }.controlSize(.small)
-            Button { store.change { $0.clear() } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
+            Button { store.change { $0.clear() } } label: { Image(systemName: "trash") }.accessibilityLabel("Clear this shelf")
                 .buttonStyle(.borderless).help("Clear this shelf (it goes to the history)").disabled(library.current.items.isEmpty)
-            Button(action: onClose) { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary)
+            Button(action: onClose) { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("Close the shelf")
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
     }

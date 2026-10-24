@@ -63,7 +63,7 @@ struct MenuBarPane: View {
                             Spacer()
                             Button { moveTile(index, by: -1) } label: { Image(systemName: "chevron.up") }.accessibilityLabel("Move up").buttonStyle(.borderless).disabled(index == 0)
                             Button { moveTile(index, by: 1) } label: { Image(systemName: "chevron.down") }.accessibilityLabel("Move down").buttonStyle(.borderless).disabled(index == prefs.tiles.count - 1)
-                            Button(role: .destructive) { prefs.tiles.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
+                            Button(role: .destructive) { prefs.tiles.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove \(tile.title)").buttonStyle(.borderless)
                         }
                     }
                 }

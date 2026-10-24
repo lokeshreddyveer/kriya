@@ -62,7 +62,7 @@ struct PointerPane: View {
         .tabHint($tab)
         .animation(.smooth(duration: 0.25), value: config.positions)
         .sheet(item: $editing) { position in
-            PositionEditor(position: position, displays: displays.ordered, remembered: store.rememberedDisplay(for: position.id),
+            PositionEditor(position: position, otherNames: config.positions.filter { $0.id != position.id }.map { $0.name.trimmingCharacters(in: .whitespaces).lowercased() }, displays: displays.ordered, remembered: store.rememberedDisplay(for: position.id),
                            onSave: { store.upsert($0); store.remember($0, among: displays.ordered); editing = nil }, onCancel: { editing = nil })
         }
         .onAppear { screenAllowed = CGPreflightScreenCaptureAccess() }
@@ -220,7 +220,7 @@ struct PointerPane: View {
                     }
                     Spacer()
                     Button("Edit") { editing = position }.controlSize(.small)
-                    Button { store.delete(position.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                    Button { store.delete(position.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the position \(position.name)").buttonStyle(.borderless)
                 }
             }
         } header: {
@@ -243,7 +243,7 @@ struct PointerPane: View {
                 HStack {
                     Text(AppChoice.name(for: id))
                     Spacer()
-                    Button(role: .destructive) { store.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                    Button(role: .destructive) { store.update { $0.excludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Show effects in \(AppChoice.name(for: id)) again").buttonStyle(.borderless)
                 }
             }
             Button { if let id = AppChoice.choose(prompt: "Hide effects in"), !config.excludedAppIds.contains(id) { store.update { $0.excludedAppIds.append(id) } } } label: { Label("Hide Effects in an App", systemImage: "plus") }
@@ -255,6 +255,8 @@ struct PointerPane: View {
 
 private struct PositionEditor: View {
     @State var position: SavedPosition
+    /// The names of the other positions, in lower case: two positions with one name would be two commands with one name.
+    let otherNames: [String]
     /// The connected displays, left to right, and the one this position was saved for (which may not be connected now).
     let displays: [DisplayInfo]
     let remembered: RememberedDisplay?
@@ -262,7 +264,10 @@ private struct PositionEditor: View {
     let onCancel: () -> Void
 
     private var problem: String? {
-        position.name.trimmingCharacters(in: .whitespaces).isEmpty ? "Give the position a name." : nil
+        let name = position.name.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty { return "Give the position a name." }
+        if otherNames.contains(name.lowercased()) { return "Another position already has that name." }
+        return nil
     }
 
     var body: some View {
@@ -319,6 +324,8 @@ private struct PositionEditor: View {
                                 .frame(width: 26, height: 18)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("\(["top", "middle", "bottom"][row]) \(["left", "centre", "right"][column])")
+                        .accessibilityAddTraits(selected ? .isSelected : [])
                     }
                 }
             }

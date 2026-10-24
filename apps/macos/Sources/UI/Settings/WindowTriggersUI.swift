@@ -26,12 +26,12 @@ struct ModifierTapSection: View {
                     Text("Double-tap \(ModifierTap.modifiers.first { $0.id == tap.modifier }?.title ?? tap.modifier)")
                     Spacer()
                     Text(KeyboardCommands.title(tap.command)).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-                    Button(role: .destructive) { triggers.removeTap(tap.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                    Button(role: .destructive) { triggers.removeTap(tap.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the double-tap of \(ModifierTap.modifiers.first { $0.id == tap.modifier }?.title ?? tap.modifier)").buttonStyle(.borderless)
                 }
             }
             HStack {
-                Picker("", selection: $modifier) { ForEach(ModifierTap.modifiers, id: \.id) { Text($0.title).tag($0.id) } }.labelsHidden().fixedSize()
-                Picker("", selection: $command) { ForEach(KeyboardCommands.all, id: \.command) { Text($0.title).tag($0.command) } }.labelsHidden()
+                Picker("Key", selection: $modifier) { ForEach(ModifierTap.modifiers, id: \.id) { Text($0.title).tag($0.id) } }.labelsHidden().fixedSize()
+                Picker("Command", selection: $command) { ForEach(KeyboardCommands.all, id: \.command) { Text($0.title).tag($0.command) } }.labelsHidden()
                 Button(triggers.taps.contains { $0.modifier == modifier } ? "Replace" : "Add") {
                     // Each key runs one command: a second one for the same key replaces the first instead of sitting beside it unused.
                     for old in triggers.taps where old.modifier == modifier { triggers.removeTap(old.id) }
@@ -61,7 +61,7 @@ struct AppLayoutTriggerSection: View {
                         Text("\(trigger.when.title): \(KeyboardCommands.title(trigger.command))").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(role: .destructive) { triggers.removeLayoutTrigger(trigger.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                    Button(role: .destructive) { triggers.removeLayoutTrigger(trigger.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the trigger for \(AppChoice.name(for: trigger.appID))").buttonStyle(.borderless)
                 }
             }
             HStack {
@@ -88,7 +88,7 @@ struct DockHideSection: View {
                 HStack {
                     Text(AppChoice.name(for: id))
                     Spacer()
-                    Button(role: .destructive) { triggers.setDockHide(id, false) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                    Button(role: .destructive) { triggers.setDockHide(id, false) } label: { Image(systemName: "trash") }.accessibilityLabel("Stop hiding the Dock for \(AppChoice.name(for: id))").buttonStyle(.borderless)
                 }
             }
             Button { if let id = AppChoice.choose(prompt: "Hide the Dock while this app is in front") { triggers.setDockHide(id, true) } } label: { Label("Add App…", systemImage: "plus") }.controlSize(.small)

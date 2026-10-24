@@ -26,6 +26,7 @@ struct ShortcutMapPane: View {
             .transition(.opacity)
         }
         .animation(.smooth(duration: 0.22), value: tab)
+        .tabHint($tab)
     }
 }
 
@@ -348,7 +349,7 @@ private struct ConflictFixSheet: View {
             Text(InteractionMap.explanation(for: group)).font(.callout).foregroundStyle(.secondary)
 
             Text("Which one should keep it?").font(.subheadline.weight(.semibold))
-            Picker("", selection: Binding(get: { keeper ?? ConflictFix.suggestedKeeper(in: group)?.id ?? group[0].id }, set: { keeper = $0 })) {
+            Picker("Which one keeps it", selection: Binding(get: { keeper ?? ConflictFix.suggestedKeeper(in: group)?.id ?? group[0].id }, set: { keeper = $0 })) {
                 ForEach(group) { Text("\($0.owner) › \($0.title)").tag($0.id) }
             }
             .pickerStyle(.radioGroup).labelsHidden()

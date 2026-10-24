@@ -131,7 +131,7 @@ struct CapturePane: View {
                     HStack {
                         Text(word)
                         Spacer()
-                        Button(role: .destructive) { store.update { $0.redactWords.removeAll { $0 == word } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.update { $0.redactWords.removeAll { $0 == word } } } label: { Image(systemName: "trash") }.accessibilityLabel("Stop hiding “\(word)”").buttonStyle(.borderless)
                     }
                 }
                 HStack {
@@ -346,8 +346,10 @@ private struct RecordingSection: View {
         Section {
             Toggle("Record the Mac's sound", isOn: bind(\.systemAudio))
             Toggle("Record the microphone", isOn: bind(\.microphone))
+            if options.microphone { MediaPermissionNote(permission: .microphone) }
             Toggle("Show the keys I press", isOn: bind(\.showKeystrokes))
             Toggle("Show the camera in a small window", isOn: bind(\.webcam))
+            if options.webcam { MediaPermissionNote(permission: .camera) }
             Toggle("Show the pointer", isOn: bind(\.showCursor))
             Toggle("Record in HDR", isOn: bind(\.hdr)).disabled(!ScreenRecorder.hdrAvailable)
             Picker("Frame rate", selection: bind(\.framesPerSecond)) {

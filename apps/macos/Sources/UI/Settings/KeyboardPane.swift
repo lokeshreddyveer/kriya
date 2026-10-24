@@ -11,6 +11,7 @@ struct KeyboardPane: View {
 
     @State private var tab: Tab = .shortcuts
     @State private var confirmReset = false
+    @State private var confirmRestore = false
     @ObservedObject private var pause = KeyboardPause.shared
 
     enum Tab: String, CaseIterable, Identifiable {
@@ -50,7 +51,7 @@ struct KeyboardPane: View {
                     .menuStyle(.button).menuIndicator(.hidden).fixedSize()
                     .help("Switch remapping, text expansion or shortcuts off for the moment, without losing any of them. Also available as the commands “Pause the keyboard” and “Resume the keyboard”.")
                 Menu {
-                    Button("Restore Default Settings") { store.restoreDefaults(everything: false) }
+                    Button("Restore Default Settings…") { confirmRestore = true }
                     Button("Remove All Shortcuts and Snippets…") { confirmReset = true }
                 } label: { MoreMenuLabel() }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
             }
@@ -75,6 +76,10 @@ struct KeyboardPane: View {
                     .padding().transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .confirmationDialog("Restore the default keyboard settings?", isPresented: $confirmRestore, titleVisibility: .visible) {
+            Button("Restore Defaults", role: .destructive) { store.restoreDefaults(everything: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The launcher shortcut and the other keyboard options go back to how they started. Your own shortcuts and snippets stay.") }
         .confirmationDialog("Remove everything?", isPresented: $confirmReset) {
             Button("Remove All Shortcuts and Snippets", role: .destructive) { store.restoreDefaults(everything: true) }
             Button("Cancel", role: .cancel) {}
@@ -90,6 +95,7 @@ private struct ShortcutsListTab: View {
     @State private var editing: KeyShortcut?
     @State private var note: String?
     @State private var importReport: ShortcutImportReport?
+    @State private var deleting: KeyShortcut?
 
     var body: some View {
         Form {
@@ -107,7 +113,7 @@ private struct ShortcutsListTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = shortcut }.controlSize(.small)
-                        Button(role: .destructive) { store.deleteShortcut(shortcut.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { deleting = shortcut } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the shortcut \(shortcut.name)").buttonStyle(.borderless)
                     }
                     .padding(.vertical, 3)
                 }
@@ -127,6 +133,10 @@ private struct ShortcutsListTab: View {
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.shortcuts)
+        .confirmationDialog("Delete “\(deleting?.name ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let s = deleting { store.deleteShortcut(s.id) }; deleting = nil }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { Text("It stops working at once. Export your shortcuts first to keep a copy.") }
         .sheet(item: $editing) { ShortcutEditor(shortcut: $0) }
         .sheet(item: $importReport) { report in ShortcutImportSheet(report: report) { importReport = nil } }
     }
@@ -281,7 +291,7 @@ private struct ShortcutEditor: View {
                 Picker("Active", selection: $scopeKind) { ForEach(ScopeKind.allCases) { Text($0.rawValue).tag($0) } }
                 if scopeKind != .global {
                     ForEach(apps, id: \.self) { id in
-                        HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { apps.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless) }
+                        HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { apps.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Remove \(AppChoice.name(for: id)) from the list").buttonStyle(.borderless) }
                     }
                     Button { if let id = AppChoice.choose(prompt: "Add"), !apps.contains(id) { apps.append(id) } } label: { Label("Add App", systemImage: "plus") }.controlSize(.small)
                 }
@@ -298,7 +308,7 @@ private struct ShortcutEditor: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save() }.keyboardShortcut(.defaultAction).disabled(recorded == nil && shortcut.keyCode == 0 && shortcut.modifiers == 0 || conflicts.contains { $0.blocking })
+                Button("Save") { save() }.keyboardShortcut(.defaultAction).disabled(recorded == nil && shortcut.keyCode == 0 && shortcut.modifiers == 0 || conflicts.contains { $0.blocking } || (kind == .action && actionID.isEmpty) || (kind == .snippet && snippetID.isEmpty) || (scopeKind != .global && apps.isEmpty))
             }
         }
         .padding(20).frame(width: 540)
@@ -335,6 +345,7 @@ private struct SnippetsTab: View {
     @State private var editing: ExpansionSnippet?
     @State private var message: String?
     @State private var selected: Set<String> = []
+    @State private var confirmDelete = false
 
     private var results: [ExpansionSnippet] { store.search(query, category: category, favoritesOnly: favoritesOnly) }
 
@@ -354,7 +365,7 @@ private struct SnippetsTab: View {
             Divider()
             List(results, selection: $selected) { snippet in
                 HStack(spacing: 10) {
-                    Button { store.toggleFavorite(snippet.id) } label: { Image(systemName: snippet.favorite ? "star.fill" : "star").foregroundStyle(snippet.favorite ? Theme.warn : .secondary) }.buttonStyle(.borderless)
+                    Button { store.toggleFavorite(snippet.id) } label: { Image(systemName: snippet.favorite ? "star.fill" : "star").foregroundStyle(snippet.favorite ? Theme.warn : .secondary) }.buttonStyle(.borderless).accessibilityLabel(snippet.favorite ? "Remove \(snippet.title) from favorites" : "Make \(snippet.title) a favorite")
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Text(snippet.title).font(.headline)
@@ -381,7 +392,7 @@ private struct SnippetsTab: View {
                     Button("Export Selected…") { export(selectedOnly: true) }.disabled(selected.isEmpty)
                     Button("Export All…") { export(selectedOnly: false) }.disabled(store.snippets.isEmpty)
                     Divider()
-                    Button("Delete Selected", role: .destructive) { selected.forEach(store.deleteSnippet); selected.removeAll() }.disabled(selected.isEmpty)
+                    Button("Delete Selected…", role: .destructive) { confirmDelete = true }.disabled(selected.isEmpty)
                 } label: { Image(systemName: "square.and.arrow.up.on.square") }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
                 Spacer()
                 if let message { Text(message).font(.caption).foregroundStyle(.secondary).transition(.opacity) }
@@ -389,6 +400,10 @@ private struct SnippetsTab: View {
             .padding(10)
         }
         .animation(.smooth(duration: 0.2), value: message)
+        .confirmationDialog("Delete \(selected.count) snippet\(selected.count == 1 ? "" : "s")?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { selected.forEach(store.deleteSnippet); selected.removeAll() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("A shortcut that inserts one of them is refused or stops working. Export first to keep a copy.") }
         .sheet(item: $editing) { SnippetEditorSheet(snippet: $0) }
     }
 
@@ -455,7 +470,7 @@ private struct SnippetEditorSheet: View {
                     Section("Only in these apps") {
                         if snippet.appIds.isEmpty { Text("Every app").font(.caption).foregroundStyle(.secondary) }
                         ForEach(snippet.appIds, id: \.self) { id in
-                            HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { snippet.appIds.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless) }
+                            HStack { Text(AppChoice.name(for: id)); Spacer(); Button(role: .destructive) { snippet.appIds.removeAll { $0 == id } } label: { Image(systemName: "trash") }.accessibilityLabel("Remove \(AppChoice.name(for: id)) from this snippet").buttonStyle(.borderless) }
                         }
                         Button { if let id = AppChoice.choose(prompt: "Add"), !snippet.appIds.contains(id) { snippet.appIds.append(id) } } label: { Label("Add App", systemImage: "plus") }.controlSize(.small)
                     }
@@ -517,7 +532,7 @@ private struct ExpansionTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { store.updateConfig { $0.expansionExcludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.updateConfig { $0.expansionExcludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Expand in \(AppChoice.name(for: id)) again").buttonStyle(.borderless)
                     }
                 }
                 Button { if let id = AppChoice.choose(prompt: "Exclude"), !config.expansionExcludedAppIds.contains(id) { store.updateConfig { $0.expansionExcludedAppIds.append(id) } } } label: { Label("Exclude an App", systemImage: "plus") }.controlSize(.small)
@@ -531,7 +546,7 @@ private struct ExpansionTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { trust.setTrusted(id, false) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { trust.setTrusted(id, false) } label: { Image(systemName: "trash") }.accessibilityLabel("Stop expanding in \(AppChoice.name(for: id)) where Kriya cannot check").buttonStyle(.borderless)
                     }
                 }
                 Button { if let id = AppChoice.choose(prompt: "Allow"), !trust.trusted.contains(id) { trust.setTrusted(id, true) } } label: { Label("Allow an App", systemImage: "plus") }.controlSize(.small)

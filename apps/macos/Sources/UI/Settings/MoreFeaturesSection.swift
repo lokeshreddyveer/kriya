@@ -82,7 +82,7 @@ struct MoreFeaturesSection: View {
             }
             Spacer(minLength: 8)
             if board.isSwitchable(feature.id) {
-                Toggle("", isOn: Binding(get: { board.isOn(feature.id) }, set: { board.set(feature.id, $0); tick &+= 1 })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Toggle(feature.title, isOn: Binding(get: { board.isOn(feature.id) }, set: { board.set(feature.id, $0); tick &+= 1 })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .accessibilityLabel(feature.title)
                     .accessibilityValue(on ? "on" : "off")
             }

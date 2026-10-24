@@ -48,7 +48,7 @@ struct RemapTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = rule }.controlSize(.small)
-                        Button(role: .destructive) { remap.delete(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { remap.delete(rule.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the rule \(rule.name.isEmpty ? RemapKeys.summary(rule) : rule.name)").buttonStyle(.borderless)
                     }
                 }
             } header: {

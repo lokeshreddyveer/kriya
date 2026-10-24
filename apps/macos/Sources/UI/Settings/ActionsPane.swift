@@ -106,7 +106,7 @@ struct ActionsPane: View {
         .confirmationDialog("Delete “\(pendingDelete?.name ?? "")”?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
             Button("Delete", role: .destructive) { if let saved = pendingDelete { delete(saved) }; pendingDelete = nil }
             Button("Cancel", role: .cancel) { pendingDelete = nil }
-        } message: { Text("A mouse button, shortcut or rule that uses it will stop doing anything.") }
+        } message: { Text("If a button, preset, shortcut or rule still uses it, Kriya refuses and tells you which kind.") }
         .sheet(isPresented: $showingEditor) { ActionEditor() }
         .sheet(isPresented: $recording) { KeyRecorderSheet(onClose: { recording = false }) }
     }

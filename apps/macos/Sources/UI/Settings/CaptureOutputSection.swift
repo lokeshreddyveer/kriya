@@ -41,7 +41,7 @@ struct CaptureOutputSection: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { excluded.removeAll { $0 == id }; CaptureExtraSettings.excludedApps = excluded } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Remove")
+                        Button(role: .destructive) { excluded.removeAll { $0 == id }; CaptureExtraSettings.excludedApps = excluded } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Allow capturing \(AppChoice.name(for: id))")
                     }
                 }
                 Button { if let id = AppChoice.choose(prompt: "Never Capture"), !excluded.contains(id) { excluded.append(id); CaptureExtraSettings.excludedApps = excluded } } label: { Label("Add an App", systemImage: "plus") }.controlSize(.small)

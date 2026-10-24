@@ -139,9 +139,10 @@ struct SoundMixerContent: View {
                 Button { mixer.hasVolume ? mixer.toggleMute() : engine.update(AppAudioEngine.systemKey) { $0.muted.toggle() } } label: {
                     Image(systemName: (mixer.hasVolume ? mixer.muted : engine.current(AppAudioEngine.systemKey).muted) ? "speaker.slash.fill" : volumeSymbol)
                 }.buttonStyle(.borderless).frame(width: 22)
+                    .accessibilityLabel((mixer.hasVolume ? mixer.muted : engine.current(AppAudioEngine.systemKey).muted) ? "Unmute the sound" : "Mute the sound")
                 // An output with no volume of its own (many monitors over HDMI) is turned down in software instead.
                 if mixer.hasVolume {
-                    Slider(value: Binding(get: { mixer.volume }, set: { mixer.setVolume($0) }), in: 0...1)
+                    Slider(value: Binding(get: { mixer.volume }, set: { mixer.setVolume($0) }), in: 0...1).accessibilityLabel("Volume")
                     Text("\(Int((mixer.volume * 100).rounded()))%").monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
                 } else {
                     Slider(value: Binding(get: { min(engine.current(AppAudioEngine.systemKey).volume, 1) }, set: { v in engine.update(AppAudioEngine.systemKey) { $0.volume = v } }), in: 0...1)
@@ -159,7 +160,7 @@ struct SoundMixerContent: View {
             if !compact { DeviceLabelRow(device: mixer.inputs.first { $0.id == mixer.inputID }, input: true) }
             HStack(spacing: 10) {
                 Image(systemName: mixer.micMuted ? "mic.slash.fill" : "mic.fill").frame(width: 22)
-                Slider(value: Binding(get: { mixer.inputVolume }, set: { mixer.setInputVolume($0) }), in: 0...1)
+                Slider(value: Binding(get: { mixer.inputVolume }, set: { mixer.setInputVolume($0) }), in: 0...1).accessibilityLabel("Microphone level")
                 Button(mixer.micMuted ? "Unmute" : "Mute") { mixer.toggleMicMute() }.controlSize(.small)
             }
             .disabled(!mixer.hasInputVolume)
@@ -371,7 +372,7 @@ private struct ProfilesSection: View {
                     Button("All sound") { engine.apply(profile: profile, to: AppAudioEngine.systemKey) }
                     ForEach(engine.apps) { app in Button(app.name) { engine.apply(profile: profile, to: app.id) } }
                 }.menuStyle(.borderlessButton).fixedSize()
-                Button(role: .destructive) { engine.profiles.removeAll { $0.id == profile.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                Button(role: .destructive) { engine.profiles.removeAll { $0.id == profile.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the profile \(profile.name)").buttonStyle(.borderless)
             }
         }
     }
@@ -397,7 +398,7 @@ private struct SoundRulesSection: View {
                 Toggle("Use this rule", isOn: $rule.enabled).labelsHidden()
                 Text(rule.summary).lineLimit(2)
                 Spacer()
-                Button(role: .destructive) { runner.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                Button(role: .destructive) { runner.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the rule: \(rule.summary)").buttonStyle(.borderless)
             }
         }
         Button("Add a Rule…") { adding = true }
@@ -558,7 +559,7 @@ private struct ModeEditor: View {
                 HStack {
                     Text(action.title.prefix(1).uppercased() + action.title.dropFirst())
                     Spacer()
-                    Button { mode.actions.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
+                    Button { mode.actions.remove(at: index) } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove step \(index + 1) of the mode").buttonStyle(.borderless)
                 }
             }
             Divider()

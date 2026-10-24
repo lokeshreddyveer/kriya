@@ -72,18 +72,20 @@ struct DragToolsTab: View {
             Section {
                 ForEach(Array(config.doubleClicks.enumerated()), id: \.offset) { index, binding in
                     HStack {
-                        Picker("", selection: Binding(get: { binding.button }, set: { v in store.update { $0.doubleClicks[index].button = v } })) {
+                        Picker("Button", selection: Binding(get: { binding.button }, set: { v in store.update { $0.doubleClicks[index].button = v } })) {
                             ForEach(Self.extraButtons, id: \.number) { Text($0.title).tag($0.number) }
                         }.labelsHidden().frame(maxWidth: 150)
-                        Picker("", selection: Binding(get: { binding.actionId }, set: { v in store.update { $0.doubleClicks[index].actionId = v } })) {
+                        Picker("Action", selection: Binding(get: { binding.actionId }, set: { v in store.update { $0.doubleClicks[index].actionId = v } })) {
                             ForEach(library.actions, id: \.id) { Text($0.name).tag($0.id) }
                         }.labelsHidden()
-                        Button(role: .destructive) { store.update { $0.doubleClicks.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.update { $0.doubleClicks.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the double click for \(Self.extraButtons.first { $0.number == binding.button }?.title ?? "this button")").buttonStyle(.borderless)
                     }
                 }
                 Button {
-                    if let first = library.actions.first { store.update { $0.doubleClicks.append(DoubleClickBinding(button: 2, modifiers: 0, actionId: first.id)) } }
-                } label: { Label("Add a Double Click", systemImage: "plus") }.disabled(library.actions.isEmpty)
+                    // The first button that has no double click yet, so a new row never repeats one already there.
+                    let free = Self.extraButtons.first { b in !config.doubleClicks.contains { $0.button == b.number } }?.number
+                    if let first = library.actions.first, let free { store.update { $0.doubleClicks.append(DoubleClickBinding(button: free, modifiers: 0, actionId: first.id)) } }
+                } label: { Label("Add a Double Click", systemImage: "plus") }.disabled(library.actions.isEmpty || config.doubleClicks.count >= Self.extraButtons.count)
                 if !config.doubleClicks.isEmpty {
                     Stepper("Second click within \(config.doubleClickMs) ms", value: Binding(get: { Int(config.doubleClickMs) }, set: { v in store.update { $0.doubleClickMs = UInt32(v) } }), in: 150...600, step: 50)
                 }
@@ -99,7 +101,7 @@ struct DragToolsTab: View {
                             Picker("Hold", selection: Binding(get: { binding.button }, set: { v in store.update { $0.buttonScrolls[index].button = v } })) {
                                 ForEach(Self.extraButtons, id: \.number) { Text($0.title).tag($0.number) }
                             }
-                            Button(role: .destructive) { store.update { $0.buttonScrolls.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                            Button(role: .destructive) { store.update { $0.buttonScrolls.remove(at: index) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete this button and wheel pairing").buttonStyle(.borderless)
                         }
                         Picker("Wheel up", selection: Binding(get: { binding.upActionId ?? "" }, set: { v in store.update { $0.buttonScrolls[index].upActionId = v.isEmpty ? nil : v } })) {
                             Text("Nothing").tag("")
@@ -113,8 +115,9 @@ struct DragToolsTab: View {
                     .padding(.vertical, 2)
                 }
                 Button {
-                    store.update { $0.buttonScrolls.append(ButtonScrollBinding(button: 2, upActionId: library.actions.first?.id, downActionId: nil)) }
-                } label: { Label("Add a Button + Wheel", systemImage: "plus") }
+                    let free = Self.extraButtons.first { b in !config.buttonScrolls.contains { $0.button == b.number } }?.number
+                    if let free { store.update { $0.buttonScrolls.append(ButtonScrollBinding(button: free, upActionId: library.actions.first?.id, downActionId: nil)) } }
+                } label: { Label("Add a Button + Wheel", systemImage: "plus") }.disabled(config.buttonScrolls.count >= Self.extraButtons.count)
                 if !config.buttonScrolls.isEmpty, !permissions.isGranted(.inputMonitoring) { inputMonitoringNote }
             } header: { Text("Hold a button and turn the wheel") } footer: {
                 Text("While the button is held, each notch of the wheel runs the action for that direction, for example switching tabs or changing the volume. Pressing the button without turning the wheel still clicks.")

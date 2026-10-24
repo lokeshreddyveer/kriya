@@ -163,7 +163,7 @@ struct DisplaysPane: View {
                             tools.apply(profile)
                             pending = (DisplayChangeGuard(label: "“\(profile.name)”"), { tools.apply(before) })
                         }.controlSize(.small)
-                        Button(role: .destructive) { store.update { $0.displayProfiles.removeAll { $0.id == profile.id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.update { $0.displayProfiles.removeAll { $0.id == profile.id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the profile \(profile.name)").buttonStyle(.borderless)
                     }
                 }
             }
@@ -191,7 +191,7 @@ struct DisplaysPane: View {
                               range: 2...40, format: { "\(Int($0)) pt" })
                 }
             } header: { Text("Hot corners") } footer: {
-                Text("Rest the pointer in a corner to run a saved action. It must leave the corner before the same one can run again. Off by default.")
+                Text("Rest the pointer in a corner to run a saved action. It must leave the corner before the same one can run again. Off by default. A corner can also start an Automation workflow; if both use one corner, both run, so give each corner to one of them.")
             }
             if config.hotCornersEnabled {
                 Section("Actions") {

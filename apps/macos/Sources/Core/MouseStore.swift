@@ -147,8 +147,9 @@ final class MouseStore: ObservableObject {
     }
 
     func rename(presetID: String, to name: String) {
-        guard var preset = preset(presetID), !preset.id.hasPrefix("builtin.") else { return }
-        preset.name = name
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var preset = preset(presetID), !preset.id.hasPrefix("builtin."), !clean.isEmpty, preset.name != clean else { return }
+        preset.name = clean
         save(preset)
     }
 

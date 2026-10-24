@@ -5,6 +5,7 @@ struct ShelfPane: View {
     @EnvironmentObject private var store: ScreenToolsStore
     @ObservedObject private var shelves = ShelfLibraryStore.shared
     @State private var confirmEmpty = false
+    @State private var confirmHistory = false
     let shelf: FileShelf
 
     private var config: ScreenToolsConfig { store.config }
@@ -60,7 +61,7 @@ struct ShelfPane: View {
                     }
                     LabeledContent("History", value: "\(shelves.library.history.count)")
                     HStack {
-                        Button("Clear the History") { shelves.change { $0.clearHistory() } }.disabled(shelves.library.history.isEmpty)
+                        Button("Clear the History…") { confirmHistory = true }.disabled(shelves.library.history.isEmpty)
                         Button("Empty Every Shelf…", role: .destructive) { confirmEmpty = true }
                     }
                     Picker("Remind me before items are let go", selection: Binding(get: { ShelfLibraryStore.reminderLeadHours }, set: { ShelfLibraryStore.reminderLeadHours = $0; shelves.objectWillChange.send() })) {
@@ -85,6 +86,10 @@ struct ShelfPane: View {
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog("Clear the shelf history?", isPresented: $confirmHistory, titleVisibility: .visible) {
+            Button("Clear the History", role: .destructive) { shelves.change { $0.clearHistory() } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Items that were taken off a shelf can then no longer be put back.") }
         .confirmationDialog("Empty every shelf?", isPresented: $confirmEmpty, titleVisibility: .visible) {
             Button("Empty Every Shelf", role: .destructive) { shelves.change { library in for shelf in library.shelves { library.clear(shelf.id) } } }
             Button("Cancel", role: .cancel) {}

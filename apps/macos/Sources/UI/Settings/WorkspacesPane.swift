@@ -7,6 +7,7 @@ struct WorkspacesPane: View {
     @EnvironmentObject private var windows: WindowStore
     @State private var editing: Workspace?
     @State private var transferNote: String?
+    @State private var deleting: Workspace?
     @ObservedObject private var launchLog = WorkspaceLaunchLogStore.shared
 
     var body: some View {
@@ -26,7 +27,7 @@ struct WorkspacesPane: View {
                         }
                         Spacer()
                         Button("Edit") { editing = workspace }.controlSize(.small)
-                        Button { store.delete(workspace.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button { deleting = workspace } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the workspace \(workspace.name)").buttonStyle(.borderless)
                     }
                 }
                 .onMove { store.move(from: $0, to: $1) }
@@ -100,7 +101,7 @@ struct WorkspacesPane: View {
                             Text(AppChoice.name(for: favorite.appId)).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button { store.update { $0.favorites.removeAll { $0.slot == favorite.slot } } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
+                        Button { store.update { $0.favorites.removeAll { $0.slot == favorite.slot } } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove favorite window \(favorite.slot)").buttonStyle(.borderless)
                     }
                 }
             } header: { Text("Favorite windows") }
@@ -116,6 +117,10 @@ struct WorkspacesPane: View {
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.config.workspaces)
+        .confirmationDialog("Delete “\(deleting?.name ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let w = deleting { store.delete(w.id) }; deleting = nil }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { Text("A shortcut or button that opens it stops working. Export your workspaces first to keep a copy.") }
         .sheet(item: $editing) { workspace in
             WorkspaceEditor(workspace: workspace, onSave: { store.upsert($0); editing = nil }, onCancel: { editing = nil })
         }
@@ -174,7 +179,7 @@ private struct AppList: View {
                 HStack {
                     Text(AppChoice.name(for: id))
                     Spacer()
-                    Button { ids.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
+                    Button { ids.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove \(AppChoice.name(for: id))").buttonStyle(.borderless)
                 }
             }
             Button("Add App…") {

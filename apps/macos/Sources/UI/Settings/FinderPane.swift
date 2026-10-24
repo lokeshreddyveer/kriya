@@ -9,6 +9,7 @@ struct FinderPane: View {
 
     @State private var tab: Tab = .actions
     @State private var confirmReset = false
+    @State private var confirmDefaults = false
 
     enum Tab: String, CaseIterable, Identifiable {
         case actions = "Actions", templates = "Templates", menus = "Menus", apps = "Apps", pointer = "Pointer Menu", setup = "Setup"
@@ -29,12 +30,12 @@ struct FinderPane: View {
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             }
             HStack {
-                Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
+                Picker("Section", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
                     .paneTabBar(maxWidth: 580)
                 Menu {
                     Button("Add Common Actions (editor, hidden files, parent folder)") { store.addSuggested() }
                     Divider()
-                    Button("Restore Default Actions and Settings") { store.restoreDefaults(everything: false) }
+                    Button("Restore Default Actions and Settings…") { confirmDefaults = true }
                     Button("Restore Everything, Including Templates…") { confirmReset = true }
                 } label: { MoreMenuLabel() }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
             }
@@ -62,6 +63,10 @@ struct FinderPane: View {
                     .padding().transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .confirmationDialog("Restore the default actions and settings?", isPresented: $confirmDefaults, titleVisibility: .visible) {
+            Button("Restore Defaults", role: .destructive) { store.restoreDefaults(everything: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The Finder actions and menu options go back to how they started. Your templates stay.") }
         .confirmationDialog("Restore everything?", isPresented: $confirmReset) {
             Button("Restore Everything", role: .destructive) { store.restoreDefaults(everything: true) }
             Button("Cancel", role: .cancel) {}
@@ -76,6 +81,7 @@ private struct ActionsTab: View {
     @ObservedObject var history: FileOperationHistory
     let runner: FileActionRunner
     @State private var editing: FinderItem?
+    @State private var deleting: FinderItem?
 
     var body: some View {
         List {
@@ -95,7 +101,7 @@ private struct ActionsTab: View {
                         }
                         Spacer()
                         Button("Edit") { editing = item }.controlSize(.small)
-                        Button(role: .destructive) { withAnimation(.smooth) { store.delete(item.id) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { deleting = item } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the action \(item.title)").buttonStyle(.borderless)
                     }
                     .padding(.vertical, 3)
                 }
@@ -116,6 +122,10 @@ private struct ActionsTab: View {
             }
         }
         .animation(.smooth(duration: 0.25), value: store.items)
+        .confirmationDialog("Delete “\(deleting?.title ?? "")”?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let i = deleting { withAnimation(.smooth) { store.delete(i.id) } }; deleting = nil }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: { Text("It disappears from the right-click menu.") }
         .sheet(item: $editing) { ItemEditor(item: $0) }
     }
 }
@@ -374,7 +384,7 @@ private struct TemplatesTab: View {
                         VStack(alignment: .leading, spacing: 2) { Text(t.name).font(.headline); Text(t.fileName).font(.caption).foregroundStyle(.secondary) }
                         Spacer()
                         Button("Edit") { editingFile = t }.controlSize(.small)
-                        Button(role: .destructive) { store.deleteTemplate(t.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.deleteTemplate(t.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the template \(t.name)").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -392,7 +402,7 @@ private struct TemplatesTab: View {
                         VStack(alignment: .leading, spacing: 2) { Text(t.name).font(.headline); Text("\(t.entries.count) entries").font(.caption).foregroundStyle(.secondary) }
                         Spacer()
                         Button("Edit") { editingFolder = t }.controlSize(.small)
-                        Button(role: .destructive) { store.deleteFolderTemplate(t.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.deleteFolderTemplate(t.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the folder template \(t.name)").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -441,6 +451,7 @@ private struct FileTemplateEditor: View {
                     store.saveTemplate(template)
                     if store.lastError == nil { dismiss() }
                 }.keyboardShortcut(.defaultAction)
+                    .disabled(template.name.trimmingCharacters(in: .whitespaces).isEmpty || template.fileName.trimmingCharacters(in: .whitespaces).isEmpty || (useFile && (template.sourcePath ?? "").isEmpty))
             }
         }
         .padding(20).frame(width: 520)
@@ -474,6 +485,7 @@ private struct FolderTemplateEditor: View {
                     store.saveFolderTemplate(template)
                     if store.lastError == nil { dismiss() }
                 }.keyboardShortcut(.defaultAction)
+                    .disabled(template.name.trimmingCharacters(in: .whitespaces).isEmpty || template.folderName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(20).frame(width: 520)
@@ -494,7 +506,7 @@ private struct AppsSettingsTab: View {
                     HStack {
                         Text(AppChoice.name(for: id))
                         Spacer()
-                        Button(role: .destructive) { store.updateConfig { $0.favoriteApps.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.updateConfig { $0.favoriteApps.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Remove \(AppChoice.name(for: id)) from the favorites").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -547,7 +559,14 @@ private struct SetupTab: View {
                     Spacer()
                     Button("Open Extension Settings") { finder.openExtensionSettings() }
                     Button("Restart Extension") { finder.restartExtension(); checks = [] }
-                    Button("Relaunch Finder") { _ = try? ToolRunner.run("/usr/bin/killall", ["Finder"]) }
+                    Button("Relaunch Finder…") {
+                        let alert = NSAlert()
+                        alert.messageText = "Relaunch Finder?"
+                        alert.informativeText = "Finder quits and opens again at once. Its windows are closed and reopen where macOS puts them; copies in progress may stop."
+                        alert.addButton(withTitle: "Relaunch")
+                        alert.addButton(withTitle: "Cancel")
+                        if alert.runModal() == .alertFirstButtonReturn { _ = try? ToolRunner.run("/usr/bin/killall", ["Finder"]) }
+                    }
                 }
             } header: { Text("Finder extension") } footer: {
                 Text("Switch on “Kriya” under Finder extensions, then relaunch Finder. The menu then shows when you right-click files, folders or the empty space in a folder, and from the toolbar button if you add it.")
@@ -597,7 +616,7 @@ private struct SetupTab: View {
                             Text((path as NSString).abbreviatingWithTildeInPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         }
                         Spacer()
-                        Button(role: .destructive) { dialogFolders.set(nil, for: id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { dialogFolders.set(nil, for: id) } label: { Image(systemName: "trash") }.accessibilityLabel("Remove the folder set for \(AppChoice.name(for: id))").buttonStyle(.borderless)
                     }
                 }
                 Button {

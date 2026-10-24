@@ -15,7 +15,7 @@ struct AIProvidersSection: View {
             Section {
                 ForEach(store.providers) { config in
                     HStack(spacing: 10) {
-                        Toggle("", isOn: Binding(get: { config.enabled }, set: { var c = config; c.enabled = $0; store.update(c) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        Toggle(config.name, isOn: Binding(get: { config.enabled }, set: { var c = config; c.enabled = $0; store.update(c) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             .accessibilityLabel("Use \(config.name)")
                         VStack(alignment: .leading, spacing: 2) {
                             Text(config.name).font(.headline)
@@ -242,7 +242,15 @@ private struct AIProviderEditor: View {
             .formStyle(.grouped)
             HStack {
                 if !isNew && !isApple {
-                    Button("Forget This Provider", role: .destructive) { store.forget(config); close() }
+                    Button("Forget This Provider…", role: .destructive) {
+                        let alert = NSAlert()
+                        alert.alertStyle = .warning
+                        alert.messageText = "Forget “\(config.name)”?"
+                        alert.informativeText = "The provider is removed from Kriya, and its key is deleted from the Keychain."
+                        alert.addButton(withTitle: "Forget")
+                        alert.addButton(withTitle: "Cancel")
+                        if alert.runModal() == .alertFirstButtonReturn { store.forget(config); close() }
+                    }
                 }
                 Spacer()
                 Button("Cancel") { close() }.keyboardShortcut(.cancelAction)

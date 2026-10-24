@@ -20,7 +20,7 @@ struct FinderMenusTab: View {
                         }
                         Spacer()
                         Button("Edit") { editingTag = preset }.controlSize(.small)
-                        Button(role: .destructive) { store.tagPresets.removeAll { $0.id == preset.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.tagPresets.removeAll { $0.id == preset.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the preset \(preset.title)").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -32,7 +32,7 @@ struct FinderMenusTab: View {
             } footer: { Text("Add the “Quick Tag” action to the menu (Add Common Actions) and each preset becomes one click: it adds its tags to what the item has, can write a comment, or take every tag off.") }
 
             Section {
-                if sets.sets.isEmpty { Text("No folder sets yet. Save the folders open in Finder as a set in Setup › Folder memory.").foregroundStyle(.secondary) }
+                if sets.sets.isEmpty { Text("No folder sets yet. Save the folders open in Finder as a set in Setup › Folder sets.").foregroundStyle(.secondary) }
                 ForEach(sets.sets) { set in
                     HStack { Text(set.name); Spacer(); Text("\(set.paths.count) folder\(set.paths.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary) }
                 }
@@ -49,7 +49,7 @@ struct FinderMenusTab: View {
                         }
                         Spacer()
                         Button("Edit") { editingProfile = profile }.controlSize(.small)
-                        Button(role: .destructive) { store.profiles.removeAll { $0.id == profile.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { store.profiles.removeAll { $0.id == profile.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the profile \(profile.name)").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -144,7 +144,7 @@ private struct ProfileEditor: View {
                 TextField("Name", text: $profile.name)
                 Section("Show these actions only in") {
                     ForEach(profile.folders, id: \.self) { folder in
-                        HStack { Text((folder as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.head); Spacer(); Button { profile.folders.removeAll { $0 == folder } } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Remove folder") }
+                        HStack { Text((folder as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.head); Spacer(); Button { profile.folders.removeAll { $0 == folder } } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Remove the folder \((folder as NSString).lastPathComponent)") }
                     }
                     Button("Add Folder…") { addFolder() }
                     if profile.folders.isEmpty { Text("No folder: the actions show everywhere.").font(.caption).foregroundStyle(.secondary) }

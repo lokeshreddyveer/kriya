@@ -12,6 +12,9 @@ struct FeaturesPane: View {
 
     private var runningCount: Int { FeatureId.all.filter { services.state($0) == .running }.count }
 
+    /// The features outside the main list that are switched on, so the count does not say "8 of 8" while others are listed below.
+    private var moreOnCount: Int { FeatureRegistry.extras.filter { FeatureSwitchboard.shared.isSwitchable($0.id) && FeatureSwitchboard.shared.isOn($0.id) }.count }
+
     var body: some View {
         VStack(spacing: 0) {
             if !needAttention.isEmpty {
@@ -32,7 +35,7 @@ struct FeaturesPane: View {
                     }
                 } header: {
                     HStack {
-                        Text(runningCount == 0 ? "Nothing running" : "\(runningCount) of \(FeatureId.all.count) running")
+                        Text((runningCount == 0 ? "Nothing running" : "\(runningCount) of \(FeatureId.all.count) running") + (moreOnCount > 0 ? " · \(moreOnCount) more on" : ""))
                             .smoothly(runningCount)
                         Spacer()
                         Button { navigator.openSetupGuide() } label: { Text("Setup Guide").foregroundStyle(Theme.accent) }
