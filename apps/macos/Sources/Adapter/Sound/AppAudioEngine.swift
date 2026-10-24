@@ -167,26 +167,82 @@ final class AudioSession {
     private static func render(processor: AudioProcessor, scratch: UnsafeMutablePointer<Float>, input: UnsafePointer<AudioBufferList>, output: UnsafeMutablePointer<AudioBufferList>) {
         let inputs = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         let outputs = UnsafeMutableAudioBufferListPointer(output)
-        for (index, out) in outputs.enumerated() {
-            guard let outData = out.mData?.assumingMemoryBound(to: Float.self) else { continue }
-            let outChannels = max(Int(out.mNumberChannels), 1)
-            let outFrames = Int(out.mDataByteSize) / (MemoryLayout<Float>.size * outChannels)
-            guard inputs.count > 0 else { memset(out.mData, 0, Int(out.mDataByteSize)); continue }
-            let inBuffer = inputs[min(index, inputs.count - 1)]
-            guard let inData = inBuffer.mData?.assumingMemoryBound(to: Float.self) else { memset(out.mData, 0, Int(out.mDataByteSize)); continue }
-            let inChannels = max(Int(inBuffer.mNumberChannels), 1)
-            let inFrames = Int(inBuffer.mDataByteSize) / (MemoryLayout<Float>.size * inChannels)
-            let frames = min(outFrames, inFrames, scratchFrames)
-            if inChannels == outChannels {
-                processor.process(input: inData, output: outData, frames: frames, channels: outChannels, firstChannel: index == 0 ? 0 : 0)
-            } else {
-                // Different channel counts: shape it as it came, then spread or fold it onto the output's channels.
-                processor.process(input: inData, output: scratch, frames: frames, channels: min(inChannels, AudioProcessor.maxChannels))
-                for f in 0..<frames {
-                    for c in 0..<outChannels { outData[f * outChannels + c] = scratch[f * min(inChannels, AudioProcessor.maxChannels) + (c % inChannels)] }
+        render(processor: processor, scratch: scratch, inputs: inputs, outputs: outputs)
+    }
+
+    /// One buffer in and one out of the same width (ordinary interleaved stereo) is processed in place. Anything else, such as a device
+    /// that wants a separate buffer for each channel, is gathered into one run of interleaved channels, processed once (so channel 0 is
+    /// the left and channel 1 the right whatever the buffers look like), and handed out to the output's channels. Nothing here allocates.
+    static func render(processor: AudioProcessor, scratch: UnsafeMutablePointer<Float>, inputs: UnsafeMutableAudioBufferListPointer, outputs: UnsafeMutableAudioBufferListPointer) {
+        if inputs.count == 1, outputs.count == 1, let inData = inputs[0].mData?.assumingMemoryBound(to: Float.self), let outData = outputs[0].mData?.assumingMemoryBound(to: Float.self),
+           inputs[0].mNumberChannels == outputs[0].mNumberChannels, inputs[0].mNumberChannels > 0 {
+            let channels = Int(inputs[0].mNumberChannels)
+            let inFrames = Int(inputs[0].mDataByteSize) / (MemoryLayout<Float>.size * channels)
+            let outFrames = Int(outputs[0].mDataByteSize) / (MemoryLayout<Float>.size * channels)
+            // In place, so the size of the scratch space does not limit it: a large buffer is processed whole, not cut.
+            let frames = min(outFrames, inFrames)
+            processor.process(input: inData, output: outData, frames: frames, channels: channels)
+            if frames < outFrames { memset(outData + frames * channels, 0, (outFrames - frames) * channels * MemoryLayout<Float>.size) }
+            return
+        }
+        func silence() { for out in outputs { if let data = out.mData { memset(data, 0, Int(out.mDataByteSize)) } } }
+        guard inputs.count > 0 else { return silence() }
+
+        // How wide the whole input is, and the most frames every buffer can supply.
+        var total = 0
+        var frames = Int.max
+        for buffer in inputs {
+            let channels = max(Int(buffer.mNumberChannels), 1)
+            total += channels
+            frames = min(frames, Int(buffer.mDataByteSize) / (MemoryLayout<Float>.size * channels))
+        }
+        total = min(total, AudioProcessor.maxChannels)
+        for out in outputs {
+            let channels = max(Int(out.mNumberChannels), 1)
+            frames = min(frames, Int(out.mDataByteSize) / (MemoryLayout<Float>.size * channels))
+        }
+        guard total > 0, frames > 0, frames != Int.max else { return silence() }
+
+        // The scratch space holds `scratchFrames` frames, so a bigger buffer is done in pieces, not cut short.
+        var start = 0
+        while start < frames {
+            let n = min(frames - start, scratchFrames)
+            // Gather: input buffer b, channel c goes to channel (channels before b) + c.
+            var offset = 0
+            for buffer in inputs {
+                let channels = max(Int(buffer.mNumberChannels), 1)
+                if let data = buffer.mData?.assumingMemoryBound(to: Float.self) {
+                    for c in 0..<channels where offset + c < total {
+                        for f in 0..<n { scratch[f * total + offset + c] = data[(start + f) * channels + c] }
+                    }
+                } else {
+                    for c in 0..<channels where offset + c < total { for f in 0..<n { scratch[f * total + offset + c] = 0 } }
                 }
+                offset += channels
             }
-            if frames < outFrames { memset(outData + frames * outChannels, 0, (outFrames - frames) * outChannels * MemoryLayout<Float>.size) }
+            processor.process(input: UnsafePointer(scratch), output: scratch, frames: n, channels: total)
+
+            // Hand out: output channel g takes processed channel g, or, past the end, wraps (so a mono input fills both sides).
+            var global = 0
+            for out in outputs {
+                let channels = max(Int(out.mNumberChannels), 1)
+                if let data = out.mData?.assumingMemoryBound(to: Float.self) {
+                    for c in 0..<channels {
+                        let source = (global + c) % total
+                        for f in 0..<n { data[(start + f) * channels + c] = scratch[f * total + source] }
+                    }
+                }
+                global += channels
+            }
+            start += n
+        }
+        // Whatever the outputs have beyond what the input supplied is silence.
+        for out in outputs {
+            let channels = max(Int(out.mNumberChannels), 1)
+            let outFrames = Int(out.mDataByteSize) / (MemoryLayout<Float>.size * channels)
+            if frames < outFrames, let data = out.mData?.assumingMemoryBound(to: Float.self) {
+                memset(data + frames * channels, 0, (outFrames - frames) * channels * MemoryLayout<Float>.size)
+            }
         }
     }
 }

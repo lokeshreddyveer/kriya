@@ -18,9 +18,13 @@ struct SoundPopoverView: View {
     @State private var effectsFor: String?
     @State private var showApps = true
 
-    init(openSettings: @escaping () -> Void = {}, setPinned: @escaping (Bool) -> Void = { _ in }, startWithEffects: String? = nil) {
+    /// How tall this window is, worked out for the display it opens on.
+    private let height: CGFloat
+
+    init(openSettings: @escaping () -> Void = {}, setPinned: @escaping (Bool) -> Void = { _ in }, startWithEffects: String? = nil, height: CGFloat? = nil) {
         self.openSettings = openSettings
         self.setPinned = setPinned
+        self.height = height ?? Self.height(on: nil)
         _effectsFor = State(initialValue: startWithEffects)
     }
 
@@ -31,7 +35,10 @@ struct SoundPopoverView: View {
 
     /// The popover never changes size: opening the effects of an app scrolls inside it instead of resizing the window, which is what
     /// made it jump. It is as tall as fits the screen, up to 640 points.
-    static var height: CGFloat { min(640, (NSScreen.main?.visibleFrame.height ?? 800) - 90) }
+    static var height: CGFloat { height(on: nil) }
+
+    /// The height for the display the icon is on (the main display if that is not known).
+    static func height(on screen: NSScreen?) -> CGFloat { min(640, ((screen ?? NSScreen.main)?.visibleFrame.height ?? 800) - 90) }
     static let width: CGFloat = 392
 
     var body: some View {
@@ -48,7 +55,7 @@ struct SoundPopoverView: View {
                 .animation(.smooth(duration: 0.22), value: engine.apps.map(\.id))
             }
         }
-        .frame(width: Self.width, height: Self.height)
+        .frame(width: Self.width, height: height)
         .clipped()
         .background(Color.black)
         .preferredColorScheme(.dark)

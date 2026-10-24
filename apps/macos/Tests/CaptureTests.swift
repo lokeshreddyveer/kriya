@@ -297,6 +297,58 @@ final class ScreenCaptureServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path), "cancelled in the editor, so nothing is delivered")
     }
 
+    // MARK: The macOS recorder is a managed process
+
+    private func sleeper(_ ended: @escaping (Process) -> Void) throws -> Process {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        p.arguments = ["30"]
+        p.terminationHandler = ended
+        try p.run()
+        return p
+    }
+
+    private func wait(until condition: @escaping () -> Bool, _ message: String) {
+        let done = expectation(description: message)
+        func poll() { if condition() { done.fulfill() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: poll) } }
+        DispatchQueue.main.async(execute: poll)
+        wait(for: [done], timeout: 10)
+    }
+
+    func testKriyasStopEndsTheMacOSRecorderAndTheIconFollowsIt() throws {
+        service.recorderLauncher = { [unowned self] _, ended in try sleeper(ended) }
+        service.capture(.region, action: .record)
+        wait(until: { self.service.systemRecorder != nil }, "recorder started")
+        XCTAssertEqual(service.recordingKind, .macOS)
+        XCTAssertTrue(service.isCapturing, "a second capture cannot start on top of it")
+        XCTAssertEqual(service.overlayActions(settings: service.settings.settings).recordingKind(), .macOS)
+        service.capture(.screen, action: .stopRecording)
+        wait(until: { self.service.systemRecorder == nil && !self.service.isCapturing }, "recorder stopped")
+        XCTAssertNil(service.recordingKind)
+        XCTAssertEqual(service.overlayActions(settings: service.settings.settings).recordingKind(), .none)
+    }
+
+    func testPauseSaysMacOSCannotPauseAndStopWithNothingRunningSaysSo() throws {
+        service.recorderLauncher = { [unowned self] _, ended in try sleeper(ended) }
+        service.capture(.screen, action: .stopRecording)          // nothing is recording: no crash, no state
+        XCTAssertNil(service.recordingKind)
+        service.capture(.region, action: .record)
+        wait(until: { self.service.systemRecorder != nil }, "recorder started")
+        service.capture(.screen, action: .pauseRecording)          // macOS's recorder has no pause: it keeps running
+        XCTAssertEqual(service.recordingKind, .macOS)
+        service.capture(.screen, action: .stopRecording)
+        wait(until: { self.service.systemRecorder == nil }, "recorder stopped")
+    }
+
+    func testARecorderThatCannotStartIsSaidAndLeavesNothingRunning() {
+        struct Boom: LocalizedError { var errorDescription: String? { "no such program" } }
+        service.recorderLauncher = { _, _ in throw Boom() }
+        service.capture(.region, action: .record)
+        XCTAssertFalse(service.isCapturing, "not left waiting for something that never started")
+        XCTAssertNil(service.systemRecorder)
+        XCTAssertNil(service.recordingKind)
+    }
+
     func testCaptureCommandsAreRecognised() {
         service.hasPermission = { false }
         service.requestPermission = {}

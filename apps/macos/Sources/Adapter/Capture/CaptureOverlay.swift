@@ -17,7 +17,12 @@ struct CaptureOverlayActions {
     var captureFolder: () -> URL = { CaptureSettings.defaultFolder }
     /// The shortcut a command is bound to, written as it is shown in a menu ("⌘⇧4"), or nil if it has none.
     var shortcutText: (String) -> String? = { _ in nil }
+    /// Which recorder is running now, if one is.
+    var recordingKind: () -> OverlayRecordingKind = { .none }
 }
+
+/// Who is recording: Kriya's own recorder (which can pause) or macOS's (which can only stop).
+enum OverlayRecordingKind: Equatable { case none, kriya, macOS }
 
 /// One capture shown as a card: its picture (a frame, for a recording), where it is saved, and what it is.
 final class OverlayCard: ObservableObject, Identifiable {
@@ -191,8 +196,13 @@ final class CaptureOverlay {
     private func refreshIcon() {
         // Not while the automated tests run, so they never add icons to the real menu bar.
         guard !Self.underTest else { return }
-        statusItem.update(mode: QuickAccessStore.settings.icon, active: recentActivity || canRestore, overlay: self)
+        // While anything is recording the icon is there (even if it is set to appear only when needed) and turns red.
+        let recording = actions.recordingKind() != .none
+        statusItem.update(mode: QuickAccessStore.settings.icon, active: recentActivity || canRestore || recording, overlay: self)
     }
+
+    /// A recording started or ended: the icon shows it.
+    func recordingChanged() { refreshIcon() }
 
     /// Applies a changed setting at once: the icon, and where the cards are.
     func settingsChanged() { refreshIcon(); layout() }
@@ -380,14 +390,22 @@ final class QuickAccessStatusItem: NSObject, NSMenuDelegate {
         let wanted = mode == .visible || (mode == .automatic && active)
         if wanted, item == nil {
             let created = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            created.button?.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Kriya captures")
-            created.button?.image?.isTemplate = true
             created.button?.target = self
             created.button?.action = #selector(clicked)
             item = created
         } else if !wanted, let item {
             NSStatusBar.system.removeStatusItem(item)
             self.item = nil
+        }
+        // The icon turns red and filled while something is recording, so it can be seen from across the menu bar.
+        guard let button = item?.button else { return }
+        if overlay.actions.recordingKind() != .none {
+            let image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")
+            button.image = image?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.systemRed]))
+            button.image?.isTemplate = false
+        } else {
+            button.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Kriya captures")
+            button.image?.isTemplate = true
         }
     }
 
@@ -397,11 +415,22 @@ final class QuickAccessStatusItem: NSObject, NSMenuDelegate {
         // then what was captured, then the settings. Every command shows its shortcut on the right, and each has an icon.
         let menu = NSMenu()
         menu.autoenablesItems = false
-        func add(_ title: String, _ symbol: String, _ command: String, to target: NSMenu) {
+        func add(_ title: String, _ symbol: String, _ command: String, to target: NSMenu, enabled: Bool = true) {
             let mi = target.addItem(withTitle: title, action: #selector(runCommand(_:)), keyEquivalent: "")
             mi.target = self; mi.representedObject = command
             mi.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            mi.isEnabled = enabled
             if let shortcut = overlay.actions.shortcutText(command) { mi.attributedTitle = Self.titled(title, shortcut: shortcut) }
+        }
+        // While a recording runs its controls come first, and say whose recording it is: Kriya's can pause, macOS's can only stop.
+        let kind = overlay.actions.recordingKind()
+        if kind != .none {
+            let header = menu.addItem(withTitle: kind == .kriya ? "Recording with Kriya" : "Recording with macOS's recorder", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            header.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.systemRed]))
+            add("Stop Recording", "stop.circle", "capture.rec.stop", to: menu)
+            add(kind == .kriya ? "Pause or Resume Recording" : "Pause (macOS's recorder cannot pause)", "pause.circle", "capture.rec.pause", to: menu, enabled: kind == .kriya)
+            menu.addItem(.separator())
         }
         add("Capture Area", "viewfinder", "capture.region", to: menu)
         add("Capture Previous Area", "arrow.counterclockwise", "capture.again", to: menu)
@@ -410,12 +439,10 @@ final class QuickAccessStatusItem: NSObject, NSMenuDelegate {
         add("Scrolling Capture", "arrow.up.and.down.text.horizontal", "capture.scroll", to: menu)
         add("Capture Menu", "filemenu.and.cursorarrow", "capture.menu", to: menu)
         menu.addItem(.separator())
-        add("Record Screen", "record.circle", "capture.rec.screen", to: menu)
-        add("Record Window", "macwindow.badge.plus", "capture.rec.window", to: menu)
-        add("Record Area as Video", "rectangle.dashed.badge.record", "capture.record", to: menu)
-        add("Record GIF", "photo.on.rectangle", "capture.gif", to: menu)
-        add("Pause or Resume Recording", "pause.circle", "capture.rec.pause", to: menu)
-        add("Stop Recording", "stop.circle", "capture.rec.stop", to: menu)
+        add("Record Screen", "record.circle", "capture.rec.screen", to: menu, enabled: kind == .none)
+        add("Record Window", "macwindow.badge.plus", "capture.rec.window", to: menu, enabled: kind == .none)
+        add("Record Area (macOS recorder)", "rectangle.dashed.badge.record", "capture.record", to: menu, enabled: kind == .none)
+        add("Record GIF (macOS recorder)", "photo.on.rectangle", "capture.gif", to: menu, enabled: kind == .none)
         menu.addItem(.separator())
         let text = NSMenuItem(title: "Capture Text (OCR)", action: nil, keyEquivalent: "")
         text.image = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: nil)

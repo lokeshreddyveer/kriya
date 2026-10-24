@@ -18,6 +18,15 @@ final class ScreenRecorder: NSObject, ObservableObject {
         var errorDescription: String? { message }
     }
 
+    /// Stop was pressed before the recording had started: it ends as soon as the start is through, without a file and without an error.
+    struct Cancelled: Error {}
+    private let cancelLock = NSLock()
+    private var cancelStartValue = false
+    private var cancelStart: Bool {
+        get { cancelLock.lock(); defer { cancelLock.unlock() }; return cancelStartValue }
+        set { cancelLock.lock(); cancelStartValue = newValue; cancelLock.unlock() }
+    }
+
     @Published private(set) var state: State = .idle
     /// Seconds recorded so far, not counting time paused.
     @Published private(set) var elapsed: TimeInterval = 0
@@ -57,20 +66,24 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     /// Starts recording into `folder`. `excluding` are the numbers of Kriya's own windows (the controls) that must stay out of
     /// the video. The result of starting arrives through `completion`.
-    func start(options requested: RecordingOptions, into folder: URL, excluding hidden: [Int], fileName: String? = nil, completion: @escaping (Error?) -> Void) {
+    func start(options requested: RecordingOptions, into folder: URL, excluding hidden: [Int], fileName: String? = nil, target: NSRunningApplication? = nil, completion: @escaping (Error?) -> Void) {
         guard state == .idle else { return completion(Failure("A recording is already running.")) }
         let options = requested.sanitized(hdrAvailable: Self.hdrAvailable)
+        cancelStart = false
         setState(.starting)
         Task {
             do {
                 try await Self.askPermissions(for: options)
+                if cancelStart { throw Cancelled() }
                 let content = try await Self.shareableContent()
-                let filter = try Self.filter(for: options.source, in: content, excluding: hidden)
+                if cancelStart { throw Cancelled() }
+                let filter = try Self.filter(for: options.source, in: content, excluding: hidden, target: target)
                 let configuration = Self.configuration(for: filter, options: options)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 let name = fileName ?? RecordingFileName.make(for: Date()) { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
                 let url = folder.appendingPathComponent(name)
                 try await begin(filter: filter, configuration: configuration, options: options, url: url)
+                if cancelStart { throw Cancelled() }   // the stream just started is ended by the clean-up below
                 await MainActor.run {
                     self.setState(.recording)
                     self.startTimer()
@@ -135,6 +148,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     func stop() {
+        // Pressed while the recording is still starting (waiting for permission, or for the screen to be found): the start notices
+        // and ends cleanly. Before this, the press was ignored and the recording began anyway.
+        if state == .starting { cancelStart = true; return }
         guard state == .recording || state == .paused else { return }
         setState(.stopping)
         stopTimer()
@@ -221,25 +237,27 @@ final class ScreenRecorder: NSObject, ObservableObject {
         return content.displays.first { $0.displayID == id } ?? content.displays.first
     }
 
-    static func filter(for source: RecordingSource, in content: SCShareableContent, excluding hidden: [Int]) throws -> SCContentFilter {
+    /// `target` is the app that was in front when the recording was asked for. Finding the screen and the windows takes a moment, and the
+    /// person may switch apps meanwhile; the recording is of the app they asked about, not whichever is in front by then.
+    static func filter(for source: RecordingSource, in content: SCShareableContent, excluding hidden: [Int], target: NSRunningApplication? = nil) throws -> SCContentFilter {
         guard let display = pointerDisplay(in: content) else { throw Failure("There is no screen to record.") }
         let own = content.windows.filter { hidden.contains(Int($0.windowID)) }
         switch source {
         case .screen:
             return SCContentFilter(display: display, excludingWindows: own)
         case .window:
-            guard let window = frontWindow(in: content) else { throw Failure("There is no window in front to record.") }
+            guard let window = frontWindow(in: content, app: target) else { throw Failure("There is no window in front to record.") }
             return SCContentFilter(desktopIndependentWindow: window)
         case .app:
-            guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            guard let pid = (target ?? NSWorkspace.shared.frontmostApplication)?.processIdentifier,
                   let app = content.applications.first(where: { $0.processID == pid }) else { throw Failure("There is no app in front to record.") }
             return SCContentFilter(display: display, including: [app], exceptingWindows: own)
         }
     }
 
     /// The front window of the front app: the one Accessibility says is focused if that is allowed, otherwise its largest.
-    private static func frontWindow(in content: SCShareableContent) -> SCWindow? {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+    private static func frontWindow(in content: SCShareableContent, app requested: NSRunningApplication? = nil) -> SCWindow? {
+        guard let app = requested ?? NSWorkspace.shared.frontmostApplication else { return nil }
         let candidates = content.windows.filter { $0.owningApplication?.processID == app.processIdentifier && $0.windowLayer == 0 && $0.frame.width > 50 && $0.frame.height > 50 }
         if AXIsProcessTrusted(), let focused = AXWindow.focused()?.frame?.cg {
             if let match = candidates.min(by: { distance($0.frame, focused) < distance($1.frame, focused) }), distance(match.frame, focused) < 40 { return match }

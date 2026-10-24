@@ -24,7 +24,7 @@ final class RecordingController: ObservableObject {
         recorder.onFinish = { [weak self] result in self?.finished(result) }
     }
 
-    func start(_ options: RecordingOptions, into folder: URL, namePattern: String? = nil, app: String? = nil, mode: String = "recording") {
+    func start(_ options: RecordingOptions, into folder: URL, namePattern: String? = nil, app: String? = nil, mode: String = "recording", target: NSRunningApplication? = nil) {
         guard !recorder.isActive else { return }
         let hud = RecordingHUD(recorder: recorder, onPause: { [weak self] in self?.recorder.togglePause() }, onStop: { [weak self] in self?.recorder.stop() })
         self.hud = hud
@@ -34,10 +34,11 @@ final class RecordingController: ObservableObject {
             let fileName = CaptureNaming.fileName(pattern: namePattern.map { $0.replacingOccurrences(of: "Capture", with: "Recording") } ?? "Kriya Recording {date} {time}", date: Date(), app: app, mode: mode, ext: "mov") {
                 FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
             }
-            self.recorder.start(options: options, into: folder, excluding: [hud.windowNumber], fileName: fileName) { [weak self] error in
+            self.recorder.start(options: options, into: folder, excluding: [hud.windowNumber], fileName: fileName, target: target) { [weak self] error in
                 guard let self, let error else { return }
                 self.tearDown()
-                self.toast.show(error.localizedDescription, isError: true)
+                // Stop pressed during the start is not a failure.
+                if error is ScreenRecorder.Cancelled { self.toast.show("Recording cancelled.") } else { self.toast.show(error.localizedDescription, isError: true) }
                 self.onEnd()
             }
         }

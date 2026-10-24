@@ -21,7 +21,7 @@ struct CapturePane: View {
         Form {
             if !screenAllowed {
                 Section {
-                    Banner(symbol: "rectangle.dashed.badge.record", tint: Theme.warn, title: "Screen Recording is off for Kriya", message: "macOS asks for this before any app may capture the screen. Kriya only captures when you ask it to.") {
+                    Banner(symbol: "rectangle.dashed.badge.record", tint: Theme.warn, title: "Screen Recording is off for Kriya", message: "macOS asks for this before any app may capture the screen. Kriya only captures when you ask it to. After you allow it, macOS may ask you to quit and reopen Kriya; this notice goes away once it has taken effect.") {
                         Button("Allow…") {
                             CGRequestScreenCaptureAccess()
                             screenAllowed = CGPreflightScreenCaptureAccess()
@@ -160,6 +160,13 @@ struct CapturePane: View {
         }
         .formStyle(.grouped)
         .onAppear { screenAllowed = CGPreflightScreenCaptureAccess() }
+        // The answer to the permission prompt arrives later, so the notice is checked again until it is gone (and the pane is left).
+        .task {
+            while !Task.isCancelled && !screenAllowed {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                screenAllowed = CGPreflightScreenCaptureAccess()
+            }
+        }
     }
 
     // MARK: Shortcuts and macOS's own screenshot keys

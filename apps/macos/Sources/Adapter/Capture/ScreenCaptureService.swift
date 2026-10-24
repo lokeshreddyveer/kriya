@@ -18,6 +18,8 @@ final class ScreenCaptureService: ObservableObject {
     private let queue = DispatchQueue(label: "app.kriya.capture", qos: .userInitiated)
     private var hotkeys: HotkeyCenter?
     private var cancellables = Set<AnyCancellable>()
+    /// Kept apart from the others: they are dropped when the shortcuts are stopped, this must keep following the recorder.
+    private var recordingSub: AnyCancellable?
 
     /// Opens the editor with a picture and calls back with the finished one (nil when the person cancels). Set by the app.
     var showEditor: (CGImage, @escaping (CGImage?) -> Void) -> Void = { image, done in done(image) }
@@ -37,10 +39,43 @@ final class ScreenCaptureService: ObservableObject {
     /// Where pictures and text go. Replaced in tests.
     var pasteboard: NSPasteboard = .general
 
+    // MARK: The macOS recorder
+
+    /// Starts macOS's own recorder (`screencapture -v`) and returns the running process; it throws if it cannot be started. Replaced in tests.
+    var recorderLauncher: ([String], @escaping (Process) -> Void) throws -> Process = { arguments, finished in
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = arguments
+        process.terminationHandler = finished
+        try process.run()
+        return process
+    }
+
+    /// The macOS recorder while it is choosing what to record or recording. Kept so Kriya's Stop can end it.
+    @Published private(set) var systemRecorder: Process?
+
+    /// What is recording now, for the menu-bar icon and menu: Kriya's own recorder, or macOS's.
+    enum RecordingKind { case kriya, macOS }
+    var recordingKind: RecordingKind? {
+        if recording.isRecording { return .kriya }
+        if let p = systemRecorder, p.isRunning { return .macOS }
+        return nil
+    }
+
+    /// Ends macOS's recorder the way Control-C would (it then saves the movie). False if it is not running.
+    @discardableResult
+    func stopSystemRecorder() -> Bool {
+        guard let p = systemRecorder, p.isRunning else { return false }
+        kill(p.processIdentifier, SIGINT)
+        return true
+    }
+
     init(settings: CaptureSettingsStore) {
         self.settings = settings
         recording.onEnd = { [weak self] in self?.isCapturing = false }
         recording.onSaved = { [weak self] url in self?.recordingSaved(url) }
+        // The menu-bar icon follows Kriya's own recorder: red while it starts, records or pauses.
+        recordingSub = recording.recorder.$state.receive(on: DispatchQueue.main).sink { _ in CaptureOverlay.shared.recordingChanged() }
         CaptureOverlay.shared.actions = overlayActions(settings: settings.settings)
     }
 
@@ -85,8 +120,15 @@ final class ScreenCaptureService: ObservableObject {
     func capture(_ mode: CaptureMode, action: CaptureAction = .normal) {
         // These act on a recording already running (or need no capture permission), so they come before the checks below.
         switch action {
-        case .pauseRecording: recording.togglePause(); return
-        case .stopRecording: recording.stop(); return
+        case .pauseRecording:
+            if recording.isRecording { recording.togglePause() }
+            else if systemRecorder?.isRunning == true { toast.show("macOS's recorder cannot be paused. Stop it, or use “Record Screen” for a recording that can.", isError: true) }
+            return
+        case .stopRecording:
+            // Whichever recorder is running is the one that stops: Kriya's own, or macOS's.
+            if recording.isRecording { recording.stop() }
+            else if !stopSystemRecorder() { toast.show("There is no recording to stop.") }
+            return
         case .mirror: recording.showMirror(); return
         case .trimRecording: DispatchQueue.main.async { self.trimRecording() }; return
         default: break
@@ -116,7 +158,7 @@ final class ScreenCaptureService: ObservableObject {
         if action == .recordScreen || action == .recordWindow || action == .recordApp {
             var options = current.recording
             options.source = action == .recordWindow ? .window : action == .recordApp ? .app : .screen
-            recording.start(options, into: current.folder, namePattern: current.namePattern, app: frontApp, mode: options.source.rawValue)
+            recording.start(options, into: current.folder, namePattern: current.namePattern, app: frontApp, mode: options.source.rawValue, target: NSWorkspace.shared.frontmostApplication)
             return
         }
         if action == .record || action == .recordGIF { return record(asGIF: action == .recordGIF, settings: current) }
@@ -187,19 +229,41 @@ final class ScreenCaptureService: ObservableObject {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let stamp = ScreenCaptureArguments.fileName(for: Date()).replacingOccurrences(of: "Capture", with: "Recording").replacingOccurrences(of: ".png", with: "")
         let movie = folder.appendingPathComponent(stamp + ".mov")
-        toast.show("Choose what to record. Click the stop button in the menu bar when you are done.")
-        queue.async { [self] in
-            capturer(["-i", "-v", movie.path])
-            DispatchQueue.main.async { self.isCapturing = false }
-            guard FileManager.default.fileExists(atPath: movie.path) else { return }
-            guard asGIF else { DispatchQueue.main.async { self.toast.show("Recording saved as \(movie.lastPathComponent)"); self.recordingSaved(movie, settings: settings) }; return }
-            let gif = movie.deletingPathExtension().appendingPathExtension("gif")
-            Task {
-                let ok = await GIFExporter.convert(movie: movie, to: gif)
-                await MainActor.run {
-                    if ok { try? FileManager.default.removeItem(at: movie); self.toast.show("GIF saved as \(gif.lastPathComponent)"); self.recordingSaved(gif, settings: settings) }
-                    else { self.toast.show("The recording was saved, but could not be turned into a GIF.", isError: true) }
-                }
+        toast.show("Choose what to record, then click the stop button in the menu bar, or use “Stop Recording” in Kriya's menu or its shortcut.")
+        // The recorder runs on its own and tells when it has ended, so nothing here waits for it, a failure to start is said, and Kriya's
+        // Stop can end it.
+        let process: Process
+        do {
+            process = try recorderLauncher(["-i", "-v", movie.path]) { [weak self] ended in
+                DispatchQueue.main.async { self?.systemRecorderEnded(ended, movie: movie, asGIF: asGIF, settings: settings) }
+            }
+        } catch {
+            isCapturing = false
+            toast.show("macOS's recorder could not be started (\(error.localizedDescription)). Check Screen Recording under System Settings › Privacy & Security.", isError: true)
+            return
+        }
+        systemRecorder = process
+        CaptureOverlay.shared.recordingChanged()
+    }
+
+    private func systemRecorderEnded(_ ended: Process, movie: URL, asGIF: Bool, settings: CaptureSettings) {
+        systemRecorder = nil
+        isCapturing = false
+        CaptureOverlay.shared.recordingChanged()
+        let saved = FileManager.default.fileExists(atPath: movie.path)
+        guard saved else {
+            // Escape while choosing leaves no file and a clean exit: that is a cancel. Anything else is a failure and is said.
+            if ended.terminationStatus == 0 { toast.show("Recording cancelled.") }
+            else { toast.show("macOS did not save a recording (it stopped with code \(ended.terminationStatus)). Allow Screen Recording for Kriya in System Settings › Privacy & Security, then try again.", isError: true) }
+            return
+        }
+        guard asGIF else { toast.show("Recording saved as \(movie.lastPathComponent)"); recordingSaved(movie, settings: settings); return }
+        let gif = movie.deletingPathExtension().appendingPathExtension("gif")
+        Task {
+            let ok = await GIFExporter.convert(movie: movie, to: gif)
+            await MainActor.run {
+                if ok { try? FileManager.default.removeItem(at: movie); self.toast.show("GIF saved as \(gif.lastPathComponent)"); self.recordingSaved(gif, settings: settings) }
+                else { self.toast.show("The recording was saved, but could not be turned into a GIF.", isError: true) }
             }
         }
     }
@@ -462,6 +526,13 @@ final class ScreenCaptureService: ObservableObject {
         actions.openSettings = { [weak self] in self?.openSettings() }
         actions.runCommand = { [weak self] in self?.run(command: $0) }
         actions.captureFolder = { settings.folder }
+        actions.recordingKind = { [weak self] in
+            switch self?.recordingKind {
+            case .kriya: return .kriya
+            case .macOS: return .macOS
+            case nil: return .none
+            }
+        }
         actions.shortcutText = { command in
             settings.shortcuts.first { $0.command == command }.map { KeyNames.describe(keyCode: $0.keyCode, modifiers: $0.modifiers) }
         }
