@@ -447,7 +447,7 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   - Safety: any step that runs code, presses keys or controls the system needs your authorization for that exact content. Imported
     workflows come in off and unauthorized. Runs have a time limit and a stop button, runaway loops are refused, and nothing starts
     by itself in safe mode.
-- **Workflow steps and tools:** *variables* (named values you can use in later steps, including in addresses to open), *loops*, *retries*, *parallel
+- **Workflow steps and tools:** *variables* (named values you can use in later steps, including in addresses to open), *loops*, *if … otherwise* branches (conditions picked once; a plan shows only the side that would run), *retries*, *parallel
   steps*, a *time limit* for each step, prompts that ask you to confirm, type or choose, *JavaScript* steps and a *macro menu* of your workflows.
   *Templates* start you off; a *dependency list* shows what a workflow needs; importing shows a preview first. A **step debugger** with
   breakpoints and a variable inspector runs a workflow one step at a time, and the last 20 saves of each workflow are kept so you can go back.
@@ -497,7 +497,7 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   the launcher. In the launcher type `volume 40`, `volume up`, or `output` to switch the speakers, headphones or microphone.
 - **Disk Map:** a picture of where the room went. Every item in a folder is a tile as big as the item (folders get colours, files are
   coloured by kind); click a folder to look inside it, use the path at the top to go back up, right-click a tile for Show in Finder or Move to
-  Trash. It starts at your Home folder; *Look At* chooses another. It only measures, and macOS may ask before Kriya can read some folders.
+  Trash. A *Safe to remove* list under the map shows the biggest caches and build folders with their total size and one *Move All to Trash* button. It starts at your Home folder; *Look At* chooses another. It only measures, and macOS may ask before Kriya can read some folders.
 - **Focus Sessions:** a timed session (25 minutes by default) that hides the Dock and desktop icons, asks chosen apps to quit and runs two
   Shortcuts you name (macOS gives apps no way to switch Do Not Disturb, so make a Shortcut with the “Set Focus” action). A setting that was
   already as wanted is left alone, and if Kriya quits mid-session it puts everything back next time. Launcher: `focus`, `focus 45`, `focus off`.
@@ -542,7 +542,10 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   (kept in your Keychain; another Mac asks for it). Clipboard history is never included. A restore saves your current settings
   first so you can undo it; a restore first shows a preview of what would change compared with now, and backups show their sizes and can be checked
   for readability. With iCloud Drive on, if another Mac saved settings after this one, the pane offers them with
-  **Review** and **Not Now**; nothing is applied by itself.
+  **Review** and **Not Now**; nothing is applied by itself. One built-in list (`SettingsRegistry`) says which saved preferences are settings,
+  logs, approvals or tied to this Mac. Backup carries only settings (text size, launcher look and placement, sound rules, world clock, keep awake,
+  menu-bar window and more); logs, approvals, consents (for example folder rules, MIDI triggers, what may leave this Mac) and keys never travel in a file. After a restore the
+  pane says which settings are in force now and which wait for a restart, with a **Restart Kriya** button. Reset uses the same list.
 - **Permissions:** the state of each permission and a button to fix it, shown by feature and with a history of changes (Kriya tells you when one
   changes).
 - **Status on the Overview:** every feature shows whether it is on and working. Settings search finds items inside panes.

@@ -365,8 +365,15 @@ final class AutomationEngine: ObservableObject {
             }
             if rc.dryRun {
                 record(.planned, "Would: " + step.kind.summary)
-                let inner = step.kind.children
-                if !inner.isEmpty { _ = await runSteps(inner, prefix: title + " › ", rc: &rc, results: &results, progress: progress) }
+                // An if is planned along the side its conditions pick right now, so the plan shows what would really run.
+                var inner = step.kind.children
+                var side = ""
+                if case .branch(let condition, let thenSteps, let elseSteps) = step.kind {
+                    let holds = await conditionsHold(condition)
+                    inner = holds ? thenSteps : elseSteps
+                    side = holds ? "then · " : "otherwise · "
+                }
+                if !inner.isEmpty { _ = await runSteps(inner, prefix: title + " › " + side, rc: &rc, results: &results, progress: progress) }
                 continue
             }
             if let debugger = rc.debugger, !(await debugger.beforeStep(id: step.id, title: title, variables: rc.variables, text: rc.text)) {
@@ -385,6 +392,8 @@ final class AutomationEngine: ObservableObject {
                         message = try await performRepeat(Int(times), inner, title: title, &local, &results, progress)
                     case .parallel(let branches):
                         message = try await performParallel(branches, title: title, &local, &results, progress)
+                    case .branch(let condition, let thenSteps, let elseSteps):
+                        message = try await performBranch(condition, thenSteps, elseSteps, title: title, &local, &results, progress)
                     default:
                         message = try await perform(step.kind, &local)
                     }
@@ -422,6 +431,17 @@ final class AutomationEngine: ObservableObject {
             }
         }
         return .proceed
+    }
+
+    /// Checks the conditions once, then runs the steps of the side they choose. A step that stops stops the whole step.
+    private func performBranch(_ condition: ConditionGroup, _ thenSteps: [WorkflowStep], _ elseSteps: [WorkflowStep], title: String, _ rc: inout RunContext, _ results: inout [StepResult], _ progress: ((StepResult) -> Void)?) async throws -> String? {
+        let holds = await conditionsHold(condition)
+        let side = holds ? thenSteps : elseSteps
+        if side.isEmpty { return holds ? nil : "Its conditions did not hold and there is no otherwise side." }
+        if case .stop(let status, let message) = await runSteps(side, prefix: "\(title) › \(holds ? "then" : "otherwise") · ", rc: &rc, results: &results, progress: progress) {
+            throw ChildStopped(status: status, message: message)
+        }
+        return holds ? "Its conditions held." : "Its conditions did not hold."
     }
 
     private func performRepeat(_ times: Int, _ steps: [WorkflowStep], title: String, _ rc: inout RunContext, _ results: inout [StepResult], _ progress: ((StepResult) -> Void)?) async throws -> String? {
@@ -560,7 +580,7 @@ final class AutomationEngine: ObservableObject {
             rc.variables[name] = render(template, rc)
             return nil
 
-        case .repeat, .parallel:
+        case .repeat, .parallel, .branch:
             // Carried out by `runSteps`, which has the results to add to.
             return nil
 

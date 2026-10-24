@@ -186,6 +186,9 @@ final class AppEnvironment {
             if let k = keyboard.store.config.paletteKey { keys.append(ReservedKey(keyCode: k, modifiers: keyboard.store.config.paletteModifiers, owner: "Command launcher")) }
             return keys
         }
+        let popoverPrefs = PopoverPrefs()
+        SettingsReloader.register(.windowLocks) { WindowLockStore.shared.reload() }
+        SettingsReloader.register(.popover) { popoverPrefs.reload() }
         backup.onRestored = {
             config.reload()
             profiles.reload()
@@ -249,7 +252,7 @@ final class AppEnvironment {
         self.homebrew = homebrew
         self.runIdentifier = runIdentifier
         self.quickCommands = QuickCommands(run: runIdentifier)
-        self.popoverPrefs = PopoverPrefs()
+        self.popoverPrefs = popoverPrefs
         self.keepAwake = keepAwake
         self.remapStore = remapStore
         self.remap = remap

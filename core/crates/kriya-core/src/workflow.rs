@@ -39,6 +39,8 @@ pub const MAX_REPEAT: u32 = 100;
 pub const MAX_PARALLEL: usize = 8;
 /// Loops and parallel groups inside one another, at most this deep.
 pub const MAX_NESTING: usize = 3;
+/// The most conditions one if step can decide by.
+pub const MAX_BRANCH_CONDITIONS: usize = 10;
 pub const MAX_STEP_TIMEOUT_SECONDS: u32 = 600;
 pub const MAX_VARIABLE_NAME: usize = 32;
 pub const MAX_CHOICES: usize = 20;
@@ -390,6 +392,12 @@ pub enum StepKind {
     Parallel {
         steps: Vec<WorkflowStep>,
     },
+    /// Runs `then_steps` if the conditions hold and `else_steps` (which may be empty) if they do not.
+    Branch {
+        when: ConditionGroup,
+        then_steps: Vec<WorkflowStep>,
+        else_steps: Vec<WorkflowStep>,
+    },
     /// Asks the person whether to go on. If they say no, the workflow stops.
     Confirm {
         message: String,
@@ -444,6 +452,16 @@ impl StepKind {
             // A group is as risky as the riskiest step inside it.
             StepKind::Repeat { steps, .. } | StepKind::Parallel { steps } => steps
                 .iter()
+                .map(|s| s.kind.risk())
+                .find(|r| *r == Ask)
+                .unwrap_or(Safe),
+            StepKind::Branch {
+                then_steps,
+                else_steps,
+                ..
+            } => then_steps
+                .iter()
+                .chain(else_steps.iter())
                 .map(|s| s.kind.risk())
                 .find(|r| *r == Ask)
                 .unwrap_or(Safe),
@@ -512,6 +530,28 @@ impl StepKind {
             ),
             StepKind::Parallel { steps } => {
                 format!("Run {} steps at the same time", steps.len())
+            }
+            StepKind::Branch {
+                then_steps,
+                else_steps,
+                ..
+            } => {
+                let plural = |n: usize| if n == 1 { "step" } else { "steps" };
+                if else_steps.is_empty() {
+                    format!(
+                        "If its conditions hold: {} {}",
+                        then_steps.len(),
+                        plural(then_steps.len())
+                    )
+                } else {
+                    format!(
+                        "If its conditions hold: {} {}, otherwise {} {}",
+                        then_steps.len(),
+                        plural(then_steps.len()),
+                        else_steps.len(),
+                        plural(else_steps.len())
+                    )
+                }
             }
             StepKind::Confirm { message } => {
                 format!("Ask “{}” before going on", first_line(message))
@@ -592,6 +632,20 @@ impl StepKind {
                     return Err(CoreError::invalid("steps side by side need 2 to 8 steps"));
                 }
             }
+            StepKind::Branch {
+                when, then_steps, ..
+            } => {
+                if when.items.is_empty() || when.items.len() > MAX_BRANCH_CONDITIONS {
+                    return Err(CoreError::invalid(
+                        "an if step needs 1 to 10 conditions to decide by",
+                    ));
+                }
+                if then_steps.is_empty() {
+                    return Err(CoreError::invalid(
+                        "an if step needs at least one step for when its conditions hold",
+                    ));
+                }
+            }
             StepKind::Confirm { message }
                 if message.trim().is_empty() || message.chars().count() > 300 =>
             {
@@ -639,6 +693,19 @@ impl StepKind {
         match self {
             StepKind::Repeat { steps, .. } | StepKind::Parallel { steps } => steps,
             _ => &[],
+        }
+    }
+
+    /// Every list of steps inside this one: a loop's or group's steps, or the "then" and "otherwise" steps of an if.
+    pub fn branches(&self) -> Vec<&[WorkflowStep]> {
+        match self {
+            StepKind::Repeat { steps, .. } | StepKind::Parallel { steps } => vec![steps],
+            StepKind::Branch {
+                then_steps,
+                else_steps,
+                ..
+            } => vec![then_steps, else_steps],
+            _ => vec![],
         }
     }
 }
@@ -928,7 +995,9 @@ impl Workflow {
                 if let StepKind::RunWorkflow { workflow_id } = &s.kind {
                     out.push(workflow_id.clone());
                 }
-                collect(s.kind.children(), out);
+                for inner in s.kind.branches() {
+                    collect(inner, out);
+                }
             }
         }
         let mut out = Vec::new();
@@ -975,14 +1044,21 @@ fn check_steps(
                 )));
             }
         }
-        let children = step.kind.children();
-        if !children.is_empty() {
+        let branches = step.kind.branches();
+        if branches.iter().any(|b| !b.is_empty()) {
             if depth + 1 > MAX_NESTING {
                 return Err(CoreError::invalid(format!(
-                    "step {place}: loops can be inside each other up to {MAX_NESTING} levels"
+                    "step {place}: loops and ifs can be inside each other up to {MAX_NESTING} levels"
                 )));
             }
-            check_steps(children, depth + 1, ids, total, &format!("{place}."))?;
+            for (n, inner) in branches.into_iter().enumerate() {
+                let path = if n == 0 {
+                    format!("{place}.")
+                } else {
+                    format!("{place}b.")
+                };
+                check_steps(inner, depth + 1, ids, total, &path)?;
+            }
         }
     }
     Ok(())
@@ -1105,6 +1181,15 @@ fn renumber(steps: &[WorkflowStep], next: &mut usize) -> Vec<WorkflowStep> {
                 },
                 StepKind::Parallel { steps } => StepKind::Parallel {
                     steps: renumber(steps, next),
+                },
+                StepKind::Branch {
+                    when,
+                    then_steps,
+                    else_steps,
+                } => StepKind::Branch {
+                    when: when.clone(),
+                    then_steps: renumber(then_steps, next),
+                    else_steps: renumber(else_steps, next),
                 },
                 other => other.clone(),
             };
@@ -1323,7 +1408,9 @@ pub fn dependencies(w: &Workflow, known_ids: &[String]) -> Vec<WorkflowDependenc
                 },
                 _ => {}
             }
-            walk(s.kind.children(), known, out);
+            for inner in s.kind.branches() {
+                walk(inner, known, out);
+            }
         }
     }
     let mut out = Vec::new();
@@ -1569,6 +1656,22 @@ pub fn step_catalog() -> Vec<StepTemplate> {
             StepKind::Repeat {
                 times: 3,
                 steps: vec![WorkflowStep::new("r1", StepKind::Delay { ms: 500 })],
+            },
+        ),
+        t(
+            "Flow",
+            "If … otherwise",
+            "arrow.triangle.branch",
+            StepKind::Branch {
+                when: ConditionGroup {
+                    mode: ConditionMode::All,
+                    items: vec![ConditionItem {
+                        kind: ConditionKind::FrontApp { app_ids: vec![] },
+                        negate: false,
+                    }],
+                },
+                then_steps: vec![WorkflowStep::new("t1", StepKind::Delay { ms: 500 })],
+                else_steps: vec![],
             },
         ),
         t(
@@ -2743,6 +2846,131 @@ mod tests {
         assert!(lone.check().is_err(), "parallel needs at least two steps");
     }
 
+    fn if_step(then_steps: Vec<WorkflowStep>, else_steps: Vec<WorkflowStep>) -> StepKind {
+        StepKind::Branch {
+            when: group(
+                ConditionMode::All,
+                vec![(
+                    ConditionKind::FrontApp {
+                        app_ids: vec!["com.apple.Safari".into()],
+                    },
+                    false,
+                )],
+            ),
+            then_steps,
+            else_steps,
+        }
+    }
+
+    #[test]
+    fn an_if_step_needs_a_condition_and_something_to_do() {
+        let ok = if_step(
+            vec![step("a", StepKind::Delay { ms: 1 })],
+            vec![step("b", StepKind::Delay { ms: 1 })],
+        );
+        assert!(workflow("w", vec![step("i", ok)]).check().is_ok());
+        let no_else = if_step(vec![step("a", StepKind::Delay { ms: 1 })], vec![]);
+        assert!(
+            workflow("w", vec![step("i", no_else)]).check().is_ok(),
+            "otherwise may be empty"
+        );
+        let nothing = if_step(vec![], vec![step("b", StepKind::Delay { ms: 1 })]);
+        assert!(workflow("w", vec![step("i", nothing)]).check().is_err());
+        let no_condition = StepKind::Branch {
+            when: ConditionGroup {
+                mode: ConditionMode::All,
+                items: vec![],
+            },
+            then_steps: vec![step("a", StepKind::Delay { ms: 1 })],
+            else_steps: vec![],
+        };
+        assert!(workflow("w", vec![step("i", no_condition)])
+            .check()
+            .is_err());
+    }
+
+    #[test]
+    fn ids_must_be_unique_across_both_sides_of_an_if() {
+        let clash = if_step(
+            vec![step("same", StepKind::Delay { ms: 1 })],
+            vec![step("same", StepKind::Delay { ms: 1 })],
+        );
+        assert!(workflow("w", vec![step("i", clash)]).check().is_err());
+    }
+
+    #[test]
+    fn an_if_is_as_risky_as_the_riskiest_side_and_says_what_it_holds() {
+        let risky = StepKind::Script {
+            language: crate::finder::FinderScript::Shell,
+            source: "ls".into(),
+        };
+        let a = if_step(
+            vec![step("a", StepKind::Delay { ms: 1 })],
+            vec![step("b", risky)],
+        );
+        assert_eq!(
+            a.risk(),
+            StepRisk::NeedsAuthorization,
+            "the otherwise side counts too"
+        );
+        let b = if_step(vec![step("a", StepKind::Delay { ms: 1 })], vec![]);
+        assert_eq!(b.risk(), StepRisk::Safe);
+        assert_eq!(b.summary(), "If its conditions hold: 1 step");
+        let c = if_step(
+            vec![
+                step("a", StepKind::Delay { ms: 1 }),
+                step("c", StepKind::Delay { ms: 1 }),
+            ],
+            vec![step("b", StepKind::Delay { ms: 1 })],
+        );
+        assert_eq!(
+            c.summary(),
+            "If its conditions hold: 2 steps, otherwise 1 step"
+        );
+    }
+
+    #[test]
+    fn workflows_started_inside_an_if_are_found_and_ids_are_renumbered() {
+        let inside = if_step(
+            vec![step(
+                "a",
+                StepKind::RunWorkflow {
+                    workflow_id: "one".into(),
+                },
+            )],
+            vec![step(
+                "b",
+                StepKind::RunWorkflow {
+                    workflow_id: "two".into(),
+                },
+            )],
+        );
+        let w = workflow("w", vec![step("i", inside)]);
+        assert_eq!(w.references(), vec!["one".to_string(), "two".to_string()]);
+        let copy = duplicate(&w, "w2", 5);
+        assert!(copy.check().is_ok(), "no id clashes after renumbering");
+        if let StepKind::Branch {
+            then_steps,
+            else_steps,
+            ..
+        } = &copy.steps[0].kind
+        {
+            assert_eq!(then_steps[0].id, "s1");
+            assert_eq!(else_steps[0].id, "s2");
+        } else {
+            panic!("the copy lost its if step");
+        }
+    }
+
+    #[test]
+    fn an_if_counts_as_a_level_of_nesting() {
+        let mut inner = step("deep", StepKind::Delay { ms: 1 });
+        for level in 0..=MAX_NESTING {
+            inner = step(&format!("l{level}"), if_step(vec![inner], vec![]));
+        }
+        assert!(workflow("a", vec![inner]).check().is_err());
+    }
+
     #[test]
     fn nesting_is_limited() {
         let mut inner = step("deep", StepKind::Delay { ms: 1 });
@@ -3119,6 +3347,7 @@ mod tests {
                 template.kind,
                 StepKind::Repeat { .. }
                     | StepKind::Parallel { .. }
+                    | StepKind::Branch { .. }
                     | StepKind::SetVariable { .. }
                     | StepKind::Ask { .. }
                     | StepKind::Choose { .. }

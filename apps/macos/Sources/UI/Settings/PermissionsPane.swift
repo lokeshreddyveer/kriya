@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 struct PermissionsPane: View {
     @EnvironmentObject private var permissions: PermissionManager
@@ -11,6 +12,12 @@ struct PermissionsPane: View {
                 }
             } footer: {
                 Text("Kriya asks for a permission only when you turn on a feature that needs it. macOS shows its own prompt once; after that, use Open Settings. This list updates by itself when you change a permission.")
+            }
+
+            Section {
+                NotificationsRow()
+            } header: { Text("Notifications") } footer: {
+                Text("Used by File Shelf expiry reminders, focus session breaks and system monitor alerts. Nothing is sent to anyone: these are notices on this Mac.")
             }
 
             Section {
@@ -52,12 +59,50 @@ struct PermissionsPane: View {
     }
 }
 
+private struct NotificationsRow: View {
+    @State private var status: UNAuthorizationStatus?
+
+    private var label: (text: String, color: Color) {
+        switch status {
+        case .authorized, .provisional, .ephemeral: return ("Allowed", Theme.ok)
+        case .denied: return ("Denied", Theme.danger)
+        case .notDetermined: return ("Not asked yet", Theme.warn)
+        default: return ("Checking…", .secondary)
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "bell.badge").frame(width: 24).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack { Text("Notifications").font(.headline); StateBadge(text: label.text, color: label.color) }
+                Text("Lets Kriya show reminders, such as a shelf item that is about to expire.").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if status == .notDetermined {
+                Button("Allow…") { UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { _, _ in refresh() } }.controlSize(.small)
+            } else {
+                Button("Open Settings") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!) }.controlSize(.small)
+            }
+        }
+        .animation(.smooth(duration: 0.2), value: status)
+        .onAppear(perform: refresh)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
+    }
+
+    private func refresh() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async { status = settings.authorizationStatus }
+        }
+    }
+}
+
 private struct PermissionRow: View {
     let permission: Permission
     @EnvironmentObject private var permissions: PermissionManager
 
     private var neededBy: String {
-        let names = FeatureId.all.filter { $0.requiredPermissions.contains(permission) }.map(\.title)
+        let names = FeatureRegistry.features(needing: permission)
         return names.isEmpty ? "Not needed by any feature yet" : "Used by " + names.joined(separator: ", ")
     }
 

@@ -555,9 +555,13 @@ private struct InstallTab: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 if brew.isRunning {
-                    ProgressView().controlSize(.small)
+                    if let fraction = UpdateProgress.fraction(done: brew.installDone, total: brew.installTotal) {
+                        ProgressView(value: fraction).frame(width: 90).animation(.smooth(duration: 0.25), value: fraction)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(["Installing \(brew.currentCask ?? "")", brew.progressNote].compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
+                        Text(UpdateProgress.label(done: brew.installDone, total: brew.installTotal, current: brew.currentCask)).foregroundStyle(.secondary)
                         if let stage = brew.stage { Text(stage).font(.caption).foregroundStyle(stage.contains("password") || stage.hasPrefix("No news") ? .orange : .secondary) }
                     }
                 } else {

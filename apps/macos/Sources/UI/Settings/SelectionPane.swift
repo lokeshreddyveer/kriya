@@ -332,6 +332,7 @@ struct TextOpFields: View {
 // MARK: - Appearance
 
 private struct AppearanceTab: View {
+    @AppStorage(SelectionService.startInKeyboardKey) private var startInKeyboard = false
     @EnvironmentObject private var store: SelectionStore
     private var config: SelectionConfig { store.config }
     @ObservedObject private var usage = UsageLogStore.selection
@@ -372,8 +373,9 @@ private struct AppearanceTab: View {
                         set: { new in store.updateConfig { $0.manualKey = new?.keyCode; $0.manualModifiers = new?.modifiers ?? 0 } }
                     )).frame(width: 190, height: 26)
                 }
+                Toggle("Open straight in keyboard mode", isOn: $startInKeyboard)
             } header: { Text("Timing") } footer: {
-                Text("The shortcut shows the bar for the text selected right now, which also works in apps where the bar does not appear by itself.")
+                Text("The shortcut shows the bar for the text selected right now, which also works in apps where the bar does not appear by itself. Keyboard mode: with the bar showing, press the shortcut a second time and use the arrow keys or Tab to move, Return to run, 1 to 9 to pick a button, and Esc to close. The position is read out by VoiceOver. Switch the option on to skip the second press.")
             }
             Section("Length") {
                 Stepper("At least \(config.minLength) characters", value: Binding(get: { Int(config.minLength) }, set: { v in store.updateConfig { $0.minLength = UInt32(v) } }), in: 1...100)

@@ -74,13 +74,48 @@ pub struct BackupFile {
 }
 
 /// The settings that are saved as one JSON blob each and travel in a backup as they are.
-pub const EXTRA_KEYS: [&str; 5] = [
+pub const EXTRA_KEYS: [&str; 6] = [
     "pointer_menu",
     "link_routing",
     "workspaces",
     "pointer_effects",
     "key_remap",
+    // Settings the app keeps in its own preferences (window locks, capture profiles, pins…), packed as one JSON object by
+    // the shell so they travel with a backup. History and logs are never put in it.
+    "app_prefs",
 ];
+
+const APP_PREFS_KEY: &str = "app_prefs";
+
+impl crate::store::Store {
+    /// The shell's packed preferences as JSON text, if it has saved any.
+    pub fn app_prefs_json(&self) -> Result<Option<String>, CoreError> {
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                rusqlite::params![APP_PREFS_KEY],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Keeps the shell's packed preferences so the next backup carries them. Anything that is not a JSON object is refused.
+    pub fn save_app_prefs_json(&self, json: &str) -> Result<(), CoreError> {
+        if !serde_json::from_str::<serde_json::Value>(json).is_ok_and(|v| v.is_object()) {
+            return Err(CoreError::Backup {
+                message: "the preferences are not valid".into(),
+            });
+        }
+        self.conn().execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![APP_PREFS_KEY, json],
+        )?;
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct BackupSummary {

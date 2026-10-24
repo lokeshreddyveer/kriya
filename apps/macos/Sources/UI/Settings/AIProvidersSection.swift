@@ -28,7 +28,7 @@ struct AIProvidersSection: View {
                     }
                 }
                 HStack {
-                    Menu("Add a Provider") {
+                    Menu("Add a Provider (your own key or a local model)…") {
                         ForEach(AIProviderKind.allCases.filter { $0 != .appleIntelligence }) { kind in
                             Button(kind.title) { editing = AIProviderConfig(name: kind.title, kind: kind) }
                         }
@@ -37,7 +37,7 @@ struct AIProvidersSection: View {
                     Spacer()
                     if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
                 }
-            } header: { Text("AI providers") } footer: {
+            } header: { Text("AI providers · bring your own key") } footer: {
                 Text("Add your own account (OpenAI, Anthropic, Gemini), a model running on this Mac (Ollama, LM Studio), or your company's endpoint. Keys are kept in the Keychain and nowhere else. A provider does nothing until you switch it on for a feature below.")
             }
 

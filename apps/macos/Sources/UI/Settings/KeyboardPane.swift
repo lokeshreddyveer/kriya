@@ -73,6 +73,7 @@ private struct ShortcutsListTab: View {
     @EnvironmentObject private var library: ActionLibrary
     @State private var editing: KeyShortcut?
     @State private var note: String?
+    @State private var importReport: ShortcutImportReport?
 
     var body: some View {
         Form {
@@ -111,6 +112,7 @@ private struct ShortcutsListTab: View {
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.shortcuts)
         .sheet(item: $editing) { ShortcutEditor(shortcut: $0) }
+        .sheet(item: $importReport) { report in ShortcutImportSheet(report: report) { importReport = nil } }
     }
 
     private func importShortcuts() {
@@ -119,8 +121,8 @@ private struct ShortcutsListTab: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let plan = try store.importShortcuts(from: url)
-            let skipped = plan.skipped.isEmpty ? "" : " Left out: " + plan.skipped.joined(separator: "; ") + "."
-            note = "Added \(plan.add.count), switched off. Turn each on when you are ready." + skipped
+            note = "Added \(plan.add.count), switched off. Turn each on when you are ready." + (plan.skipped.isEmpty ? "" : " \(plan.skipped.count) left out.")
+            importReport = ShortcutImportReport(added: plan.add.map(\.name), skipped: plan.skipped)
         } catch { store.lastError = error.userMessage }
     }
 
@@ -141,6 +143,44 @@ private struct ShortcutsListTab: View {
     }
 }
 
+/// What an import did, for the sheet that follows it.
+struct ShortcutImportReport: Identifiable {
+    let id = UUID()
+    let added: [String]
+    let skipped: [String]
+}
+
+private struct ShortcutImportSheet: View {
+    let report: ShortcutImportReport
+    let close: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text("Shortcut import").font(.headline).frame(maxWidth: .infinity, alignment: .leading).padding(16)
+            Divider()
+            List {
+                Section("Added, switched off (\(report.added.count))") {
+                    if report.added.isEmpty { Text("Nothing was added.").foregroundStyle(.secondary) }
+                    ForEach(Array(report.added.enumerated()), id: \.offset) { _, name in Label(name.isEmpty ? "Unnamed shortcut" : name, systemImage: "checkmark.circle").foregroundStyle(Theme.ok) }
+                }
+                if !report.skipped.isEmpty {
+                    Section("Left out (\(report.skipped.count))") {
+                        ForEach(Array(report.skipped.enumerated()), id: \.offset) { _, reason in Label(reason, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.warn) }
+                    }
+                }
+            }
+            Divider()
+            HStack {
+                Text("Turn each added shortcut on when you are ready.").font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                Button("Done", action: close).keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(width: 520, height: 420)
+    }
+}
+
 /// Commands a shortcut can run by name.
 enum KeyboardCommands {
     static var extra: () -> [(command: String, title: String)] = { [] }
@@ -153,8 +193,11 @@ enum KeyboardCommands {
             ("clipboard.strip", "Remove formatting from the clipboard"), ("clipboard.pause", "Pause or resume clipboard recording"),
             ("selection.manual", "Show selection actions"), ("selection.paste", "Show paste actions here (nothing selected)"), ("finder.launcher", "Finder actions for the selected files"),
         ]
+        // Everything a mouse button can run, so no command is bindable from one place and not another.
+        list += WindowCommands.all.map { ($0.command, $0.title) }
         list += extra().map { ($0.command, $0.title) }
-        return list.map { (command: $0.0, title: $0.1) }
+        var seen = Set<String>()
+        return list.filter { seen.insert($0.0).inserted }.map { (command: $0.0, title: $0.1) }
     }
 
     static func title(_ command: String) -> String { all.first { $0.command == command }?.title ?? command }

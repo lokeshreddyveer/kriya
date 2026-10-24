@@ -144,14 +144,19 @@ final class PopoverPrefs: ObservableObject {
         }
     }
 
-    func reset() {
-        for name in ["tiles", "layouts", "sectionOrder", "hiddenSections", "extras", "columns", "compact", "showLabels", "showSearch", "featuresAsGrid", "theme", "tint", "maxHeight"] {
-            defaults.removeObject(forKey: key(name))
-        }
+    /// Reads every value from preferences again, so a restore or a reset shows at once.
+    func reload() {
         let fresh = PopoverPrefs()
         tiles = fresh.tiles; layouts = fresh.layouts; sectionOrder = fresh.sectionOrder; hiddenSections = fresh.hiddenSections
         extras = fresh.extras; columns = fresh.columns; compact = fresh.compact; showLabels = fresh.showLabels
         showSearch = fresh.showSearch; featuresAsGrid = fresh.featuresAsGrid; theme = fresh.theme; tint = fresh.tint; maxHeight = fresh.maxHeight
+    }
+
+    func reset() {
+        for name in ["tiles", "layouts", "sectionOrder", "hiddenSections", "extras", "columns", "compact", "showLabels", "showSearch", "featuresAsGrid", "theme", "tint", "maxHeight"] {
+            defaults.removeObject(forKey: key(name))
+        }
+        reload()
     }
 }
 

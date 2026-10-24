@@ -84,6 +84,9 @@ struct DragToolsTab: View {
                 Button {
                     if let first = library.actions.first { store.update { $0.doubleClicks.append(DoubleClickBinding(button: 2, modifiers: 0, actionId: first.id)) } }
                 } label: { Label("Add a Double Click", systemImage: "plus") }.disabled(library.actions.isEmpty)
+                if !config.doubleClicks.isEmpty {
+                    Stepper("Second click within \(config.doubleClickMs) ms", value: Binding(get: { Int(config.doubleClickMs) }, set: { v in store.update { $0.doubleClickMs = UInt32(v) } }), in: 150...600, step: 50)
+                }
                 if !config.doubleClicks.isEmpty, !permissions.isGranted(.inputMonitoring) { inputMonitoringNote }
             } header: { Text("Double click a button") } footer: {
                 Text("A second click within a moment runs a saved action. The first click is still an ordinary click. The left and right buttons are left out so normal clicking is never affected.")

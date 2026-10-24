@@ -70,11 +70,12 @@ extension StepKind {
     var risk: StepRisk { workflowStepRisk(kind: self) }
     var summary: String { workflowStepSummary(step: WorkflowStep(id: "", label: nil, when: nil, onError: .stop, kind: self)) }
 
-    /// The steps inside a loop or a group of steps that run side by side.
+    /// The steps inside a loop, a group of steps that run side by side, or either side of an if.
     var children: [WorkflowStep] {
         switch self {
         case .repeat(_, let steps): return steps
         case .parallel(let steps): return steps
+        case .branch(_, let thenSteps, let elseSteps): return thenSteps + elseSteps
         default: return []
         }
     }
@@ -169,6 +170,7 @@ final class WorkflowStore: ObservableObject {
         switch kind {
         case .repeat(let times, let steps): return .repeat(times: times, steps: fresh(steps))
         case .parallel(let steps): return .parallel(steps: fresh(steps))
+        case .branch(let when, let thenSteps, let elseSteps): return .branch(when: when, thenSteps: fresh(thenSteps), elseSteps: fresh(elseSteps))
         default: return kind
         }
     }

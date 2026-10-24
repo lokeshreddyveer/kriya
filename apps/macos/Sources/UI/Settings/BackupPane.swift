@@ -26,7 +26,7 @@ struct BackupPane: View {
             } header: {
                 Text("Your settings")
             } footer: {
-                Text("A backup holds your settings, app profiles, saved actions, rules and device names. It does not include permissions, which stay with macOS. Restoring saves your current settings first, so you can undo it below.")
+                Text("A backup holds your settings (including looks, placements and sound, clock, capture and menu-bar choices), app profiles, saved actions, rules and device names. It leaves out what must be agreed to on each Mac: permissions, approvals, what may be sent off this Mac, and keys. It also leaves out logs and timelines. Some restored settings take effect only after a restart; the pane says which. Restoring saves your current settings first, so you can undo it below.")
             }
 
             Section {
@@ -92,6 +92,13 @@ struct BackupPane: View {
                     Label(message, systemImage: messageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                         .foregroundStyle(messageIsError ? Theme.danger : Theme.ok)
                         .transition(.opacity)
+                    if !messageIsError, let waiting = backup.lastRestore?.needsRestart, !waiting.isEmpty {
+                        HStack {
+                            Text("\(waiting.count) restored setting\(waiting.count == 1 ? " is" : "s are") read only when Kriya starts.").font(.callout).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Restart Kriya") { SystemInfo.relaunch() }.controlSize(.small)
+                        }
+                    }
                 }
             }
 
@@ -136,6 +143,13 @@ struct BackupPane: View {
         } catch {
             show(error.userMessage, error: true)
         }
+    }
+
+    /// What the person is told after a restore: what is already in force and what waits for a restart.
+    static func restoreMessage(_ outcome: SettingsApplyOutcome?) -> String {
+        guard let outcome, !outcome.isEmpty else { return "Settings restored." }
+        if outcome.needsRestart.isEmpty { return "Settings restored. They are in force now." }
+        return "Settings restored. \(outcome.applied.count) are in force now; \(outcome.needsRestart.count) take effect after a restart."
     }
 
     private func show(_ text: String, error: Bool) {
@@ -223,7 +237,7 @@ struct BackupPane: View {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             try backup.restore(from: url, passphrase: passphrase)
-            show("Settings restored.", error: false)
+            show(Self.restoreMessage(backup.lastRestore), error: false)
         } catch {
             show(error.userMessage, error: true)
         }

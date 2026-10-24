@@ -685,10 +685,12 @@ private struct TriggerEditor: View {
 
 private struct ConditionsEditor: View {
     @Binding var group: ConditionGroup?
+    /// False when the conditions are the point of the step (an if), so there is no switch to turn them off.
+    var optional = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("Check conditions first", isOn: Binding(get: { group != nil }, set: { group = $0 ? ConditionGroup(mode: .all, items: []) : nil }))
+            if optional { Toggle("Check conditions first", isOn: Binding(get: { group != nil }, set: { group = $0 ? ConditionGroup(mode: .all, items: []) : nil })) }
             if let current = group {
                 Picker("", selection: Binding(get: { current.mode }, set: { group?.mode = $0 })) { Text("All of these must hold").tag(ConditionMode.all); Text("Any one of these").tag(ConditionMode.any) }
                     .paneTabBar(maxWidth: 360)
@@ -921,6 +923,13 @@ private struct StepFields: View {
         case .parallel(let steps):
             Text("These run at the same time. The workflow goes on when all are done, and stops if one fails and is set to stop.").font(.caption).foregroundStyle(.secondary)
             StepListEditor(steps: Binding(get: { steps }, set: { kind = .parallel(steps: $0) }), workflowID: workflowID, nested: true).padding(.leading, 16)
+        case .branch(let when, let thenSteps, let elseSteps):
+            Text("If").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ConditionsEditor(group: Binding(get: { when }, set: { if let next = $0 { kind = .branch(when: next, thenSteps: thenSteps, elseSteps: elseSteps) } }), optional: false)
+            Text("Then").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            StepListEditor(steps: Binding(get: { thenSteps }, set: { kind = .branch(when: when, thenSteps: $0, elseSteps: elseSteps) }), workflowID: workflowID, nested: true).padding(.leading, 16)
+            Text("Otherwise (optional)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            StepListEditor(steps: Binding(get: { elseSteps }, set: { kind = .branch(when: when, thenSteps: thenSteps, elseSteps: $0) }), workflowID: workflowID, nested: true).padding(.leading, 16)
         case .confirm(let message):
             TextField("Question", text: Binding(get: { message }, set: { kind = .confirm(message: $0) }))
             Text("Shows Continue and Stop. Stop ends the workflow without an error.").font(.caption).foregroundStyle(.secondary)

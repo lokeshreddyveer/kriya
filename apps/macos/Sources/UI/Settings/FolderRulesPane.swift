@@ -9,9 +9,20 @@ struct FolderRulesPane: View {
     @State private var editing: FolderRule?
     @State private var previewing: FolderRule?
     @State private var message: String?
+    @State private var overlaps: [RuleOverlap.Overlap] = []
 
     var body: some View {
         Form {
+            if !overlaps.isEmpty {
+                Section {
+                    ForEach(Array(overlaps.prefix(8).enumerated()), id: \.offset) { _, overlap in
+                        Label(RuleOverlap.sentence(overlap), systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(Theme.warn)
+                    }
+                    if overlaps.count > 8 { Text("and \(overlaps.count - 8) more").font(.caption).foregroundStyle(.secondary) }
+                } header: { Text("Two rules want the same file") } footer: {
+                    Text("Rules run in the order of the list. Switch one off or change its conditions if you want a different one to act on these files.")
+                }
+            }
             Section {
                 if store.rules.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -44,6 +55,9 @@ struct FolderRulesPane: View {
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: store.rules)
         .animation(.smooth(duration: 0.25), value: message)
+        .animation(.smooth(duration: 0.25), value: overlaps)
+        .onAppear(perform: refreshOverlaps)
+        .onChange(of: store.rules) { _, _ in refreshOverlaps() }
         .sheet(item: $editing) { rule in
             FolderRuleEditor(rule: rule, onSave: { saved in
                 if let problem = store.save(saved) { return problem }
@@ -54,6 +68,20 @@ struct FolderRulesPane: View {
         }
         .sheet(item: $previewing) { rule in
             FolderRulePreview(rule: rule, onClose: { previewing = nil })
+        }
+    }
+
+    /// Reads each folder that has more than one switched-on rule and lists the files two of them would both act on.
+    private func refreshOverlaps() {
+        let rules = store.rules
+        DispatchQueue.global(qos: .utility).async {
+            var found: [RuleOverlap.Overlap] = []
+            let groups = Dictionary(grouping: rules.filter(\.enabled), by: { ($0.folder as NSString).standardizingPath })
+            for (folder, group) in groups where group.count > 1 {
+                let files = FolderRulesService.files(in: folder, markDuplicates: group.contains { $0.conditions.contains(.isDuplicate) })
+                found += RuleOverlap.find(group, files: files, now: Date())
+            }
+            DispatchQueue.main.async { overlaps = found }
         }
     }
 
@@ -292,14 +320,29 @@ private struct FolderRulePreview: View {
     @EnvironmentObject private var service: FolderRulesService
     let rule: FolderRule
     let onClose: () -> Void
+    @EnvironmentObject private var store: FolderRulesStore
     @State private var changes: [PlannedChange]?
     @State private var confirming = false
+
+    /// Where this rule stands among the switched-on rules for the same folder.
+    private var whoWins: String? {
+        let folder = (rule.folder as NSString).standardizingPath
+        let same = store.rules.filter { $0.enabled && ($0.folder as NSString).standardizingPath == folder }
+        guard let index = same.firstIndex(where: { $0.id == rule.id }) else {
+            return same.isEmpty ? nil : "This rule is off. When it is on it runs after the \(same.count) switched-on rule\(same.count == 1 ? "" : "s") for this folder."
+        }
+        if same.count == 1 { return "No other rule watches this folder, so nothing else competes for these files." }
+        let before = same[..<index].map { "“\($0.name)”" }
+        if before.isEmpty { return "This rule runs first for this folder, so it wins any file another rule also fits." }
+        return "Runs after " + before.joined(separator: ", ") + ". A file one of those moves, renames or trashes is gone by the time this rule looks."
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("“\(rule.name)”").font(.headline)
                 Text(rule.summary).font(.callout).foregroundStyle(.secondary)
+                if let whoWins { Label(whoWins, systemImage: "list.number").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
             .frame(maxWidth: .infinity, alignment: .leading).padding(16)
             Divider()

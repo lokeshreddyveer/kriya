@@ -47,6 +47,14 @@ enum FeatureRegistry {
                        tests: ["MCPServerCoreTests", "LoopbackRulesTests", "MCPClientRulesTests", "KriyaToolsTests"]),
         ManagedFeature(id: "safariExtension", title: "Safari Extension", summary: "Send links, pages and selections from Safari to Kriya.", symbol: "safari", pane: "links", tab: "Browsers", permissions: ["Safari extension switched on in Safari"], dependsOn: [], resetArea: nil,
                        tests: ["SafariInboxTests", "BrowserBridgeTests"]),
+        ManagedFeature(id: "capture", title: "Screen Capture and Recording", summary: "Screenshots, text from pictures, screen recording, GIFs, the pixel ruler and pinned pictures.", symbol: "camera.viewfinder", pane: "capture", tab: nil, permissions: ["Screen Recording"], dependsOn: [], resetArea: "capture",
+                       tests: ["CaptureSettingsTests", "CaptureExtrasTests", "CaptureProfileTests", "ScreenCaptureServiceTests"]),
+        ManagedFeature(id: "shelf", title: "File Shelf", summary: "Named shelves for files you are moving around, with expiry reminders and warnings for missing or duplicate files.", symbol: "tray", pane: "shelf", tab: nil, permissions: ["Notifications"], dependsOn: [], resetArea: "shelfreminders",
+                       tests: ["ShelfLibraryTests", "ShelfCareTests", "ShelfGroupAndReminderTests"]),
+        ManagedFeature(id: "notes", title: "Notes", summary: "Markdown notes with tags, pins, templates, attachments and locked notes.", symbol: "note.text", pane: "notes", tab: nil, permissions: [], dependsOn: [], resetArea: "notes",
+                       tests: ["NoteStoreTests", "NoteToolsTests", "NoteVersionTests"]),
+        ManagedFeature(id: "powerSaving", title: "Power Saving", summary: "Slows Kriya's own background checks while the Mac is on battery or in Low Power Mode.", symbol: "bolt.circle", pane: "power", tab: nil, permissions: [], dependsOn: [], resetArea: "powersaving",
+                       tests: ["PowerSavingTests"]),
     ]
 
     /// The tests that cover each of the original eight features, by `FeatureId.key`.
@@ -68,6 +76,13 @@ enum FeatureRegistry {
     ]
 
     static func feature(_ id: String) -> ManagedFeature? { extras.first { $0.id == id } }
+
+    /// The titles of every feature that needs a system permission: the original features and the others in this registry.
+    static func features(needing permission: Permission) -> [String] {
+        let core = FeatureId.all.filter { $0.requiredPermissions.contains(permission) }.map(\.title)
+        let more = extras.filter { $0.permissions.contains(permission.title) }.map(\.title)
+        return core + more
+    }
 
     /// The features that rely on this one.
     static func dependents(of id: String) -> [ManagedFeature] { extras.filter { $0.dependsOn.contains(id) } }
@@ -309,6 +324,14 @@ enum SettingsIndex {
         e("backup", nil, "Backup and restore", "export import icloud encrypted"), e("diagnostics", "Overview", "Diagnostics", "report safe mode reset one part"),
         e("diagnostics", "Health", "Health checks", "permissions"), e("diagnostics", "Trace", "Event trace", "tap"), e("diagnostics", "Audit", "Activity log", "audit unified evidence"),
         e("about", nil, "About Kriya", "version build commit signature architecture"),
+        e("shortcutMap", nil, "Fix This (resolve a shortcut clash)", "conflict wizard keep trigger turn off others suggest free shortcut undo"),
+        e("automation", "Workflows", "Version history", "revisions go back restore earlier save"), e("automation", "Safety", "Pause all automation", "emergency stop banner"),
+        e("windows", "Layouts", "Windows that stay put", "lock pin window restore placement"), e("windows", "Layouts", "Spaces", "desktop arrange windows when space changes"),
+        e("power", nil, "Power saving", "low power mode battery throttle monitor"), e("apps", "Installed", "Check Signature", "notarization signing developer id gatekeeper"),
+        e("launcher", nil, "Check Links", "quicklinks broken url test"), e("capture", nil, "Capture profiles", "quick copy documentation tutorial pointer"),
+        e("capture", nil, "Text in pictures", "ocr languages recognition"), e("launcher", nil, "Why was this shown?", "score ranking explain result"),
+        e("selection", nil, "Open straight in keyboard mode", "arrows tab return voiceover shortcut twice"), e("folderRules", nil, "Two rules want the same file", "overlap who wins order"),
+        e("diskMap", nil, "Safe to remove", "cache build folders trash cleanup suggestions"), e("notes", nil, "Locked notes and templates", "encrypt keychain pinned attachments"),
     ]
 
     /// Entries that match every word, best first: a title that starts with the word, then one that contains it, then keywords.

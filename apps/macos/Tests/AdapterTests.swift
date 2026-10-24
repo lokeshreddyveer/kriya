@@ -164,7 +164,7 @@ final class BackupManagerTests: XCTestCase {
 
     override func setUpWithError() throws {
         world = try TestWorld()
-        backup = BackupManager(core: world.core, folder: world.folder.appendingPathComponent("Backups", isDirectory: true), passphrases: MemoryPassphraseStore())
+        backup = BackupManager(core: world.core, folder: world.folder.appendingPathComponent("Backups", isDirectory: true), passphrases: MemoryPassphraseStore(), defaults: UserDefaults(suiteName: "kriya-tests-\(UUID().uuidString)")!)
         try FileManager.default.createDirectory(at: world.folder.appendingPathComponent("Backups"), withIntermediateDirectories: true)
     }
 

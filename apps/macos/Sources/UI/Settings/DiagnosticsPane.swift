@@ -55,6 +55,7 @@ private struct HealthTab: View {
         let report = BugReportText.assemble([
             .init(title: "Build", lines: facts.lines),
             .init(title: "Permissions", lines: BugReportText.permissionLines(Permission.allCases.map { ($0.title, permissions.isGranted($0)) })),
+            .init(title: "Saved settings", lines: [SettingsRegistry.coverageSummary()]),
             .init(title: "Features", lines: BugReportText.featureLines(FeatureId.all.map { ($0.title, config.isEnabled($0), services.state($0).label) })),
             .init(title: "Competing programs", lines: competing.map(\.name)),
             .init(title: "Secure input", lines: secure.enabled ? ["On: some apps are hiding what is typed from Kriya"] : []),

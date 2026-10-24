@@ -16,10 +16,11 @@ struct ShelfPane: View {
                     Button("Open the Shelf Now") { shelf.show() }
                 }
             } header: { Text("File shelf") } footer: {
-                Text("A small panel that holds files, text and images while you move them between apps. Drop things on it, then drag them out into any app or folder. Off by default.")
+                Text("A small panel that holds files, text and images while you move them between apps. Drop things on it, then drag them out into any app or folder. Off by default.\(config.shelfEnabled ? "" : " The settings below take effect once it is on.")")
             }
 
-            if config.shelfEnabled {
+            // Always shown, so the expiry, reminder and exclusion settings can be found and set before the shelf is switched on.
+            Group {
                 Section {
                     Toggle("Open when I shake the pointer while dragging files", isOn: Binding(get: { config.shelfOnShake }, set: { v in store.update { $0.shelfOnShake = v } }))
                     Toggle("Open as soon as I start dragging files", isOn: Binding(get: { config.shelfOnDrag }, set: { v in store.update { $0.shelfOnDrag = v } }))
@@ -81,6 +82,7 @@ struct ShelfPane: View {
                     Text("The shelf keeps what you put on it until you take it off, even after Kriya restarts. Switch shelves, make new ones and search them from the shelf's own header. Items taken off, or let go after the time above, stay in the history for 30 days and can be put back. Files stay where they are; the shelf only remembers where. Pictures and text are kept on this Mac only.")
                 }
             }
+            .disabled(!config.shelfEnabled)
         }
         .formStyle(.grouped)
     }

@@ -1011,6 +1011,27 @@ mod tests {
     }
 
     #[test]
+    fn app_preferences_travel_in_a_backup_and_must_be_an_object() {
+        let source = open();
+        assert!(source.save_app_prefs_json("[1]").is_err());
+        assert!(source.save_app_prefs_json("nope").is_err());
+        source
+            .save_app_prefs_json(r#"{"windowLocks.v1":"eA=="}"#)
+            .unwrap();
+        let json = source.export_backup("0.1.3", 1).unwrap();
+        let target = open();
+        assert_eq!(target.app_prefs_json().unwrap(), None);
+        target.import_backup(&json).unwrap();
+        assert_eq!(
+            target.app_prefs_json().unwrap().as_deref(),
+            Some(r#"{"windowLocks.v1":"eA=="}"#)
+        );
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["extras"]["app_prefs"] = "{nope".into();
+        assert!(target.import_backup(&value.to_string()).is_err());
+    }
+
+    #[test]
     fn bad_backup_changes_nothing() {
         let store = open();
         store.save_action(&action("keep")).unwrap();

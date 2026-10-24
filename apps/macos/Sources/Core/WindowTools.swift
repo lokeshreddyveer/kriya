@@ -38,6 +38,13 @@ final class WindowLockStore: ObservableObject {
         return WindowLocks.isLocked(cache, appID: appID, title: title)
     }
 
+    /// Reads the locks from preferences again, after a restore or a reset changed them behind this store's back.
+    func reload() {
+        let saved = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode([WindowLock].self, from: $0) } ?? []
+        lock.lock(); cache = saved; lock.unlock()
+        DispatchQueue.main.async { [self] in locks = saved }
+    }
+
     func add(appID: String, title: String) {
         update { list in
             let new = WindowLock(appID: appID, titleContains: title)

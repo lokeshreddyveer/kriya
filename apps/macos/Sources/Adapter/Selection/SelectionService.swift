@@ -449,8 +449,13 @@ final class SelectionService: ObservableObject {
         // Pressing the shortcut again while the bar is up hands the keyboard to it.
         if toolbar.isVisible, !toolbar.isKeyboardMode { toolbar.beginKeyboard(); return }
         pointer = DisplayManager.mouseLocation()
+        openInKeyboardNext = UserDefaults.standard.bool(forKey: Self.startInKeyboardKey)
         check(manual: true)
     }
+
+    /// Settings › Selection Bar › "Open straight in keyboard mode": the shortcut shows the bar already waiting for keys.
+    static let startInKeyboardKey = "selection.startInKeyboard"
+    private(set) var openInKeyboardNext = false
 
     /// A bar with only paste actions, next to the pointer, for a place where nothing can be selected (blank space in a
     /// document, an empty field). It does not look for a selection, and it does not move focus: the paste goes where the
@@ -476,12 +481,14 @@ final class SelectionService: ObservableObject {
     // MARK: Finding the selection
 
     private func check(manual: Bool, retriesLeft: Int = 0) {
-        guard isRunning, profiles?.isFeatureActive(.selectionBar) ?? true else { return }
+        // A request for keyboard mode belongs to one press of the shortcut; every way out of that press drops it.
+        if !manual { openInKeyboardNext = false }
+        guard isRunning, profiles?.isFeatureActive(.selectionBar) ?? true else { openInKeyboardNext = false; return }
         let app = NSWorkspace.shared.frontmostApplication
-        guard app?.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        guard app?.bundleIdentifier != Bundle.main.bundleIdentifier else { openInKeyboardNext = false; return }
         let (actions, config) = store.current
         let behavior = selectionBehavior(config: config, appId: app?.bundleIdentifier)
-        guard behavior.mode == .automatic || (manual && behavior.mode == .manualOnly) else { return }
+        guard behavior.mode == .automatic || (manual && behavior.mode == .manualOnly) else { openInKeyboardNext = false; return }
         let monitor = clipboard.monitor
         let started = generation
         queue.async { [weak self] in
@@ -500,7 +507,8 @@ final class SelectionService: ObservableObject {
             }
             if self?.generation != started { return }
             guard let snapshot = found, selectionLengthOk(config: config, text: snapshot.text) else {
-                // Nothing to act on, so offer what still makes sense there: pasting.
+                // Nothing to act on, so offer what still makes sense there: pasting. Keyboard mode was for a bar that never came.
+                self?.openInKeyboardNext = false
                 if manual { DispatchQueue.main.async { self?.lastProblem = "Nothing is selected, or this app does not share its selection."; self?.showPasteBar() } }
                 return
             }
@@ -514,6 +522,8 @@ final class SelectionService: ObservableObject {
     var isOffered: (SelectionAction) -> Bool = { _ in true }
 
     private func present(_ snapshot: SelectionSnapshot, ids: [String]) {
+        let keyboard = openInKeyboardNext
+        openInKeyboardNext = false
         let (actions, config) = store.current
         let chosen = ids.compactMap { id in actions.first { $0.id == id } }.filter(isOffered)
         guard !chosen.isEmpty else { return }
@@ -523,5 +533,6 @@ final class SelectionService: ObservableObject {
             guard let self, let snapshot = self.snapshot else { return }
             runner.run(action, on: snapshot, pointer: pointer)
         }
+        if keyboard { toolbar.beginKeyboard() }
     }
 }

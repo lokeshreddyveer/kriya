@@ -130,6 +130,18 @@ enum KeyNames {
 /// Window actions that Window Management (a later phase) will provide. A button can be set to one now; it starts working
 /// when that feature arrives.
 enum WindowCommands {
+    /// Commands Kriya can run that no other list offered, so a shortcut, a workflow step or the launcher can use them too.
+    static let more: [(String, String)] = [
+        ("audio.mute", "Mute or unmute the sound"), ("audio.mic_mute", "Mute or unmute the microphone"), ("audio.next_output", "Switch to the next sound output"),
+        ("audio.volume_up", "Volume up (also on outputs without volume keys)"), ("audio.volume_down", "Volume down (also on outputs without volume keys)"),
+        ("clipboard.stack", "Start or stop the paste stack"), ("display.dim_less", "Dim the display less"), ("display.dim_more", "Dim the display more"),
+        ("display.next_profile", "Next display profile"), ("pointer.show", "Show the pointer"), ("pointer.spotlight", "Spotlight the pointer"),
+        ("pointer.zoom_in", "Magnifier: zoom in"), ("pointer.zoom_out", "Magnifier: zoom out"), ("power.keep_awake", "Keep the Mac awake (on or off)"), ("power.keep_awake.30", "Keep the Mac awake for 30 minutes"),
+        ("power.keep_awake.60", "Keep the Mac awake for an hour"), ("power.keep_awake_off", "Let the Mac sleep again"),
+        ("shelf.toggle", "Show or hide the file shelf"), ("text.speak", "Read the selected text aloud"), ("text.stop_speaking", "Stop reading aloud"),
+        ("workspace.undo_last", "Undo the last workspace"),
+    ]
+
     /// Every window command the core knows, then the pointer commands the mouse feature adds.
     static var all: [(command: String, title: String)] {
         var list = windowLayouts().map { (command: $0.command, title: $0.title) }
@@ -153,6 +165,8 @@ enum WindowCommands {
         list.append((command: "focus.session", title: "Start or end a focus session"))
         list.append((command: "color.pick", title: "Pick a colour from the screen"))
         list += AudioControl.commands.map { (command: $0.command, title: $0.title) }
+        list += CaptureSettings.commands.map { (command: $0.command, title: $0.title) }
+        list += more.map { (command: $0.0, title: $0.1) }
         list += dynamic().map { (command: $0.command, title: $0.title) }
         return list
     }

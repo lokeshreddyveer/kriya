@@ -42,6 +42,8 @@ final class BackupManager: ObservableObject {
     @Published private(set) var automaticBackups: [BackupFileInfo] = []
     @Published private(set) var iCloudBackups: [BackupFileInfo] = []
     @Published private(set) var lastICloudBackup: Date?
+    /// What the last restore did to the running app: what is in force now and what waits for a restart.
+    @Published private(set) var lastRestore: SettingsApplyOutcome?
     /// Settings another Mac saved after this one did. Offered in the Backup pane; nothing is applied without a click.
     @Published private(set) var newerFromOtherMac: BackupFileInfo?
     /// Backups are sealed with a passphrase kept in the Keychain.
@@ -71,12 +73,15 @@ final class BackupManager: ObservableObject {
     private let core: KriyaCore
     private let folder: URL
     private let passphrases: BackupPassphraseStore
+    /// Where the settings kept in preferences are read for a backup and written back by a restore. A test passes its own.
+    private let defaults: UserDefaults
     /// Called after a restore so every store re-reads what changed.
     var onRestored: () -> Void = {}
 
     /// `passphrases` is where the protection passphrase lives. A test passes its own, so the real Keychain is never used.
-    init(core: KriyaCore, folder: URL, passphrases: BackupPassphraseStore = KeychainBackupPassphraseStore()) {
+    init(core: KriyaCore, folder: URL, passphrases: BackupPassphraseStore = KeychainBackupPassphraseStore(), defaults: UserDefaults = .standard) {
         self.core = core
+        self.defaults = defaults
         self.folder = folder
         self.passphrases = passphrases
         self.iCloudEnabled = UserDefaults.standard.bool(forKey: Self.iCloudKey)
@@ -175,8 +180,14 @@ final class BackupManager: ObservableObject {
         newerFromOtherMac = nil
     }
 
+    /// The backup text, with the app's own preference-held settings packed in first.
+    private func backupJSON() throws -> String {
+        if let packed = PortablePrefs.pack(from: defaults) { try core.saveAppPrefsJson(json: packed) }
+        return try core.exportBackup(appVersion: SystemInfo.appVersion, now: SystemInfo.nowSeconds)
+    }
+
     func export(to url: URL) throws {
-        let json = try core.exportBackup(appVersion: SystemInfo.appVersion, now: SystemInfo.nowSeconds)
+        let json = try backupJSON()
         let data: Data
         if let phrase = passphrases.load() {
             data = try BackupCrypto.seal(json, passphrase: phrase)
@@ -190,7 +201,7 @@ final class BackupManager: ObservableObject {
 
     /// What this Mac has now, counted the same way as a backup, to compare a restore against.
     func currentSummary() throws -> BackupSummary {
-        try core.inspectBackup(json: try core.exportBackup(appVersion: SystemInfo.appVersion, now: SystemInfo.nowSeconds))
+        try core.inspectBackup(json: try backupJSON())
     }
 
     /// `passphrase` is for a backup protected with a passphrase this Mac does not hold. Without it, the stored one is used.
@@ -204,6 +215,10 @@ final class BackupManager: ObservableObject {
         _ = try core.inspectBackup(json: json)     // refuse a bad file before touching anything
         try writeAutomaticBackup(reason: "before-restore")
         let summary = try core.importBackup(json: json)
+        // The settings kept in preferences are written first, then each running part is told to read them again.
+        var keys: [String] = []
+        if let packed = PortablePrefs.packed(inBackup: json) { keys = PortablePrefs.applyKeys(packed, to: defaults) }
+        lastRestore = SettingsReloader.apply(keys: keys)
         Log.info("Backup", "Restored \(url.lastPathComponent)")
         onRestored()
         refreshList()

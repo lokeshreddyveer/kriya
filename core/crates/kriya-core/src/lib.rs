@@ -1478,6 +1478,14 @@ impl KriyaCore {
         self.store.save_remap_config(&config)
     }
 
+    pub fn app_prefs_json(&self) -> Result<Option<String>, CoreError> {
+        self.store.app_prefs_json()
+    }
+
+    pub fn save_app_prefs_json(&self, json: String) -> Result<(), CoreError> {
+        self.store.save_app_prefs_json(&json)
+    }
+
     pub fn pointer_effects_config(&self) -> Result<PointerEffectsConfig, CoreError> {
         self.store.pointer_effects_config()
     }

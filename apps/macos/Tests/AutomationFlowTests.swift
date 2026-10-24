@@ -36,6 +36,80 @@ final class AutomationFlowTests: XCTestCase {
         XCTAssertEqual(result.steps.last?.message, "123", "the loop counted 1, 2, 3 into the variable")
     }
 
+    private func branch(_ engine: AutomationEngine, holds: Bool) throws -> Workflow {
+        let store = engine.store
+        // Every weekday is always true; with "not" it is always false.
+        let condition = ConditionGroup(mode: .all, items: [ConditionItem(kind: .weekdays(days: Data([0, 1, 2, 3, 4, 5, 6])), negate: !holds)])
+        let yes = store.newStep(.setVariable(name: "side", template: "then"))
+        let no = store.newStep(.setVariable(name: "side", template: "otherwise"))
+        let pick = store.newStep(.branch(when: condition, thenSteps: [yes], elseSteps: [no]))
+        let read = store.newStep(.javaScript(source: "vars.side"))
+        return try save(engine, [pick, read])
+    }
+
+    func testAnIfRunsTheThenSideWhenItsConditionsHold() async throws {
+        let (world, engine) = try make()
+        defer { world.cleanUp() }
+        let result = await run(engine, try branch(engine, holds: true))
+        XCTAssertEqual(result.status, .succeeded, result.error ?? "")
+        XCTAssertEqual(result.steps.last?.message, "then")
+    }
+
+    func testAnIfRunsTheOtherwiseSideWhenTheyDoNot() async throws {
+        let (world, engine) = try make()
+        defer { world.cleanUp() }
+        let result = await run(engine, try branch(engine, holds: false))
+        XCTAssertEqual(result.status, .succeeded, result.error ?? "")
+        XCTAssertEqual(result.steps.last?.message, "otherwise")
+    }
+
+    func testAnIfPlansOnlyTheSideItWouldTake() async throws {
+        let (world, engine) = try make()
+        defer { world.cleanUp() }
+        let w = try branch(engine, holds: true)
+        let plan = await engine.execute(w, source: "Test", input: "", depth: 0, test: true, dryRun: true, approvedForTest: true, progress: nil)
+        XCTAssertTrue(plan.steps.contains { $0.title.contains("› then ·") }, "the side that would run is planned")
+        XCTAssertFalse(plan.steps.contains { $0.title.contains("› otherwise ·") }, "the side not taken is not planned")
+    }
+
+    func testIfsNestInsideEachOtherAndEachChecksItsOwnConditions() async throws {
+        let (world, engine) = try make()
+        defer { world.cleanUp() }
+        let store = engine.store
+        let always = ConditionGroup(mode: .all, items: [ConditionItem(kind: .weekdays(days: Data([0, 1, 2, 3, 4, 5, 6])), negate: false)])
+        let never = ConditionGroup(mode: .all, items: [ConditionItem(kind: .weekdays(days: Data([0, 1, 2, 3, 4, 5, 6])), negate: true)])
+        let deep = store.newStep(.setVariable(name: "path", template: "{{path}}-deep"))
+        let skipped = store.newStep(.setVariable(name: "path", template: "{{path}}-wrong"))
+        let inner = store.newStep(.branch(when: never, thenSteps: [skipped], elseSteps: [deep]))
+        let start = store.newStep(.setVariable(name: "path", template: "start"))
+        let outer = store.newStep(.branch(when: always, thenSteps: [inner], elseSteps: []))
+        let read = store.newStep(.javaScript(source: "vars.path"))
+        let result = await run(engine, try save(engine, [start, outer, read]))
+        XCTAssertEqual(result.status, .succeeded, result.error ?? "")
+        XCTAssertEqual(result.steps.last?.message, "start-deep")
+    }
+
+    func testAnIfWhoseStepFailsStopsTheWorkflow() async throws {
+        let (world, engine) = try make()
+        defer { world.cleanUp() }
+        let store = engine.store
+        let always = ConditionGroup(mode: .all, items: [ConditionItem(kind: .weekdays(days: Data([0, 1, 2, 3, 4, 5, 6])), negate: false)])
+        let bad = store.newStep(.textTransform(ops: [.jsonFormat]))
+        let after = store.newStep(.setVariable(name: "ran", template: "yes"))
+        let w = try save(engine, [store.newStep(.branch(when: always, thenSteps: [bad], elseSteps: [])), after])
+        let result = await engine.execute(w, source: "Test", input: "not json", depth: 0, test: true, dryRun: false, approvedForTest: true, progress: nil)
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertFalse(result.steps.contains { $0.title.contains("ran") }, "nothing after the failed if ran")
+    }
+
+    func testCopiedIfStepsGetFreshIDsOnBothSides() throws {
+        let inner = WorkflowStep(id: "same", label: nil, when: nil, onError: .stop, kind: .delay(ms: 1))
+        let condition = ConditionGroup(mode: .all, items: [ConditionItem(kind: .weekdays(days: Data([1])), negate: false)])
+        guard case .branch(_, let a, let b) = WorkflowStore.withFreshIDs(.branch(when: condition, thenSteps: [inner], elseSteps: [inner])) else { return XCTFail("not an if") }
+        XCTAssertNotEqual(a[0].id, "same")
+        XCTAssertNotEqual(a[0].id, b[0].id)
+    }
+
     func testAFailingStepIsTriedAgainThenGivenUp() async throws {
         let (world, engine) = try make()
         defer { world.cleanUp() }

@@ -40,7 +40,7 @@ final class ProtectedBackupTests: XCTestCase {
         world = try TestWorld()
         store = MemoryPassphraseStore()
         try FileManager.default.createDirectory(at: world.folder.appendingPathComponent("Backups"), withIntermediateDirectories: true)
-        backup = BackupManager(core: world.core, folder: world.folder.appendingPathComponent("Backups", isDirectory: true), passphrases: store)
+        backup = BackupManager(core: world.core, folder: world.folder.appendingPathComponent("Backups", isDirectory: true), passphrases: store, defaults: UserDefaults(suiteName: "kriya-tests-\(UUID().uuidString)")!)
     }
 
     override func tearDown() { world.cleanUp() }
@@ -65,7 +65,7 @@ final class ProtectedBackupTests: XCTestCase {
         let file = world.folder.appendingPathComponent("carried.kriyabackup")
         try backup.export(to: file)
         store.delete()
-        let other = BackupManager(core: world.core, folder: world.folder.appendingPathComponent("Backups", isDirectory: true), passphrases: MemoryPassphraseStore())
+        let other = BackupManager(core: world.core, folder: world.folder.appendingPathComponent("Backups", isDirectory: true), passphrases: MemoryPassphraseStore(), defaults: UserDefaults(suiteName: "kriya-tests-\(UUID().uuidString)")!)
         XCTAssertThrowsError(try other.inspect(file)) { XCTAssertEqual($0 as? BackupCryptoError, .needsPassphrase) }
         XCTAssertThrowsError(try other.inspect(file, passphrase: "not the phrase")) { XCTAssertEqual($0 as? BackupCryptoError, .wrongPassphrase) }
         XCTAssertNoThrow(try other.inspect(file, passphrase: "shared secret phrase"))

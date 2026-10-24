@@ -5,6 +5,7 @@ struct DiskMapPane: View {
     @StateObject private var scanner = DiskMapScanner()
     @State private var hovered: DiskEntry?
     @State private var started = false
+    @State private var confirmTrash = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -39,10 +40,45 @@ struct DiskMapPane: View {
                 if scanner.skipped > 0 { Text("\(scanner.skipped) item\(scanner.skipped == 1 ? "" : "s") macOS did not let Kriya read").font(.caption).foregroundStyle(.secondary) }
             }
             .font(.callout)
+            safeToRemove
             Text("Click a folder to look inside it. Right-click a tile to show it in Finder or move it to the Trash. Nothing is removed unless you choose that.").font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
         .onAppear { if !started { started = true; scanner.scan() } }
+    }
+
+    /// The biggest things here that are known to be rebuilt by their app (caches, build output, package folders).
+    @ViewBuilder
+    private var safeToRemove: some View {
+        let picks = DiskRisk.cleanupSuggestions(scanner.entries.map { ($0.url.path, $0.size) })
+        if !scanner.scanning, !picks.items.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Safe to remove").font(.headline)
+                    Spacer()
+                    Text("\(ByteFormat.size(Double(picks.total))) in \(picks.items.count) item\(picks.items.count == 1 ? "" : "s")").font(.callout).foregroundStyle(.secondary)
+                    Button("Move All to Trash…") { confirmTrash = true }.controlSize(.small)
+                }
+                ForEach(picks.items, id: \.path) { item in
+                    HStack {
+                        Text((item.path as NSString).lastPathComponent).lineLimit(1)
+                        Text(DiskRisk.classify(item.path).reason).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer()
+                        Text(ByteFormat.size(Double(item.size))).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+                Text("These are caches and build folders their apps make again when needed. Everything goes to the Trash, so it can be put back.").font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .transition(.opacity)
+            .confirmationDialog("Move \(picks.items.count) item\(picks.items.count == 1 ? "" : "s") to the Trash?", isPresented: $confirmTrash, titleVisibility: .visible) {
+                Button("Move to Trash", role: .destructive) {
+                    for item in picks.items { if let entry = scanner.entries.first(where: { $0.url.path == item.path }) { scanner.trash(entry) } }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("About \(ByteFormat.size(Double(picks.total))) will be freed once the Trash is emptied.") }
+        }
     }
 
     private func choose() {

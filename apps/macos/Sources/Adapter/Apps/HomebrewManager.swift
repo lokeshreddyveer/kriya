@@ -137,6 +137,9 @@ final class HomebrewManager: ObservableObject {
     /// The cask being installed now, and how far through the list it is ("2 of 5").
     @Published private(set) var currentCask: String?
     @Published private(set) var progressNote: String?
+    /// How many casks of the run have finished and how many there are, for the bar. One cask has no percentage to show.
+    @Published private(set) var installDone = 0
+    @Published private(set) var installTotal = 0
     /// The casks that did not install, with why, after the last run.
     @Published private(set) var failures: [String: String] = [:]
     /// How long an install may run, and how long it may be silent before it is called stalled. Changed by tests.
@@ -238,9 +241,12 @@ final class HomebrewManager: ObservableObject {
         log = ""
         failures = [:]
         stage = nil
+        installDone = 0
+        installTotal = wanted.count
         queue.async { [self] in
             for (index, token) in wanted.enumerated() {
                 if isCancelRequested { append("Stopped.\n"); break }
+                DispatchQueue.main.async { self.installDone = index }
                 setProgress(cask: token, note: wanted.count > 1 ? "\(index + 1) of \(wanted.count)" : nil)
                 append("$ \(Self.command(install: token))\n")
                 let code = runStreaming(brewPath, ["install", "--cask", token])
@@ -253,6 +259,8 @@ final class HomebrewManager: ObservableObject {
             }
             DispatchQueue.main.async {
                 self.isRunning = false
+                self.installDone = 0
+                self.installTotal = 0
                 self.setProgress(cask: nil, note: nil)
                 self.stage = nil
                 self.refreshInstalled()
