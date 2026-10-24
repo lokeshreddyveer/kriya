@@ -715,6 +715,19 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   equaliser (saying how far off the fit is), puts it on "All sound" when that device is the output and takes it off when another is. Nothing is
   downloaded. **Sound health** lists each output's delay, what Kriya's processing adds for each app and anything that failed. New commands for
   shortcuts and `kriya://run`: the front app's favorite, boost and menu-bar icon, the device order, and front-app volume in the step you chose.
+- **Safer pop-up windows and fewer surprises (0.10.1):** every pop-up that shows your own content (the launcher, clipboard window, Notes, File Shelf,
+  AI results, the window list and switcher, the Finder drawer, action launcher and folder chooser, the selection bar, snippet prompts, the dictation
+  strip and search-by-meaning results) is now left out of screen sharing and other apps' screenshots, using the one switch in Settings › Clipboard ›
+  Privacy (a window that is already open changes the next time it opens; a phone pointed at the screen still sees it). Things that used to happen
+  with one click now ask first: deleting a preset, shortcut, snippet, layout, workspace, rule, action or workflow, restoring defaults, forgetting a
+  device or an AI provider, removing an MCP server, making a new MCP secret, applying default apps to macOS, relaunching Finder, emptying the Trash,
+  clearing a history or the audit record, and discarding or starting over a recording that has run for more than ten seconds. The menu-bar window's
+  **Pause** remembers what to bring back even if Kriya quits while paused. After a **backup restore**, the sound mixer, rules, modes, device order and
+  places take effect at once. Shaking the pointer to find it works up and down as well as side to side. **Duplicate to Edit** on a built-in mouse preset
+  selects the copy. **Settings search** finds Finder › Menus. Screenshots written only for dragging are removed after ten minutes. A failed save of an
+  App Profile, or of a deleted note template, now says so. Scrolling capture no longer trusts a change in the picture when the scroll method says it could
+  not scroll, and measures an accessible scroll area by the box around all its parts. The recording options say when the Microphone or Camera is not
+  allowed. Many buttons and switches that only had an icon now have names for VoiceOver.
 - **Menu-bar icons in the launcher:** type `mb wifi`, `menu bar battery` or `status bluetooth` to find another app's menu-bar icon by name
   and open it, even when it is hidden behind the arrow or squeezed out by the notch. Needs Accessibility; it reads icon names only.
 - **Open and Save dialogs:** the *Go to a folder in the Open or Save dialog* command (give it a shortcut, or use the Dialog Folders tile)
