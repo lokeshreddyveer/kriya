@@ -13,7 +13,7 @@ struct DiagnosticsPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
+            Picker("Section", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
                 .paneTabBar(maxWidth: 440)
                 .paneHeader()
             Group {
@@ -92,8 +92,10 @@ private struct HealthTab: View {
                         }
                         Spacer()
                         Text(label(permissions.status(permission))).font(.callout).foregroundStyle(.secondary)
-                        if permissions.status(permission) == .denied || permissions.status(permission) == .notDetermined {
+                        if permissions.status(permission) == .notDetermined {
                             Button("Allow…") { permissions.request(permission) }.controlSize(.small)
+                        } else if permissions.status(permission) == .denied {
+                            Button("Open Settings") { permissions.openSettings(permission) }.controlSize(.small)
                         }
                     }
                 }
@@ -429,7 +431,7 @@ private struct DiagnosticsOverviewTab: View {
                     }
                 }
             } header: { Text("Reset one part") } footer: {
-                Text("Puts one part of Kriya back to how it was on first launch and leaves everything else as it is. Kriya restarts to finish. It cannot be undone, so make a backup first if the settings matter.")
+                Text("Puts one part of Kriya back to how it was on first launch and leaves everything else as it is. Kriya restarts to finish. Undo is offered right after, until the next reset; make a backup first if the settings matter.")
             }
             .confirmationDialog("Reset \(resetting?.title ?? "")?", isPresented: Binding(get: { resetting != nil }, set: { if !$0 { resetting = nil } }), titleVisibility: .visible) {
                 Button("Reset and Restart", role: .destructive) {

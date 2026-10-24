@@ -111,9 +111,9 @@ struct BatchRenameView: View {
                 ForEach($steps) { $step in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Picker("", selection: $step.kind) { ForEach(StepDraft.Kind.allCases) { Text($0.rawValue).tag($0) } }
+                            Picker("Kind of step", selection: $step.kind) { ForEach(StepDraft.Kind.allCases) { Text($0.rawValue).tag($0) } }
                                 .labelsHidden()
-                            Button(role: .destructive) { withAnimation(.smooth) { steps.removeAll { $0.id == step.id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
+                            Button(role: .destructive) { withAnimation(.smooth) { steps.removeAll { $0.id == step.id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete this step")
                                 .buttonStyle(.borderless)
                         }
                         fields(for: $step)

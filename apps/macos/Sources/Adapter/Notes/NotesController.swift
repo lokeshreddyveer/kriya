@@ -8,6 +8,8 @@ final class NotesModel: ObservableObject {
     @Published var current: URL?
     @Published var text = "" { didSet { if !loading { scheduleSave() } } }
     @Published var query = "" { didSet { reload() } }
+    /// Something the person needs to know about the last thing they did, shown under the note.
+    @Published var notice: String?
     private var loading = false
     private var saveWork: DispatchWorkItem?
 
@@ -31,8 +33,13 @@ final class NotesModel: ObservableObject {
     func toggleLock() {
         guard let url = current else { return }
         flush()
-        let next = url.pathExtension == NoteStore.lockedExtension ? store.unlock(url) : store.lock(url)
-        guard let next else { return }
+        let unlocking = url.pathExtension == NoteStore.lockedExtension
+        let next = unlocking ? store.unlock(url) : store.lock(url)
+        guard let next else {
+            notice = unlocking ? "This note could not be unlocked. Its key is not in your Keychain, or the Keychain would not give it up." : "This note could not be locked. Kriya could not save a key in your Keychain."
+            return
+        }
+        notice = nil
         loading = true; current = next; text = store.read(next); loading = false
         reload()
     }
@@ -60,6 +67,7 @@ final class NotesModel: ObservableObject {
     }
 
     func open(_ url: URL) {
+        notice = nil
         flush()
         loading = true; current = url; text = store.read(url); loading = false
     }
@@ -145,6 +153,7 @@ private struct NotesView: View {
                     .padding(10)
                     .focused($editing)
                 Divider()
+                if let notice = model.notice { Text(notice).font(.caption).foregroundStyle(Theme.warn).padding(.horizontal, 10).padding(.top, 6).frame(maxWidth: .infinity, alignment: .leading) }
                 HStack(spacing: 14) {
                     Button { model.newNote(); editing = true } label: { Label("New", systemImage: "square.and.pencil") }.keyboardShortcut("n")
                     Menu {

@@ -7,6 +7,7 @@ struct ProfilesPane: View {
 
     @State private var selectedID: String?
     @State private var errorMessage: String?
+    @State private var confirmRemove = false
 
     private var selected: Profile? {
         store.profiles.first { $0.id == selectedID } ?? store.defaultProfile
@@ -27,6 +28,10 @@ struct ProfilesPane: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.smooth(duration: 0.2), value: selected?.id)
         }
+        .confirmationDialog("Remove the profile for \(selected?.name ?? "this app")?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove", role: .destructive) { removeSelected() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The app goes back to using the default profile.") }
         .alert("Could not change profiles", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
         } message: {
@@ -48,8 +53,8 @@ struct ProfilesPane: View {
             }
             Divider()
             HStack(spacing: 4) {
-                Button { addApp() } label: { Image(systemName: "plus") }.accessibilityLabel("Add")
-                Button { removeSelected() } label: { Image(systemName: "minus") }.accessibilityLabel("Remove")
+                Button { addApp() } label: { Image(systemName: "plus") }.accessibilityLabel("Add a profile for an app")
+                Button { confirmRemove = true } label: { Image(systemName: "minus") }.accessibilityLabel("Remove this profile")
                     .disabled(selected?.isDefault ?? true)
                 Spacer()
             }

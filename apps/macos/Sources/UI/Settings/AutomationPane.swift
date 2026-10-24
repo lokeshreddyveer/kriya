@@ -66,6 +66,7 @@ private struct WorkflowsTab: View {
     @State private var historyOf: String?
     @State private var message: String?
     @State private var drafting = false
+    @State private var confirmDelete = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,7 +83,7 @@ private struct WorkflowsTab: View {
                     }
                     Spacer()
                     if engine.isRunning(workflow.id) {
-                        Button("Stop") { engine.cancelAll() }.controlSize(.small)
+                        Button("Stop") { engine.cancelAll() }.controlSize(.small).help("Stops every workflow that is running")
                     } else {
                         Button("Run") { engine.fire(workflow.id, source: "Run by hand", test: true) }.controlSize(.small)
                             .disabled(workflowNeedsAuthorization(workflow: workflow))
@@ -123,7 +124,7 @@ private struct WorkflowsTab: View {
                     Button("Import Workflows…") { importWorkflows() }
                     Button("Export Selected…") { export() }.disabled(selected.isEmpty)
                     Divider()
-                    Button("Delete Selected", role: .destructive) { selected.forEach(store.delete); selected.removeAll() }.disabled(selected.isEmpty)
+                    Button("Delete Selected…", role: .destructive) { confirmDelete = true }.disabled(selected.isEmpty)
                 } label: { MoreMenuLabel() }.menuStyle(.button).menuIndicator(.hidden).fixedSize()
                 Spacer()
                 if let message { Text(message).font(.caption).foregroundStyle(.secondary).transition(.opacity) }
@@ -132,6 +133,10 @@ private struct WorkflowsTab: View {
         }
         .animation(.smooth(duration: 0.25), value: store.workflows)
         .animation(.smooth(duration: 0.2), value: message)
+        .confirmationDialog("Delete \(selected.count) workflow\(selected.count == 1 ? "" : "s")?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { selected.forEach(store.delete); selected.removeAll() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Their steps and triggers are removed. Export them first if you may want them back.") }
         .sheet(item: $editing) { WorkflowEditor(workflow: $0) }
         .sheet(isPresented: Binding(get: { historyOf != nil }, set: { if !$0 { historyOf = nil } })) {
             if let id = historyOf { WorkflowHistorySheet(workflowID: id) { historyOf = nil } }
@@ -189,6 +194,7 @@ private struct HistoryTab: View {
     @EnvironmentObject private var store: WorkflowStore
     @State private var filter: String = ""
     @State private var selected: String?
+    @State private var confirmClear = false
 
     private var runs: [WorkflowRun] { filter.isEmpty ? store.runs : store.runs.filter { $0.workflowId == filter } }
 
@@ -197,7 +203,7 @@ private struct HistoryTab: View {
             VStack(spacing: 0) {
                 HStack {
                     Picker("Workflow", selection: $filter) { Text("All workflows").tag(""); ForEach(store.workflows) { Text($0.name).tag($0.id) } }.labelsHidden()
-                    Button("Clear") { store.clearHistory(); selected = nil }.controlSize(.small)
+                    Button("Clear…") { confirmClear = true }.controlSize(.small)
                 }
                 .padding(10)
                 Divider()
@@ -228,6 +234,10 @@ private struct HistoryTab: View {
             .animation(.smooth(duration: 0.15), value: selected)
         }
         .onAppear { store.reloadRuns() }
+        .confirmationDialog("Clear the run history?", isPresented: $confirmClear) {
+            Button("Clear History", role: .destructive) { store.clearHistory(); selected = nil }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Every recorded run of every workflow is erased.") }
     }
 }
 
@@ -769,7 +779,7 @@ struct ConditionRow: View {
             Toggle("not", isOn: $item.negate).toggleStyle(.checkbox).help("Require that it does NOT hold")
             VStack(alignment: .leading, spacing: 6) { fields }
             Spacer()
-            Button(role: .destructive, action: onDelete) { Image(systemName: "trash") }.buttonStyle(.borderless)
+            Button(role: .destructive, action: onDelete) { Image(systemName: "trash") }.accessibilityLabel("Delete this condition").buttonStyle(.borderless)
         }
     }
 
@@ -778,16 +788,16 @@ struct ConditionRow: View {
         switch item.kind {
         case .frontApp(let ids):
             Text("The app in front is one of:").font(.callout)
-            ForEach(ids, id: \.self) { id in HStack { Text(AppChoice.name(for: id)); Button { item.kind = .frontApp(appIds: ids.filter { $0 != id }) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless) } }
+            ForEach(ids, id: \.self) { id in HStack { Text(AppChoice.name(for: id)); Button { item.kind = .frontApp(appIds: ids.filter { $0 != id }) } label: { Image(systemName: "xmark.circle") }.accessibilityLabel("Remove \(AppChoice.name(for: id))").buttonStyle(.borderless) } }
             Button("Add App…") { if let id = AppChoice.choose(), !ids.contains(id) { item.kind = .frontApp(appIds: ids + [id]) } }.controlSize(.small)
         case .appRunning(let id):
             HStack { Text("Running:"); Text(id.isEmpty ? "choose an app" : AppChoice.name(for: id)); Button("Choose…") { if let c = AppChoice.choose() { item.kind = .appRunning(appId: c) } }.controlSize(.small) }
         case .timeBetween(let start, let end):
             HStack {
                 Text("Between")
-                DatePicker("", selection: minuteBinding(start) { item.kind = .timeBetween(startMinute: $0, endMinute: end) }, displayedComponents: .hourAndMinute).labelsHidden()
+                DatePicker("Start time", selection: minuteBinding(start) { item.kind = .timeBetween(startMinute: $0, endMinute: end) }, displayedComponents: .hourAndMinute).labelsHidden()
                 Text("and")
-                DatePicker("", selection: minuteBinding(end) { item.kind = .timeBetween(startMinute: start, endMinute: $0) }, displayedComponents: .hourAndMinute).labelsHidden()
+                DatePicker("End time", selection: minuteBinding(end) { item.kind = .timeBetween(startMinute: start, endMinute: $0) }, displayedComponents: .hourAndMinute).labelsHidden()
             }
         case .weekdays(let days):
             HStack(spacing: 4) {
@@ -873,7 +883,7 @@ private struct StepCard: View {
                 Spacer()
                 Button { move(-1) } label: { Image(systemName: "arrow.up") }.accessibilityLabel("Move up").buttonStyle(.borderless).disabled(index == 0)
                 Button { move(1) } label: { Image(systemName: "arrow.down") }.accessibilityLabel("Move down").buttonStyle(.borderless).disabled(index == count - 1)
-                Button(role: .destructive, action: delete) { Image(systemName: "trash") }.buttonStyle(.borderless)
+                Button(role: .destructive, action: delete) { Image(systemName: "trash") }.accessibilityLabel("Delete step \(index + 1)").buttonStyle(.borderless)
             }
             StepFields(kind: $step.kind, workflowID: workflowID)
             HStack(spacing: 14) {
@@ -956,7 +966,7 @@ private struct StepFields: View {
                     HStack(alignment: .top) {
                         Text(op.title).font(.callout)
                         Spacer()
-                        Button(role: .destructive) { var next = ops; next.remove(at: index); kind = .textTransform(ops: next) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { var next = ops; next.remove(at: index); kind = .textTransform(ops: next) } label: { Image(systemName: "xmark.circle") }.accessibilityLabel("Remove \(op.title)").buttonStyle(.borderless)
                     }
                     TextOpFields(op: Binding(get: { ops.indices.contains(index) ? ops[index] : op }, set: { var next = ops; if next.indices.contains(index) { next[index] = $0 }; kind = .textTransform(ops: next) }))
                 }
@@ -1089,7 +1099,7 @@ private struct MIDITriggersSection: View {
                         HStack {
                             Picker("Runs", selection: $trigger.target) { ForEach(MIDITrigger.Target.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 190)
                             if trigger.target == .workflow {
-                                Picker("", selection: $trigger.targetID) {
+                                Picker("Workflow", selection: $trigger.targetID) {
                                     Text("Choose…").tag("")
                                     ForEach(store.workflows) { Text($0.name).tag($0.id) }
                                 }.labelsHidden()

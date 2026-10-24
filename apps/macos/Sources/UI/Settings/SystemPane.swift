@@ -121,6 +121,7 @@ struct SystemDetails: View {
 /// The folders taking the most room, measured when asked.
 struct StorageSection: View {
     @StateObject private var scanner = StorageScanner()
+    @State private var confirmEmpty = false
 
     var body: some View {
         Section {
@@ -140,13 +141,17 @@ struct StorageSection: View {
                     Spacer()
                     Text(ByteFormat.size(Double(item.bytes))).monospacedDigit().foregroundStyle(.secondary)
                     Button { NSWorkspace.shared.activateFileViewerSelecting([item.url]) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Show in Finder").accessibilityLabel("Show in Finder")
-                    if item.name == "Trash" { Button("Empty") { scanner.emptyTrash() }.controlSize(.small) }
+                    if item.name == "Trash" { Button("Empty…") { confirmEmpty = true }.controlSize(.small) }
                 }
             }
             Button(scanner.items.isEmpty ? "Measure Folders" : "Measure Again") { scanner.scan() }.disabled(scanner.scanning)
         } header: { Text("Storage") } footer: {
-            Text("Sizes only. Nothing is deleted except the Trash, and only when you press Empty. macOS may ask before Kriya can read some folders.")
+            Text("Sizes only. Nothing is deleted except the Trash, and only when you press Empty and agree. macOS may ask before Kriya can read some folders.")
         }
+        .confirmationDialog("Empty the Trash?", isPresented: $confirmEmpty, titleVisibility: .visible) {
+            Button("Empty the Trash", role: .destructive) { scanner.emptyTrash() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Everything in the Trash is erased for good. This cannot be undone.") }
     }
 }
 

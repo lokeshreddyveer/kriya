@@ -7,6 +7,7 @@ struct LauncherPane: View {
     @EnvironmentObject private var extras: LauncherExtras
     @EnvironmentObject private var tools: LauncherToolSources
     @State private var confirmReset = false
+    @State private var pendingRemoval: PendingRemoval?
     @State private var why: (query: String, rows: [LauncherEngine.Explanation])?
     @State private var speed = LauncherLatencyStore.shared.snapshot
     @ObservedObject private var linkChecker = LinkChecker.shared
@@ -170,7 +171,7 @@ struct LauncherPane: View {
                         }
                         Spacer()
                         Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)]) }.controlSize(.small)
-                        Button(role: .destructive) { extras.removeScriptFolder(folder) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { extras.removeScriptFolder(folder) } label: { Image(systemName: "trash") }.accessibilityLabel("Stop using the script folder \((folder as NSString).lastPathComponent)").buttonStyle(.borderless)
                     }
                 }
                 if let folderMessage { Text(folderMessage).font(.caption).foregroundStyle(Theme.warn) }
@@ -209,7 +210,7 @@ struct LauncherPane: View {
                         Button("Test") { if let url = link.testURL { NSWorkspace.shared.open(url) } }.controlSize(.small).disabled(link.testURL == nil)
                             .help("Opens this link in your browser with the words “kriya test”")
                         Button("Edit") { editingLink = link }.controlSize(.small)
-                        Button(role: .destructive) { extras.deleteQuicklink(link.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { pendingRemoval = PendingRemoval(title: "Delete the quicklink “\(link.name)”?") { extras.deleteQuicklink(link.id) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the quicklink \(link.name)").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -235,7 +236,7 @@ struct LauncherPane: View {
                         }
                         Spacer()
                         Button("Edit") { editingScript = script }.controlSize(.small)
-                        Button(role: .destructive) { extras.deleteScript(script.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { pendingRemoval = PendingRemoval(title: "Delete the script “\(script.name)”?") { extras.deleteScript(script.id) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the script \(script.name)").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -258,7 +259,7 @@ struct LauncherPane: View {
                         }
                         Spacer()
                         Button("Edit") { editingAPI = command }.controlSize(.small)
-                        Button(role: .destructive) { extras.deleteAPICommand(command.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { pendingRemoval = PendingRemoval(title: "Delete the API command “\(command.name)”?") { extras.deleteAPICommand(command.id) } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the API command \(command.name)").buttonStyle(.borderless)
                     }
                 }
             } header: {
@@ -285,7 +286,7 @@ struct LauncherPane: View {
                     HStack {
                         Text((folder as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle)
                         Spacer()
-                        Button(role: .destructive) { prefs.setFileSearchExcluded((prefs.data.fileSearchExcluded ?? []).filter { $0 != folder }) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { prefs.setFileSearchExcluded((prefs.data.fileSearchExcluded ?? []).filter { $0 != folder }) } label: { Image(systemName: "trash") }.accessibilityLabel("Include \((folder as NSString).lastPathComponent) in file search again").buttonStyle(.borderless)
                     }
                 }
                 Button {
@@ -340,10 +341,10 @@ struct LauncherPane: View {
                             if item.count > 1 { Text("×\(item.count)").font(.caption).foregroundStyle(.tertiary) }
                             Spacer()
                             Text(RelativeDateTimeFormatter().localizedString(for: item.last, relativeTo: Date())).font(.caption).foregroundStyle(.secondary)
-                            Button(role: .destructive) { history.remove(item.id) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless)
+                            Button(role: .destructive) { history.remove(item.id) } label: { Image(systemName: "xmark.circle") }.accessibilityLabel("Remove “\(item.text)” from the history").buttonStyle(.borderless)
                         }
                     }
-                    if !history.history.entries.isEmpty { Button("Clear the History", role: .destructive) { history.clear() } }
+                    if !history.history.entries.isEmpty { Button("Clear the History…", role: .destructive) { pendingRemoval = PendingRemoval(title: "Clear the search history?") { history.clear() } } }
                 }
             } header: { Text("Search history") } footer: {
                 Text("Off unless you turn it on, because it keeps the words you type. When on, the words are saved on this Mac after you choose a result, shown under “Recent searches” when the box is empty, and ⌥↑ and ⌥↓ step through them. Clipboard searches and anything that looks like a key are never saved. Turning it off erases it.")
@@ -386,7 +387,7 @@ struct LauncherPane: View {
                         Spacer()
                         Button { prefs.movePinned(id, by: -1) } label: { Image(systemName: "arrow.up") }.accessibilityLabel("Move up").buttonStyle(.borderless)
                         Button { prefs.movePinned(id, by: 1) } label: { Image(systemName: "arrow.down") }.accessibilityLabel("Move down").buttonStyle(.borderless)
-                        Button(role: .destructive) { prefs.unpin(id) } label: { Image(systemName: "pin.slash") }.buttonStyle(.borderless)
+                        Button(role: .destructive) { prefs.unpin(id) } label: { Image(systemName: "pin.slash") }.accessibilityLabel("Unpin \(prefs.data.titles[id] ?? id)").buttonStyle(.borderless)
                     }
                 }
             } header: { Text("Pinned") }
@@ -399,7 +400,7 @@ struct LauncherPane: View {
                         Image(systemName: "arrow.right").foregroundStyle(.tertiary)
                         Text(prefs.data.titles[id] ?? id)
                         Spacer()
-                        Button(role: .destructive) { prefs.setAlias("", for: id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { prefs.setAlias("", for: id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete the short name \(alias)").buttonStyle(.borderless)
                     }
                 }
             } header: { Text("Short names") }
@@ -415,6 +416,10 @@ struct LauncherPane: View {
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog(pendingRemoval?.title ?? "", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { pendingRemoval?.action(); pendingRemoval = nil }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: { Text("This cannot be undone.") }
         .sheet(item: $editingLink) { link in QuicklinkEditor(link: link) { editingLink = nil } }
         .sheet(item: $editingScript) { script in ScriptEditor(script: script) { editingScript = nil } }
         .sheet(item: $editingAPI) { command in APICommandEditor(command: command) { editingAPI = nil } }
@@ -509,6 +514,11 @@ private struct ScriptEditor: View {
         }
         .frame(width: 520, height: 470)
     }
+}
+
+private struct PendingRemoval {
+    let title: String
+    let action: () -> Void
 }
 
 private struct FallbackRow {
@@ -618,7 +628,7 @@ private struct APICommandEditor: View {
                             } else {
                                 TextField("Value", text: binding(for: name))
                             }
-                            Button(role: .destructive) { command.headerNames.removeAll { $0 == name }; headerValues[name] = nil } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless)
+                            Button(role: .destructive) { command.headerNames.removeAll { $0 == name }; headerValues[name] = nil } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove the \(name) header").buttonStyle(.borderless)
                         }
                     }
                     HStack {
@@ -675,6 +685,16 @@ private struct APICommandEditor: View {
     private func test() {
         guard !LocalOnly.isOn else { testResult = LocalOnly.blockedMessage; return }
         guard let request = command.request(for: "test", headerValues: headerValues) else { testResult = "The address could not be built."; return }
+        if command.method.sendsBody || request.httpMethod?.uppercased() != "GET" {
+            // A test is a real request: one that writes or deletes on the other side must be agreed to first.
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Send a real \(request.httpMethod ?? "") request?"
+            alert.informativeText = "Trying it calls \(request.url?.host ?? "the server") for real, with the word “test”. A \(request.httpMethod ?? "") request can change or delete something there."
+            alert.addButton(withTitle: "Send It")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
         testing = true
         testResult = nil
         let path = command.resultPath

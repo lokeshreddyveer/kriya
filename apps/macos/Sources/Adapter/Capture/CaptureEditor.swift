@@ -139,6 +139,8 @@ struct CaptureEditorView: View {
                     }
                     .buttonStyle(.plain)
                     .help(tool.help)
+                    .accessibilityLabel(tool.rawValue)
+                    .accessibilityAddTraits(on ? .isSelected : [])
                 }
             }
             Divider().frame(height: 20)
@@ -147,6 +149,8 @@ struct CaptureEditorView: View {
                     Circle().fill(Color(nsColor: color.nsColor)).frame(width: 16, height: 16)
                         .overlay(Circle().strokeBorder(Color.primary.opacity(model.color == color ? 0.9 : 0.25), lineWidth: model.color == color ? 2 : 1))
                         .onTapGesture { model.color = color }
+                        .accessibilityLabel("\(color.rawValue) colour")
+                        .accessibilityAddTraits(model.color == color ? [.isButton, .isSelected] : .isButton)
                 }
             }
             Divider().frame(height: 20)
@@ -207,7 +211,7 @@ struct CaptureEditorView: View {
             if let message = model.message { Text(message).font(.callout).foregroundStyle(.secondary).transition(.opacity) }
             if model.working { ProgressView().controlSize(.small) }
             Spacer()
-            Button("Cancel") { onDone(nil) }.keyboardShortcut(.cancelAction)
+            Button("Cancel") { if CaptureEditorController.confirmDiscard(model.annotations.count) { onDone(nil) } }.keyboardShortcut(.cancelAction)
             Button("Done") { onDone(model.finished()) }.keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
@@ -395,12 +399,28 @@ struct CaptureEditorView: View {
 /// The window the editor lives in.
 final class CaptureEditorController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var model: CaptureEditorModel?
     private var finish: ((CGImage?) -> Void)?
+
+    /// Marks that took effort to draw are not thrown away by a stray Escape or the close button.
+    static func confirmDiscard(_ marks: Int) -> Bool {
+        guard marks > 0 else { return true }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Discard your \(marks) mark\(marks == 1 ? "" : "s")?"
+        alert.informativeText = "The edits are lost. Use Done to keep the picture with its marks, or Save Project to keep editing later."
+        alert.addButton(withTitle: "Keep Editing")
+        alert.addButton(withTitle: "Discard")
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool { Self.confirmDiscard(model?.annotations.count ?? 0) }
 
     func show(_ image: CGImage, service: ScreenCaptureService, completion: @escaping (CGImage?) -> Void) {
         close(with: nil)
         finish = completion
         let model = CaptureEditorModel(image: image)
+        self.model = model
         let words = service.settings.settings.redactWords
         let view = CaptureEditorView(
             model: model,

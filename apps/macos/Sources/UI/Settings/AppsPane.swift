@@ -31,6 +31,7 @@ struct AppsPane: View {
     @State private var unusedMonths = 0
     @State private var backups: [AppBackup.Entry] = AppBackup.list()
     @State private var dropTargeted = false
+    @State private var discarding: AppBackup.Entry?
 
     enum Tab: String, CaseIterable, Identifiable {
         case installed = "Installed", install = "Install", leftovers = "Leftovers", updates = "Updates", background = "Background"
@@ -67,6 +68,13 @@ struct AppsPane: View {
             inventory.refreshLeftovers()
             if inventory.lastUpdateCheck.map({ Date().timeIntervalSince($0) > 600 }) ?? true { inventory.checkUpdates() }
         }
+        .confirmationDialog("Delete the saved copy of \(discarding?.appName ?? "") \(discarding?.version ?? "")?", isPresented: Binding(get: { discarding != nil }, set: { if !$0 { discarding = nil } }), titleVisibility: .visible) {
+            Button("Delete the Copy", role: .destructive) {
+                if let entry = discarding { try? FileManager.default.removeItem(at: entry.folder); backups = AppBackup.list() }
+                discarding = nil
+            }
+            Button("Cancel", role: .cancel) { discarding = nil }
+        } message: { Text("It is erased, not moved to the Trash, and the app can no longer be rolled back to this version.") }
         .sheet(item: $removing) { app in
             RemoveSheet(app: app) { failures in
                 removing = nil
@@ -163,7 +171,7 @@ struct AppsPane: View {
                 if inventory.isScanning { ProgressView().controlSize(.small) }
                 Picker("Not opened for", selection: $unusedMonths) { Text("Any time").tag(0); Text("6 months").tag(6); Text("12 months").tag(12); Text("24 months").tag(24) }
                     .pickerStyle(.menu).fixedSize().help("Only apps not opened for this long")
-                Picker("", selection: $sort) { ForEach(Sort.allCases) { Text($0.rawValue).tag($0) } }
+                Picker("Sort by", selection: $sort) { ForEach(Sort.allCases) { Text($0.rawValue).tag($0) } }
                     .labelsHidden().pickerStyle(.menu).fixedSize()
                 Menu {
                     Button("CSV…") { export("csv") }
@@ -364,7 +372,7 @@ struct AppsPane: View {
                         VStack(alignment: .leading, spacing: 1) { Text("\(entry.appName) \(entry.version)"); Text("Saved \(entry.date.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
                         Spacer()
                         Button("Put Back") { message = AppBackup.restore(entry) ?? "Put back “\(entry.appName)” \(entry.version). The newer one is in the Trash."; inventory.scan() }.controlSize(.small)
-                        Button { try? FileManager.default.removeItem(at: entry.folder); backups = AppBackup.list() } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Delete this copy")
+                        Button { discarding = entry } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Delete the saved copy of \(entry.appName) \(entry.version)")
                     }
                 }
             } header: { Text("Rollback") } footer: {
@@ -498,7 +506,6 @@ struct RemoveSheet: View {
                     if keepZip { notes += Self.archive(app: app, leftovers: picked) }
                     onDone(notes + inventory.trash(app: resetOnly ? nil : app, leftovers: picked))
                 }
-                .keyboardShortcut(.defaultAction)
             }
             .padding(12)
         }
@@ -543,7 +550,7 @@ private struct InstallTab: View {
             notInstalled
         } else {
             VStack(spacing: 0) {
-                Picker("", selection: $kind) { ForEach(HomebrewParsing.Kind.allCases) { Text($0.title).tag($0) } }
+                Picker("Kind", selection: $kind) { ForEach(HomebrewParsing.Kind.allCases) { Text($0.title).tag($0) } }
                     .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320).padding(.top, 10)
                     .onChange(of: kind) { _, new in
                         brew.clearSearch()
@@ -635,7 +642,7 @@ private struct InstallTab: View {
                 .onChange(of: query) { _, _ in startSearch(immediately: false) }
             if brew.isSearching { ProgressView().controlSize(.small) }
             if !query.isEmpty {
-                Button { query = ""; brew.clearSearch() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
+                Button { query = ""; brew.clearSearch() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain).accessibilityLabel("Clear the search")
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)

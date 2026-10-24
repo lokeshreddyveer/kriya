@@ -157,7 +157,7 @@ private struct WelcomeStep: View {
     var body: some View {
         StepLayout(
             symbol: "cursorarrow.click.2", title: "Welcome to Kriya",
-            message: "Mouse and trackpad control, window management, Finder actions, a clipboard history, a selection bar and keyboard shortcuts, all from the menu bar."
+            message: "Mouse and keyboard control, window management, sound, screen capture, Finder actions, a clipboard history, a launcher and more, all from the menu bar."
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(FeatureId.all.prefix(6)) { feature in
@@ -183,7 +183,7 @@ private struct PermissionsStep: View {
     var body: some View {
         StepLayout(
             symbol: "lock.shield", title: "Allow what Kriya needs",
-            message: "macOS keeps these off until you allow them. Kriya never records your screen or sends anything away. You can skip this and do it later from Permissions."
+            message: "macOS keeps these off until you allow them. Kriya records your screen only when you use Screen Capture, and sends nothing away unless you turn on a feature that needs the network. You can skip this and do it later from Permissions."
         ) {
             VStack(spacing: 10) {
                 ForEach(needed) { permission in

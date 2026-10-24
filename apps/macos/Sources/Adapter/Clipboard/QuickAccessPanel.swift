@@ -398,7 +398,7 @@ struct ClipPreview: View {
             } else {
                 ScrollView {
                     Text(String((blob?.plain ?? item.preview).prefix(6000)))
-                        .font(.system(.callout, design: item.kind == .url ? .default : .default))
+                        .font(.callout)
                         .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

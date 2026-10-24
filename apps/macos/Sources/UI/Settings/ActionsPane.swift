@@ -44,6 +44,7 @@ struct ActionsPane: View {
     @State private var errorMessage: String?
     @State private var added: Int?
     @State private var query = ""
+    @State private var pendingDelete: NamedAction?
 
     var body: some View {
         let shown = ActionInsight.search(library.actions, text: query, describe: { $0.summary })
@@ -78,7 +79,7 @@ struct ActionsPane: View {
                     .padding(.vertical, 20)
                 }
                 ForEach(shown) { saved in
-                    ActionRow(saved: saved, outcome: results[saved.id], onRun: { run(saved) }, onDelete: { delete(saved) })
+                    ActionRow(saved: saved, outcome: results[saved.id], onRun: { run(saved) }, onDelete: { pendingDelete = saved })
                 }
             } header: {
                 HStack {
@@ -102,6 +103,10 @@ struct ActionsPane: View {
         .animation(.smooth(duration: 0.3), value: library.actions)
         .animation(.smooth(duration: 0.25), value: errorMessage)
         .animation(.smooth(duration: 0.25), value: added)
+        .confirmationDialog("Delete “\(pendingDelete?.name ?? "")”?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let saved = pendingDelete { delete(saved) }; pendingDelete = nil }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: { Text("A mouse button, shortcut or rule that uses it will stop doing anything.") }
         .sheet(isPresented: $showingEditor) { ActionEditor() }
         .sheet(isPresented: $recording) { KeyRecorderSheet(onClose: { recording = false }) }
     }
@@ -153,6 +158,7 @@ private struct ActionRow: View {
             Spacer()
             Button("Run", action: onRun).controlSize(.small)
             Button(role: .destructive, action: onDelete) { Image(systemName: "trash") }
+                .accessibilityLabel("Delete \(saved.name)")
                 .buttonStyle(.borderless)
         }
         .padding(.vertical, 3)
@@ -235,7 +241,7 @@ struct ActionEditor: View {
                     Picker("Window action", selection: $windowCommand) {
                         ForEach(WindowCommands.all, id: \.command) { Text($0.title).tag($0.command) }
                     }
-                    Text("Window actions start working when Window Management arrives.")
+                    Text("The action does nothing while Window Management is turned off.")
                         .font(.caption).foregroundStyle(.secondary)
                 default:
                     if kind.isMultiline {
@@ -274,7 +280,8 @@ struct ActionEditor: View {
             message = "Click the box and press the keys first."
             return
         }
-        let finalName = name.trimmingCharacters(in: .whitespaces).isEmpty ? suggestedName : name
+        let finalName = (name.trimmingCharacters(in: .whitespaces).isEmpty ? suggestedName : name).trimmingCharacters(in: .whitespaces)
+        guard !finalName.isEmpty else { message = "Give the action a name."; return }
         let id = UUID().uuidString
         do {
             try library.save(name: finalName, action: action, id: id)

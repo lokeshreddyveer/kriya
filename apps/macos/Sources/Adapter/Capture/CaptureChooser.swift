@@ -67,7 +67,11 @@ final class ChooserModel: ObservableObject {
         self.previousAvailable = previousAvailable
     }
 
-    func pick(_ choice: CaptureChoice) { choose(choice, timer) }
+    func pick(_ choice: CaptureChoice) {
+        // "Previous area" is greyed out until there is one; the keys must not reach it either.
+        guard choice != .previousArea || previousAvailable else { return }
+        choose(choice, timer)
+    }
 }
 
 private struct ChooserView: View {
@@ -104,7 +108,7 @@ private struct ChooserView: View {
             }
             HStack(spacing: 8) {
                 Image(systemName: "timer").foregroundStyle(.secondary)
-                Picker("", selection: $model.timer) {
+                Picker("Timer", selection: $model.timer) {
                     Text("No timer").tag(0)
                     ForEach(SelfTimer.presets, id: \.self) { Text("\($0) s").tag($0) }
                 }

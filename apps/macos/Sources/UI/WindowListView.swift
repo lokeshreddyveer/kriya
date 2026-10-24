@@ -22,7 +22,7 @@ struct WindowListView: View {
                     .textFieldStyle(.plain).font(.title3)
                     .focused($searchFocused)
                     .onSubmit { if let id = selected ?? model.flat.first?.id { go(id) } }
-                Picker("", selection: $model.grouping) { ForEach(WindowGrouping.allCases) { Text($0.rawValue).tag($0) } }
+                Picker("Group by", selection: $model.grouping) { ForEach(WindowGrouping.allCases) { Text($0.rawValue).tag($0) } }
                     .pickerStyle(.segmented).labelsHidden().fixedSize()
                 Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless).accessibilityLabel("Refresh")
                     .disabled(model.isGathering)

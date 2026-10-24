@@ -20,6 +20,8 @@ final class PinnedShots {
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        // Left out of screen sharing and other apps' screenshots when the person asked for that.
+        panel.sharingType = CaptureOverlay.hideWhenSharing ? .none : .readOnly
         let view = PinView(image: image)
         view.onClose = { [weak self, weak panel] in guard let panel else { return }; panel.close(); self?.panels.removeAll { $0 === panel } }
         panel.contentView = view

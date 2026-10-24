@@ -140,6 +140,7 @@ private struct DestinationChooserView: View {
                 Image(systemName: choice.isFavorite ? "star.fill" : "star").foregroundStyle(choice.isFavorite ? Theme.warn : Color.secondary)
             }
             .buttonStyle(.borderless).help(choice.isFavorite ? "Remove from favorites" : "Keep at the top")
+            .accessibilityLabel(choice.isFavorite ? "Remove \(choice.name) from favorites" : "Keep \(choice.name) at the top")
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
         .background(selected == choice.id ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))

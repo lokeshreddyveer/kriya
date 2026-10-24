@@ -13,6 +13,7 @@ final class FinderDrawer: ObservableObject {
     @Published private(set) var problem: String?
 
     private var panel: NSPanel?
+    private var closeObserver: NSObjectProtocol?
     private var timer: Timer?
     private let queue = DispatchQueue(label: "app.kriya.finder-drawer", qos: .utility)
     private var reading = false
@@ -78,6 +79,10 @@ final class FinderDrawer: ObservableObject {
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: FinderDrawerView(drawer: self))
+        // The window's own close button must stop the polling too, or Finder keeps being asked while nothing is shown.
+        closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: panel, queue: .main) { [weak self] _ in
+            self?.timer?.invalidate(); self?.timer = nil
+        }
         return panel
     }
 }

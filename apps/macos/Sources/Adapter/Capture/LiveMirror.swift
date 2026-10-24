@@ -8,6 +8,7 @@ final class LiveMirror: NSObject, SCStreamOutput, SCStreamDelegate {
     private var panel: NSPanel?
     private var stream: SCStream?
     private var displayLayer: AVSampleBufferDisplayLayer?
+    private var closeObserver: NSObjectProtocol?
     private let queue = DispatchQueue(label: "app.kriya.mirror", qos: .userInitiated)
 
     var isShowing: Bool { panel != nil }
@@ -73,6 +74,8 @@ final class LiveMirror: NSObject, SCStreamOutput, SCStreamDelegate {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        // The mirrored window is somebody else's content: keep it out of screen sharing when the person asked for that.
+        panel.sharingType = CaptureOverlay.hideWhenSharing ? .none : .readOnly
         panel.contentAspectRatio = content
         let view = NSView(frame: NSRect(origin: .zero, size: content))
         view.wantsLayer = true
@@ -86,7 +89,8 @@ final class LiveMirror: NSObject, SCStreamOutput, SCStreamDelegate {
             panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.maxX - content.width - 24, y: screen.visibleFrame.maxY - content.height - 60))
         }
         panel.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: panel, queue: .main) { [weak self] _ in self?.close() }
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+        closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: panel, queue: .main) { [weak self] _ in self?.close() }
         self.panel = panel
         displayLayer = layer
     }

@@ -20,7 +20,7 @@ struct AboutPane: View {
                     Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 84, height: 84)
                     Text("Kriya").font(.largeTitle.bold())
                     Text("Version \(SystemInfo.appVersion) (\(SystemInfo.build))").foregroundStyle(.secondary)
-                    Text("Mouse, trackpad, window and right-click control for your Mac.").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Text("One utility for your Mac's mouse, keyboard, windows, sound, screen capture, clipboard and more.").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
             }

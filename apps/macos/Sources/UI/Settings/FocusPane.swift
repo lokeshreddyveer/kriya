@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FocusPane: View {
     @EnvironmentObject private var focus: FocusSessionController
+    @State private var confirmClear = false
 
     var body: some View {
         Form {
@@ -31,7 +32,7 @@ struct FocusPane: View {
 
             Section {
                 ForEach(focus.config.quitAppIDs, id: \.self) { id in
-                    HStack { Text(AppChoice.name(for: id)); Spacer(); Button { focus.config.quitAppIDs.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove").buttonStyle(.borderless) }
+                    HStack { Text(AppChoice.name(for: id)); Spacer(); Button { focus.config.quitAppIDs.removeAll { $0 == id } } label: { Image(systemName: "minus.circle") }.accessibilityLabel("Remove \(AppChoice.name(for: id))").buttonStyle(.borderless) }
                 }
                 Button("Add an App…") { if let id = AppChoice.choose(), !focus.config.quitAppIDs.contains(id) { focus.config.quitAppIDs.append(id) } }
             } header: { Text("Ask these apps to quit when it starts") }
@@ -56,10 +57,14 @@ struct FocusPane: View {
                             Text("\(entry.focusedMinutes) of \(entry.plannedMinutes) min · \(entry.completed ? "finished" : "ended early")").foregroundStyle(.secondary)
                         }.font(.callout)
                     }
-                    Button("Clear History") { focus.clearHistory() }.controlSize(.small)
+                    Button("Clear History…") { confirmClear = true }.controlSize(.small)
                 }
             } header: { Text("History") }
         }
         .formStyle(.grouped)
+        .confirmationDialog("Clear the focus history?", isPresented: $confirmClear) {
+            Button("Clear History", role: .destructive) { focus.clearHistory() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The list of finished sessions and the weekly total are erased. This cannot be undone.") }
     }
 }

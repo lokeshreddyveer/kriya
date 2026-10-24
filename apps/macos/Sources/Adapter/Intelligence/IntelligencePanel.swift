@@ -147,7 +147,7 @@ private struct IntelligenceResultView: View {
                 Text(job.title).font(.headline)
                 Spacer()
                 Label("On this Mac", systemImage: "lock.fill").font(.caption).foregroundStyle(.secondary)
-                Button { onClose() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
+                Button { onClose() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain).accessibilityLabel("Close")
             }
             if !job.source.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {

@@ -37,7 +37,7 @@ struct DiskMapPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab.animation(.easeInOut(duration: 0.2))) { ForEach(DiskMapTab.allCases) { Text($0.rawValue).tag($0) } }
+            Picker("View", selection: $tab.animation(.easeInOut(duration: 0.2))) { ForEach(DiskMapTab.allCases) { Text($0.rawValue).tag($0) } }
                 .pickerStyle(.segmented).labelsHidden().fixedSize().padding(.top, 14)
             if !scanner.lastTrashed.isEmpty {
                 HStack(spacing: 10) {
