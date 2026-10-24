@@ -528,30 +528,44 @@ private struct InstallTab: View {
     @State private var chosen = Set<String>()
     @State private var message: String?
     @State private var searchTask: Task<Void, Never>?
+    @State private var kind: HomebrewParsing.Kind = .cask
     @FocusState private var searching: Bool
 
     private var typed: String { query.trimmingCharacters(in: .whitespaces) }
-    /// What the list shows: search results while there is a search, otherwise some well-known apps.
-    private var shown: [String] { typed.isEmpty ? HomebrewParsing.featured : Array(brew.results.prefix(30)) }
+    private var featured: [String] { kind == .cask ? HomebrewParsing.featured : HomebrewParsing.featuredTools }
+    /// What the list shows: search results while there is a search, otherwise some well-known ones.
+    private var shown: [String] { typed.isEmpty ? featured : Array((kind == .cask ? brew.results : brew.formulaResults).prefix(30)) }
+    private var installedNames: [String] { kind == .cask ? brew.installed : brew.installedFormulae }
+    private var noun: String { kind == .cask ? "apps" : "command-line tools" }
 
     var body: some View {
         if brew.brewPath == nil {
             notInstalled
         } else {
             VStack(spacing: 0) {
+                Picker("", selection: $kind) { ForEach(HomebrewParsing.Kind.allCases) { Text($0.title).tag($0) } }
+                    .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320).padding(.top, 10)
+                    .onChange(of: kind) { _, new in
+                        brew.clearSearch()
+                        brew.describe(new == .cask ? HomebrewParsing.featured : HomebrewParsing.featuredTools, kind: new)
+                        if !typed.isEmpty { startSearch(immediately: true) }
+                    }
                 searchField
                 if brew.isRunning || !brew.log.isEmpty { progress }
                 List {
                     Section {
-                        if shown.isEmpty, typed.count > 0, !brew.isSearching { Text(brew.status ?? "No apps match.").foregroundStyle(.secondary) }
+                        if shown.isEmpty, typed.count > 0, !brew.isSearching { Text(brew.status ?? "No \(noun) match.").foregroundStyle(.secondary) }
                         ForEach(shown, id: \.self) { appRow($0) }
                     } header: {
-                        Text(typed.isEmpty ? "Popular apps" : (brew.isSearching ? "Searching…" : "Results"))
+                        Text(typed.isEmpty ? "Popular \(noun)" : (brew.isSearching ? "Searching…" : "Results"))
                     } footer: {
                         Text(typed.isEmpty
-                             ? "Type above to search every app Homebrew offers. Kriya shows you the exact command and asks before anything is installed."
-                             : "Installing runs “brew install --cask …” for you. Some apps ask for your password to finish; if Homebrew stops for that, run the command in Terminal.")
+                             ? "Type above to search every \(kind == .cask ? "app" : "command-line tool") Homebrew offers. Kriya shows you the exact command and asks before anything is installed."
+                             : kind == .cask
+                             ? "Installing runs “brew install --cask …” for you. Some apps ask for your password to finish; if Homebrew stops for that, run the command in Terminal."
+                             : "Installing runs “brew install …” for you. A tool is put in Homebrew's folder and added to your PATH by Homebrew; Kriya does not change your shell.")
                     }
+                    if kind == .cask {
                     Section {
                         Button("Save My Apps as a List…") { exportList() }
                         Button("Reinstall from a List…") { importList() }
@@ -569,6 +583,7 @@ private struct InstallTab: View {
                         }
                     } header: { Text("Move to another Mac") } footer: {
                         Text("A list holds the names of the Homebrew apps installed here. Open it on another Mac to see which ones are missing and install the ones you pick. System apps are never part of it.")
+                    }
                     }
                 }
                 .animation(.smooth(duration: 0.2), value: shown)
@@ -637,14 +652,14 @@ private struct InstallTab: View {
         searchTask = Task {
             if !immediately { try? await Task.sleep(nanoseconds: 350_000_000) }
             guard !Task.isCancelled else { return }
-            brew.search(text)
+            brew.search(text, kind: kind)
         }
     }
 
     private func appRow(_ token: String) -> some View {
-        let info = brew.details[token]
+        let info = kind == .cask ? brew.details[token] : brew.formulaDetails[token]
         return HStack(spacing: 12) {
-            Image(systemName: "shippingbox").font(.system(size: 18)).foregroundStyle(Theme.accent).frame(width: 30)
+            Image(systemName: kind == .cask ? "shippingbox" : "terminal").font(.system(size: 18)).foregroundStyle(Theme.accent).frame(width: 30)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(info?.name ?? token).font(.headline)
@@ -656,7 +671,7 @@ private struct InstallTab: View {
             if let page = info.flatMap({ URL(string: $0.homepage) }), page.scheme == "https" {
                 Link(destination: page) { Image(systemName: "safari") }.help("Open the app's website").accessibilityLabel("Open the app's website")
             }
-            if brew.installed.contains(token) {
+            if installedNames.contains(token) {
                 StateBadge(text: "Installed", color: Theme.ok)
             } else {
                 Button("Install…") { confirmAndInstall([token]) }.controlSize(.small).disabled(brew.isRunning)
@@ -686,7 +701,7 @@ private struct InstallTab: View {
                     Button("Show Log File") { NSWorkspace.shared.activateFileViewerSelecting([HomebrewManager.logFileURL]) }.controlSize(.small)
                 }
                 if brew.isRunning, let cask = brew.currentCask {
-                    Button("Run in Terminal") { HomebrewManager.runInTerminal(install: cask) }.controlSize(.small)
+                    Button("Run in Terminal") { HomebrewManager.runInTerminal(install: cask, kind: kind) }.controlSize(.small)
                         .help("Opens Terminal with the install command, for apps that need your password")
                 }
                 if brew.isRunning { Button("Stop") { brew.cancel() }.controlSize(.small) }
@@ -697,7 +712,7 @@ private struct InstallTab: View {
                         Label("\(token): \(brew.failures[token] ?? "")", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
                         Spacer()
                         Button("Try Again") { confirmAndInstall([token]) }.controlSize(.small)
-                        Button("Run in Terminal") { HomebrewManager.runInTerminal(install: token) }.controlSize(.small)
+                        Button("Run in Terminal") { HomebrewManager.runInTerminal(install: token, kind: kind) }.controlSize(.small)
                     }
                 }
             }
@@ -713,13 +728,13 @@ private struct InstallTab: View {
     /// Shows the exact commands and installs only if the person agrees.
     private func confirmAndInstall(_ tokens: [String]) {
         let alert = NSAlert()
-        alert.messageText = tokens.count == 1 ? "Install \(tokens[0])?" : "Install \(tokens.count) apps?"
-        alert.informativeText = "These commands will run:\n\n" + tokens.map { HomebrewManager.command(install: $0) }.joined(separator: "\n")
-            + "\n\nSome apps ask for your password to finish. If Homebrew stops for that, run the command in Terminal."
+        alert.messageText = tokens.count == 1 ? "Install \(tokens[0])?" : "Install \(tokens.count) \(noun)?"
+        alert.informativeText = "These commands will run:\n\n" + tokens.map { HomebrewManager.command(install: $0, kind: kind) }.joined(separator: "\n")
+            + (kind == .cask ? "\n\nSome apps ask for your password to finish. If Homebrew stops for that, run the command in Terminal." : "\n\nHomebrew may build a tool from its source if no ready-made one exists, which can take a while.")
         alert.addButton(withTitle: "Install")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn { brew.install(tokens) }
+        if alert.runModal() == .alertFirstButtonReturn { brew.install(tokens, kind: kind) }
     }
 
     private func exportList() {

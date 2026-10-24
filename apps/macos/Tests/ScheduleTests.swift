@@ -106,6 +106,29 @@ final class ScheduleTests: XCTestCase {
         for setup in setups { XCTAssertFalse(setup.instructions.isEmpty) }
     }
 
+    func testCommandLineToolsAreSearchedDescribedAndInstalledAsFormulae() {
+        let output = "==> Formulae\nripgrep\nripgrep-all\nopenssl@3\n\n==> Casks\nripgrep-gui\n"
+        XCTAssertEqual(HomebrewParsing.parseSearch(output, kind: .formula), ["ripgrep", "ripgrep-all", "openssl@3"])
+        XCTAssertEqual(HomebrewParsing.parseSearch(output, kind: .cask), ["ripgrep-gui"], "apps are unchanged")
+        XCTAssertEqual(HomebrewParsing.parseSearch("jq\nyq\n", kind: .formula), ["jq", "yq"], "no headings: all of the kind searched")
+        XCTAssertEqual(HomebrewParsing.installCommand("jq", kind: .formula), "brew install jq")
+        XCTAssertEqual(HomebrewParsing.installCommand("firefox", kind: .cask), "brew install --cask firefox")
+        XCTAssertEqual(HomebrewParsing.installArguments("jq", kind: .formula), ["install", "jq"])
+        XCTAssertEqual(HomebrewParsing.installArguments("firefox", kind: .cask), ["install", "--cask", "firefox"])
+        XCTAssertEqual(HomebrewManager.command(install: "firefox"), "brew install --cask firefox", "the default is still an app")
+        XCTAssertEqual(HomebrewParsing.Kind.formula.flag, "--formula")
+        for bad in ["jq; rm -rf /", "-v", "../x", "A", "", "a b"] { XCTAssertFalse(HomebrewParsing.isValidToken(bad), bad) }
+        for good in ["openssl@3", "c++", "python@3.12", "gcc@13"] { XCTAssertTrue(HomebrewParsing.isValidToken(good), good) }
+        let json = #"{"formulae":[{"name":"jq","desc":"Lightweight JSON processor","homepage":"https://jqlang.github.io/jq/","versions":{"stable":"1.7.1"}},{"name":"bad name"}],"casks":[]}"#
+        let info = HomebrewParsing.parseInfo(Data(json.utf8), kind: .formula)
+        XCTAssertEqual(info.map(\.token), ["jq"])
+        XCTAssertEqual(info.first?.version, "1.7.1")
+        XCTAssertEqual(info.first?.description, "Lightweight JSON processor")
+        XCTAssertTrue(HomebrewParsing.parseInfo(Data(json.utf8), kind: .cask).isEmpty, "a formula answer is not read as a cask")
+        XCTAssertEqual(HomebrewParsing.stage(forOutput: "==> Pouring jq--1.7.1.arm64_sonoma.bottle.tar.gz"), "Installing…")
+        XCTAssertTrue(HomebrewParsing.featuredTools.allSatisfy(HomebrewParsing.isValidToken))
+    }
+
     private func pump(_ seconds: TimeInterval) {
         let done = expectation(description: "wait")
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { done.fulfill() }

@@ -52,8 +52,11 @@ final class IntentLauncher {
         guard data.interpretsRequests else {
             return data.understandsRequests && looksLikeSentence(trimmed) ? [understandRow(trimmed, score: 120)] : []
         }
-        let w = world()
-        switch IntentParser.parse(trimmed, world: w) {
+        // Most typing is not a request. It is told apart from the first words alone, before anything is gathered.
+        guard IntentParser.couldBeRequest(trimmed) else {
+            return data.understandsRequests && looksLikeSentence(trimmed) ? [understandRow(trimmed, score: 120)] : []
+        }
+        switch IntentParser.parse(trimmed, world: freshWorld()) {
         case .notAnIntent:
             return data.understandsRequests && looksLikeSentence(trimmed) ? [understandRow(trimmed, score: 120)] : []
         case .intent(let resolved):
@@ -65,6 +68,17 @@ final class IntentLauncher {
         case .rejected(let reason):
             return [infoRow(reason, "Nothing was done", symbol: "exclamationmark.triangle", score: 990)]
         }
+    }
+
+    private var cachedWorld: (world: IntentWorld, at: Date)?
+
+    /// The world is gathered at most every two seconds while typing, however many keys are pressed: asking Core Audio for devices and
+    /// walking the app list for every key would slow the launcher.
+    private func freshWorld() -> IntentWorld {
+        if let cachedWorld, Date().timeIntervalSince(cachedWorld.at) < 2 { return cachedWorld.world }
+        let made = world()
+        cachedWorld = (made, Date())
+        return made
     }
 
     private func looksLikeSentence(_ text: String) -> Bool {

@@ -572,8 +572,10 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   leaves in your Library. You see the list first, each file says why it was matched (exact bundle identifier, developer's team, name
   only), only exact matches start ticked, and everything goes to the Trash.
 - **Install:** search every app Homebrew offers as you type, see its description and version, and install it. You see the exact
-  command and confirm first. With nothing typed it lists popular apps. *Save My Apps as a List* and *Reinstall from a List* move
-  your Homebrew apps to another Mac. Needs Homebrew; Kriya never installs Homebrew itself.
+  command and confirm first. With nothing typed it lists popular apps. A switch at the top changes between **Apps** (casks:
+  `brew install --cask …`) and **Command-line tools** (formulae: `brew install …`, with their description and version, and which
+  are already installed). *Save My Apps as a List* and *Reinstall from a List* move your Homebrew apps to another Mac. Needs
+  Homebrew; Kriya never installs Homebrew itself.
 - **Leftovers:** files left by apps that are already gone.
 - **Checking:** the app's signature and notarization can be checked, and a problem with the Homebrew location is explained. The list of **launch
   agents and daemons** is read-only, with ones whose app is gone shown first. Before an app is removed its support files are zipped, so you can

@@ -18,13 +18,20 @@ enum IntentParser {
         "trash", "uninstall", "install", "kill", "rename", "go", "tile", "resize", "shift", "push", "activate", "enable", "create", "stop",
     ]
 
-    static func parse(_ raw: String, world: IntentWorld) -> IntentParseResult {
+    /// A cheap test that runs on every keystroke, before the apps, devices and workflows are gathered for a full reading: text that does
+    /// not start like a request is never read further.
+    static func couldBeRequest(_ raw: String) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= 300, !trimmed.hasPrefix("?") else { return .notAnIntent }
+        guard !trimmed.isEmpty, trimmed.count <= 300, !trimmed.hasPrefix("?") else { return false }
         let t = IntentText.normalize(trimmed)
-        guard let first = t.split(separator: " ").first.map(String.init), t.contains(" ") else { return .notAnIntent }
-        if explicitKeywords.contains(first) { return .notAnIntent }
-        guard verbs.contains(first) || t.contains("volume") else { return .notAnIntent }
+        guard let first = t.split(separator: " ").first.map(String.init), t.contains(" ") else { return false }
+        if explicitKeywords.contains(first) { return false }
+        return verbs.contains(first) || t.contains("volume")
+    }
+
+    static func parse(_ raw: String, world: IntentWorld) -> IntentParseResult {
+        guard couldBeRequest(raw) else { return .notAnIntent }
+        let t = IntentText.normalize(raw.trimmingCharacters(in: .whitespacesAndNewlines))
         if let sequence = parseSequence(t, world) { return sequence }
         return parseSingle(t, world) ?? .notAnIntent
     }

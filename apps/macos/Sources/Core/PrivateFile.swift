@@ -13,10 +13,19 @@ enum PrivateFile {
             Log.info("Files", "Could not make the folder for a private file: \(error.localizedDescription)")
             return false
         }
-        // A new file is created with 0600 already; an existing one is replaced, so it is removed first rather than kept with old modes.
-        try? fileManager.removeItem(at: url)
-        guard fileManager.createFile(atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+        // Written beside the target with 0600 from the first byte, then swapped in, so a reader never sees a missing or half-written file
+        // and the new file never inherits the old one's looser mode.
+        let staging = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        guard fileManager.createFile(atPath: staging.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
             Log.info("Files", "Could not write a private file.")
+            return false
+        }
+        do {
+            if fileManager.fileExists(atPath: url.path) { _ = try fileManager.replaceItemAt(url, withItemAt: staging) }
+            else { try fileManager.moveItem(at: staging, to: url) }
+        } catch {
+            try? fileManager.removeItem(at: staging)
+            Log.info("Files", "Could not put a private file in place: \(error.localizedDescription)")
             return false
         }
         return ensurePrivate(url, fileManager: fileManager)

@@ -10,15 +10,32 @@ enum HomebrewParsing {
         token.range(of: #"^[a-z0-9][a-z0-9@._+-]{0,80}$"#, options: .regularExpression) != nil
     }
 
-    /// The cask names in the output of `brew search --cask`. Homebrew may print a "Casks" part and a "Formulae" part; only
-    /// what is under Casks counts, and output with no headings at all is all casks.
-    static func parseSearch(_ output: String) -> [String] {
+    /// What Homebrew installs: a cask is a Mac app; a formula is a command-line tool or library.
+    enum Kind: String, CaseIterable, Identifiable {
+        case cask, formula
+        var id: String { rawValue }
+        /// The option that limits a Homebrew command to this kind.
+        var flag: String { "--\(rawValue)" }
+        var title: String { self == .cask ? "Apps" : "Command-line tools" }
+        /// The word in a search result's heading ("==> Casks", "==> Formulae").
+        var heading: String { self == .cask ? "cask" : "formula" }
+    }
+
+    /// The command that installs one, exactly as it would be typed.
+    static func installCommand(_ token: String, kind: Kind) -> String { kind == .cask ? "brew install --cask \(token)" : "brew install \(token)" }
+
+    /// The arguments for `brew install`.
+    static func installArguments(_ token: String, kind: Kind) -> [String] { kind == .cask ? ["install", "--cask", token] : ["install", token] }
+
+    /// The names in the output of `brew search --cask` (or `--formula`). Homebrew may print a "Casks" part and a "Formulae" part;
+    /// only what is under the wanted heading counts, and output with no headings at all is all of the wanted kind.
+    static func parseSearch(_ output: String, kind: Kind = .cask) -> [String] {
         var inCasks = true
         var tokens: [String] = []
         for raw in output.split(whereSeparator: \.isNewline) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("==>") {
-                inCasks = line.lowercased().contains("cask")
+                inCasks = line.lowercased().contains(kind.heading)
                 continue
             }
             if inCasks, !line.isEmpty, isValidToken(line) { tokens.append(line) }
@@ -38,10 +55,19 @@ enum HomebrewParsing {
     }
 
     /// The cask details in the output of `brew info --json=v2 --cask …`. Anything that is not understood gives nothing.
-    static func parseInfo(_ data: Data) -> [CaskInfo] {
+    static func parseInfo(_ data: Data, kind: Kind = .cask) -> [CaskInfo] {
         guard data.count < 8_000_000,
-              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let casks = root["casks"] as? [[String: Any]] else { return [] }
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [] }
+        if kind == .formula {
+            // A formula has a name, a description and a stable version inside "versions".
+            guard let formulae = root["formulae"] as? [[String: Any]] else { return [] }
+            return formulae.compactMap { formula in
+                guard let name = formula["name"] as? String, isValidToken(name) else { return nil }
+                let stable = (formula["versions"] as? [String: Any])?["stable"] as? String
+                return CaskInfo(token: name, name: name, description: (formula["desc"] as? String) ?? "", version: stable ?? "", homepage: (formula["homepage"] as? String) ?? "")
+            }
+        }
+        guard let casks = root["casks"] as? [[String: Any]] else { return [] }
         return casks.compactMap { cask in
             guard let token = cask["token"] as? String, isValidToken(token) else { return nil }
             let names = cask["name"] as? [String] ?? []
@@ -68,6 +94,9 @@ enum HomebrewParsing {
     static let featured: [String] = [
         "google-chrome", "firefox", "visual-studio-code", "slack", "zoom", "spotify", "vlc", "iterm2", "obsidian", "notion", "raycast", "rectangle",
     ]
+
+    /// Well-known command-line tools to suggest before anything is typed.
+    static let featuredTools: [String] = ["git", "gh", "node", "ripgrep", "jq", "wget", "fzf", "tree", "htop", "ffmpeg", "tmux", "bat"]
 
     /// What an exported list holds: the casks, and the apps they sit beside for reference.
     struct AppList: Codable, Equatable {
@@ -105,7 +134,7 @@ enum HomebrewParsing {
         }
         if tail.contains("auto-updating homebrew") || tail.contains("updating homebrew") { return "Updating Homebrew first…" }
         if tail.contains("downloading") || tail.contains("fetching") { return "Downloading…" }
-        if tail.contains("moving app") || tail.contains("installing cask") || tail.contains("running installer") || tail.contains("linking") { return "Installing…" }
+        if tail.contains("moving app") || tail.contains("installing cask") || tail.contains("running installer") || tail.contains("linking") || tail.contains("pouring") || tail.contains("cellar") { return "Installing…" }
         if tail.contains("verifying") || tail.contains("verified") { return "Verifying download…" }
         return nil
     }
@@ -149,6 +178,10 @@ final class HomebrewManager: ObservableObject {
     @Published private(set) var details: [String: HomebrewParsing.CaskInfo] = [:]
     @Published private(set) var isSearching = false
     private var searchGeneration = 0
+    /// The same three things for command-line tools (formulae), kept apart so nothing that works with apps changes.
+    @Published private(set) var formulaResults: [String] = []
+    @Published private(set) var installedFormulae: [String] = []
+    @Published private(set) var formulaDetails: [String: HomebrewParsing.CaskInfo] = [:]
 
     // The running process and the Stop request are touched from the main thread and from the install queue, so they are
     // guarded by one lock. The process is started while the lock is held, so Stop either comes before it starts (and it never
@@ -176,9 +209,9 @@ final class HomebrewManager: ObservableObject {
     }
 
     /// The command that will run, exactly as it would be typed.
-    static func command(install token: String) -> String { "brew install --cask \(token)" }
+    static func command(install token: String, kind: HomebrewParsing.Kind = .cask) -> String { HomebrewParsing.installCommand(token, kind: kind) }
 
-    func search(_ query: String) {
+    func search(_ query: String, kind: HomebrewParsing.Kind = .cask) {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { clearSearch(); return }
         guard let brewPath, text.count <= 60, !text.contains("\0"), !text.hasPrefix("-") else { return }
@@ -188,15 +221,15 @@ final class HomebrewManager: ObservableObject {
         isSearching = true
         status = nil
         readQueue.async { [self] in
-            let output = (try? ToolRunner.run(brewPath, ["search", "--cask", text], environment: Self.environment, timeout: 60)) ?? ""
-            let found = HomebrewParsing.rank(HomebrewParsing.parseSearch(output), query: text)
+            let output = (try? ToolRunner.run(brewPath, ["search", kind.flag, text], environment: Self.environment, timeout: 60)) ?? ""
+            let found = HomebrewParsing.rank(HomebrewParsing.parseSearch(output, kind: kind), query: text)
             DispatchQueue.main.async {
                 // A newer search has started since: this answer is old.
                 guard generation == self.searchGeneration else { return }
-                self.results = found
+                if kind == .cask { self.results = found } else { self.formulaResults = found }
                 self.isSearching = false
-                self.status = found.isEmpty ? "No apps match “\(text)”." : nil
-                self.describe(Array(found.prefix(12)))
+                self.status = found.isEmpty ? "No \(kind == .cask ? "apps" : "command-line tools") match “\(text)”." : nil
+                self.describe(Array(found.prefix(12)), kind: kind)
             }
         }
     }
@@ -205,37 +238,42 @@ final class HomebrewManager: ObservableObject {
     func clearSearch() {
         searchGeneration += 1
         results = []
+        formulaResults = []
         isSearching = false
         status = nil
     }
 
     /// Looks up names and descriptions for casks, so a list shows more than their short names.
-    func describe(_ tokens: [String]) {
-        let wanted = tokens.filter(HomebrewParsing.isValidToken).filter { details[$0] == nil }
+    func describe(_ tokens: [String], kind: HomebrewParsing.Kind = .cask) {
+        let known = kind == .cask ? details : formulaDetails
+        let wanted = tokens.filter(HomebrewParsing.isValidToken).filter { known[$0] == nil }
         guard let brewPath, !wanted.isEmpty else { return }
         readQueue.async { [self] in
             // Homebrew may print a warning before the JSON, so the reading starts at its first brace.
-            let text = (try? ToolRunner.run(brewPath, ["info", "--json=v2", "--cask"] + wanted, environment: Self.environment, timeout: 60)) ?? ""
-            let infos = HomebrewParsing.parseInfo(Data((text.firstIndex(of: "{").map { String(text[$0...]) } ?? "").utf8))
-            DispatchQueue.main.async { for info in infos { self.details[info.token] = info } }
+            let text = (try? ToolRunner.run(brewPath, ["info", "--json=v2", kind.flag] + wanted, environment: Self.environment, timeout: 60)) ?? ""
+            let infos = HomebrewParsing.parseInfo(Data((text.firstIndex(of: "{").map { String(text[$0...]) } ?? "").utf8), kind: kind)
+            DispatchQueue.main.async { for info in infos { if kind == .cask { self.details[info.token] = info } else { self.formulaDetails[info.token] = info } } }
         }
     }
 
     func refreshInstalled() {
         guard let brewPath else { return }
         readQueue.async { [self] in
-            let output = (try? ToolRunner.run(brewPath, ["list", "--cask"], environment: Self.environment, timeout: 60)) ?? ""
-            let tokens = output.split(whereSeparator: \.isNewline).map { String($0).trimmingCharacters(in: .whitespaces) }.filter(HomebrewParsing.isValidToken)
-            DispatchQueue.main.async { self.installed = tokens.sorted() }
+            func names(_ kind: HomebrewParsing.Kind) -> [String] {
+                let output = (try? ToolRunner.run(brewPath, ["list", kind.flag], environment: Self.environment, timeout: 60)) ?? ""
+                return output.split(whereSeparator: \.isNewline).map { String($0).trimmingCharacters(in: .whitespaces) }.filter(HomebrewParsing.isValidToken).sorted()
+            }
+            let casks = names(.cask), formulae = names(.formula)
+            DispatchQueue.main.async { self.installed = casks; self.installedFormulae = formulae }
         }
     }
 
     /// Installs each cask in turn, writing what Homebrew says to the log. Names that are not valid are skipped.
-    func install(_ tokens: [String]) {
+    func install(_ tokens: [String], kind: HomebrewParsing.Kind = .cask) {
         let wanted = tokens.filter(HomebrewParsing.isValidToken)
         guard let brewPath, !wanted.isEmpty, !isRunning else { return }
         guard !LocalOnly.isOn else { status = LocalOnly.blockedMessage; return }
-        AuditLog.shared.record(.install, "brew install --cask " + wanted.joined(separator: " "))
+        AuditLog.shared.record(.install, "brew install" + (kind == .cask ? " --cask " : " ") + wanted.joined(separator: " "))
         isRunning = true
         setCancelRequested(false)
         log = ""
@@ -248,8 +286,8 @@ final class HomebrewManager: ObservableObject {
                 if isCancelRequested { append("Stopped.\n"); break }
                 DispatchQueue.main.async { self.installDone = index }
                 setProgress(cask: token, note: wanted.count > 1 ? "\(index + 1) of \(wanted.count)" : nil)
-                append("$ \(Self.command(install: token))\n")
-                let code = runStreaming(brewPath, ["install", "--cask", token])
+                append("$ \(Self.command(install: token, kind: kind))\n")
+                let code = runStreaming(brewPath, HomebrewParsing.installArguments(token, kind: kind))
                 switch code {
                 case 0: append("\nInstalled \(token).\n\n")
                 case Self.timedOutCode: recordFailure(token, "It took longer than \(Int(installTimeout / 60)) minutes and was stopped."); append("\n\(token) was stopped: it took too long.\n\n")
@@ -277,9 +315,9 @@ final class HomebrewManager: ObservableObject {
     }
 
     /// Opens Terminal with the install command ready to run, for the apps that need a password. The command is also copied.
-    static func runInTerminal(install token: String) {
+    static func runInTerminal(install token: String, kind: HomebrewParsing.Kind = .cask) {
         guard HomebrewParsing.isValidToken(token) else { return }
-        let command = command(install: token)
+        let command = command(install: token, kind: kind)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(command, forType: .string)
         let script = "tell application \"Terminal\"\nactivate\ndo script \"\(command)\"\nend tell"
