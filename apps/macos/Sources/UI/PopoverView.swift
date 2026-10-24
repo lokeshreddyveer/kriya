@@ -78,20 +78,29 @@ struct PopoverView: View {
     // MARK: Parts
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Text("Kriya").font(.headline)
-            Spacer()
-            HStack(spacing: 6) {
-                if let color = pause.isPaused ? Theme.warn : summary.color { StatusDot(color: color) }
-                Text(pause.isPaused ? "Paused" : summary.text).font(.callout)
-                    .foregroundStyle(pause.isPaused || summary.color != nil ? Color.primary : Color.secondary)
+        HStack(spacing: 10) {
+            // The app's mark, then its name over one line that says how things are.
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(LinearGradient(colors: [tint, tint.opacity(0.65)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: "bolt.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
             }
-            .smoothly(summary.text + (pause.isPaused ? "p" : ""))
+            .frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Kriya").font(.system(size: 14, weight: .semibold))
+                HStack(spacing: 5) {
+                    if let color = pause.isPaused ? Theme.warn : summary.color { StatusDot(color: color) }
+                    Text(pause.isPaused ? "Paused" : summary.text).font(.system(size: 11.5))
+                        .foregroundStyle(pause.isPaused || summary.color != nil ? Theme.warn : Color.secondary)
+                }
+                .smoothly(summary.text + (pause.isPaused ? "p" : ""))
+            }
+            Spacer()
             headerButton(pause.isPaused ? "play.fill" : "pause.fill", help: pause.isPaused ? "Resume everything" : "Pause every feature") { togglePause() }
             headerButton("slider.horizontal.3", help: "Customize this window") { openSettings(.menuBar) }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.top, 12).padding(.bottom, 10)
     }
 
     private func headerButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
@@ -150,20 +159,28 @@ struct PopoverView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 14) {
-            Button { openSettings(nil) } label: { Text("Settings…") }
-                .keyboardShortcut(",")
-            Button { openSettings(.features) } label: { Text("Overview") }
+        HStack(spacing: 6) {
+            footerButton("gearshape", "Settings") { openSettings(nil) }.keyboardShortcut(",")
+            footerButton("square.grid.2x2", "Overview") { openSettings(.features) }
             Spacer()
             Text("v\(SystemInfo.appVersion)").font(.caption2).foregroundStyle(.tertiary)
-            Button("Quit") { NSApp.terminate(nil) }
-                .foregroundStyle(.secondary)
-                .keyboardShortcut("q")
+            footerButton("power", "Quit") { NSApp.terminate(nil) }.keyboardShortcut("q")
         }
-        .buttonStyle(.plain)
-        .font(.callout)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+    }
+
+    private func footerButton(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 11, weight: .medium))
+                Text(title).font(.system(size: 12))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(TileStyle())
     }
 
     // MARK: Search
@@ -232,15 +249,14 @@ private struct PopoverSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
+            Text(title)
+                .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 6)
             content
                 .padding(6)
-                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
         }
     }
 }
@@ -313,7 +329,7 @@ private struct QuickActions: View {
                             }
                         }
                         .frame(maxWidth: .infinity, minHeight: prefs.compact ? 40 : (prefs.showLabels ? 54 : 40))
-                        .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        .background(on ? tint.opacity(0.2) : Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(TileStyle())
@@ -452,6 +468,24 @@ private struct PopoverFeatureRow: View {
     @EnvironmentObject private var permissions: PermissionManager
     @State private var hovering = false
 
+    /// One short line under the name, so the list says what each feature is doing and not only whether its switch is on.
+    static func caption(_ state: FeatureState) -> String {
+        switch state {
+        case .running: return "Running"
+        case .off: return "Off"
+        case .safeMode: return "Held back by safe mode"
+        case .needsPermission(let missing): return missing.first.map { "Needs \($0.title)" } ?? "Needs a permission"
+        case .failed: return "Could not start"
+        }
+    }
+
+    static func captionIsWarning(_ state: FeatureState) -> Bool {
+        switch state {
+        case .needsPermission, .failed, .safeMode: return true
+        default: return false
+        }
+    }
+
     private var binding: Binding<Bool> {
         Binding(
             get: { config.isEnabled(feature) },
@@ -466,8 +500,12 @@ private struct PopoverFeatureRow: View {
                 Button { openSettings(feature.pane) } label: {
                     HStack(spacing: 10) {
                         RowIcon(symbol: feature.symbol, active: state == .running)
-                        Text(feature.title)
-                            .foregroundStyle(state == .off ? Color.secondary : Color.primary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(feature.title)
+                                .foregroundStyle(state == .off ? Color.secondary : Color.primary)
+                            Text(Self.caption(state)).font(.system(size: 10.5))
+                                .foregroundStyle(Self.captionIsWarning(state) ? Theme.warn : Color.secondary.opacity(0.8))
+                        }
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))

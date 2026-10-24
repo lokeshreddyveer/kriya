@@ -23,7 +23,7 @@ struct ManagedFeature: Identifiable, Equatable {
 
 enum FeatureRegistry {
     static let extras: [ManagedFeature] = [
-        ManagedFeature(id: "launcher", title: "Launcher", summary: "Search apps, files, windows, clipboard, notes and commands from one box.", symbol: "magnifyingglass", pane: "launcher", tab: nil, permissions: ["Calendar"], dependsOn: [], resetArea: "launcher",
+        ManagedFeature(id: "launcher", title: "Launcher", summary: "Search apps, files, windows, clipboard, notes and commands from one box.", symbol: "magnifyingglass", pane: "launcher", tab: nil, permissions: ["Calendar", "Contacts"], dependsOn: [], resetArea: "launcher",
                        tests: ["LauncherEngineTests", "LauncherPrefsTests", "LauncherFilterTests", "PaletteLayoutPlacementTests", "LauncherApprovalTests", "FuzzyMatcherTests"]),
         ManagedFeature(id: "midi", title: "MIDI Triggers", summary: "Start workflows and commands from a MIDI pad, key or knob.", symbol: "pianokeys", pane: "automation", tab: "Safety", permissions: [], dependsOn: ["automation"], resetArea: "midi",
                        tests: ["MIDITriggerTests", "MIDIRunningStatusTests"]),
@@ -222,8 +222,45 @@ extension FeatureRegistry {
     static func isImplemented(_ id: String) -> Bool {
         if let core = FeatureId.all.first(where: { $0.key == id }) { return core.isAvailable }
         guard let feature = feature(id) else { return false }
+        // A screen and some test names are not enough: something must run it, and that something must be a real, registered owner.
+        guard let owner = runtimeOwners[id], owner.isReal else { return false }
         return SettingsPane(rawValue: feature.pane) != nil && !feature.tests.isEmpty
     }
+
+    /// What runs a feature that is not one of the eight core ones.
+    enum RuntimeOwner: Equatable {
+        /// A background service handed to the service manager under this id (`ServiceManager.knownAuxiliaryIDs`).
+        case service(String)
+        /// Started by the person from its own screen or a command, with no background part. Names the type that does the work.
+        case onDemand(String)
+
+        var isReal: Bool {
+            switch self {
+            case .service(let id): return ServiceManager.knownAuxiliaryIDs.contains(id)
+            case .onDemand(let type): return !type.isEmpty
+            }
+        }
+    }
+
+    /// The owner of each non-core feature, written out so a feature cannot count as implemented only because it has a pane and tests.
+    static let runtimeOwners: [String: RuntimeOwner] = [
+        "launcher": .onDemand("CommandPalette"),
+        "midi": .service("midi"),
+        "locationAudio": .service("locationAudio"),
+        "extensions": .onDemand("ExtensionCatalog"),
+        "ddc": .onDemand("DDCController"),
+        "finderDrawer": .onDemand("FinderDrawer"),
+        "finderWindows": .onDemand("FinderWindowHistory"),
+        "clipboardSync": .onDemand("ClipboardSyncService"),
+        "aiProviders": .onDemand("AIGateway"),
+        "semanticSearch": .onDemand("AIIndexer"),
+        "mcpServer": .service("mcpServer"),
+        "safariExtension": .service("safariInbox"),
+        "capture": .service("capture"),
+        "shelf": .onDemand("FileShelf"),
+        "notes": .onDemand("NotesController"),
+        "powerSaving": .onDemand("KeepAwake"),
+    ]
 }
 
 // MARK: - One list of what happened

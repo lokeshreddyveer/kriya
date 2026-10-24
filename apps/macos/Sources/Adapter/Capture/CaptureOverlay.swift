@@ -15,6 +15,8 @@ struct CaptureOverlayActions {
     var openSettings: () -> Void = {}
     var runCommand: (String) -> Void = { _ in }
     var captureFolder: () -> URL = { CaptureSettings.defaultFolder }
+    /// The shortcut a command is bound to, written as it is shown in a menu ("⌘⇧4"), or nil if it has none.
+    var shortcutText: (String) -> String? = { _ in nil }
 }
 
 /// One capture shown as a card: its picture (a frame, for a recording), where it is saved, and what it is.
@@ -391,13 +393,61 @@ final class QuickAccessStatusItem: NSObject {
 
     @objc private func clicked() {
         guard let overlay, let button = item?.button else { return }
+        // Laid out the way people expect a capture tool's menu: pictures first, then recordings, then the text and special tools,
+        // then what was captured, then the settings. Every command shows its shortcut on the right, and each has an icon.
         let menu = NSMenu()
-        let restore = menu.addItem(withTitle: "Bring Back the Last Closed Capture", action: #selector(restore), keyEquivalent: "")
-        restore.target = self
-        restore.isEnabled = overlay.canRestore
+        menu.autoenablesItems = false
+        func add(_ title: String, _ symbol: String, _ command: String, to target: NSMenu) {
+            let mi = target.addItem(withTitle: title, action: #selector(runCommand(_:)), keyEquivalent: "")
+            mi.target = self; mi.representedObject = command
+            mi.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            if let shortcut = overlay.actions.shortcutText(command) { mi.attributedTitle = Self.titled(title, shortcut: shortcut) }
+        }
+        add("Capture Area", "viewfinder", "capture.region", to: menu)
+        add("Capture Previous Area", "arrow.counterclockwise", "capture.again", to: menu)
+        add("Capture Window", "macwindow", "capture.window", to: menu)
+        add("Capture Fullscreen", "display", "capture.screen", to: menu)
+        add("Scrolling Capture", "arrow.up.and.down.text.horizontal", "capture.scroll", to: menu)
+        add("Capture Menu", "filemenu.and.cursorarrow", "capture.menu", to: menu)
+        menu.addItem(.separator())
+        add("Record Screen", "record.circle", "capture.rec.screen", to: menu)
+        add("Record Window", "macwindow.badge.plus", "capture.rec.window", to: menu)
+        add("Record Area as Video", "rectangle.dashed.badge.record", "capture.record", to: menu)
+        add("Record GIF", "photo.on.rectangle", "capture.gif", to: menu)
+        add("Pause or Resume Recording", "pause.circle", "capture.rec.pause", to: menu)
+        add("Stop Recording", "stop.circle", "capture.rec.stop", to: menu)
+        menu.addItem(.separator())
+        let text = NSMenuItem(title: "Capture Text (OCR)", action: nil, keyEquivalent: "")
+        text.image = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: nil)
+        let textMenu = NSMenu()
+        add("Copy Text", "text.alignleft", "capture.text", to: textMenu)
+        add("Copy Text as One Paragraph", "paragraphsign", "capture.text.joined", to: textMenu)
+        add("Copy Text as Markdown", "number", "capture.text.markdown", to: textMenu)
+        add("Copy Table as CSV", "tablecells", "capture.table", to: textMenu)
+        add("Read QR Code", "qrcode.viewfinder", "capture.qr", to: textMenu)
+        text.submenu = textMenu
+        menu.addItem(text)
+        let tools = NSMenuItem(title: "More Tools", action: nil, keyEquivalent: "")
+        tools.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)
+        let toolsMenu = NSMenu()
+        add("Capture and Hide Private Text", "eye.slash", "capture.redacted", to: toolsMenu)
+        add("Cut Out the Subject", "person.crop.rectangle", "capture.cutout", to: toolsMenu)
+        add("Pin to Screen", "pin", "capture.pin", to: toolsMenu)
+        add("Float a Live Window", "pip", "capture.mirror", to: toolsMenu)
+        add("Pixel Ruler", "ruler", "capture.ruler", to: toolsMenu)
+        add("Trim a Recording", "scissors", "capture.trim", to: toolsMenu)
+        tools.submenu = toolsMenu
+        menu.addItem(tools)
+        menu.addItem(.separator())
+        let history = menu.addItem(withTitle: "Open Capture History", action: #selector(openHistory), keyEquivalent: "")
+        history.target = self
+        history.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
         let recents = CaptureHistory.read(folder: overlay.actions.captureFolder(), limit: 8)
-        if !recents.isEmpty {
-            let parent = NSMenuItem(title: "Recent Captures", action: nil, keyEquivalent: "")
+        let parent = NSMenuItem(title: "Recent Captures", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "photo.stack", accessibilityDescription: nil)
+        if recents.isEmpty {
+            parent.isEnabled = false
+        } else {
             let sub = NSMenu()
             for entry in recents {
                 let mi = NSMenuItem(title: "\(entry.name)", action: #selector(showEntry(_:)), keyEquivalent: "")
@@ -407,18 +457,32 @@ final class QuickAccessStatusItem: NSObject {
                 sub.addItem(mi)
             }
             parent.submenu = sub
-            menu.addItem(parent)
         }
+        menu.addItem(parent)
+        let restore = menu.addItem(withTitle: "Restore Recently Closed Capture", action: #selector(restore), keyEquivalent: "")
+        restore.target = self
+        restore.image = NSImage(systemSymbolName: "arrow.uturn.backward.circle", accessibilityDescription: nil)
+        restore.isEnabled = overlay.canRestore
         menu.addItem(.separator())
-        for (title, command) in [("Capture a Region", "capture.region"), ("Capture a Window", "capture.window"), ("Capture the Screen", "capture.screen"), ("Record the Screen", "capture.rec.screen")] {
-            let mi = menu.addItem(withTitle: title, action: #selector(runCommand(_:)), keyEquivalent: "")
-            mi.target = self; mi.representedObject = command
-        }
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Open the Capture Folder", action: #selector(openFolder), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Quick Access Settings…", action: #selector(openSettings), keyEquivalent: "").target = self
+        let folder = menu.addItem(withTitle: "Open Capture Folder", action: #selector(openFolder), keyEquivalent: "")
+        folder.target = self
+        folder.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+        let settings = menu.addItem(withTitle: "Capture Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
+
+    /// A menu title with its shortcut set apart on the right in a lighter colour, after a tab.
+    private static func titled(_ title: String, shortcut: String) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 250)]
+        let text = NSMutableAttributedString(string: "\(title)\t\(shortcut)", attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph])
+        text.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: title.count + 1, length: shortcut.count))
+        return text
+    }
+
+    @objc private func openHistory() { overlay?.actions.openHistory() }
 
     @objc private func restore() { overlay?.restoreLast() }
     @objc private func showEntry(_ sender: NSMenuItem) {

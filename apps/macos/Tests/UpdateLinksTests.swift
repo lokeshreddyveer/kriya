@@ -53,4 +53,25 @@ final class UpdateLinksTests: XCTestCase {
         XCTAssertNil(UpdateLinks.storeEntry(fromLookup: Data(#"{"resultCount":0,"results":[]}"#.utf8)))
         XCTAssertNil(UpdateLinks.storeEntry(fromLookup: Data("junk".utf8)))
     }
+
+    func testAppStoreAddressesAreCheckedStrictly() {
+        XCTAssertEqual(UpdateLinks.appStoreURL(fromStorePage: "https://itunes.apple.com/us/app/x/id5"), u("macappstore://itunes.apple.com/us/app/x/id5"))
+        XCTAssertEqual(UpdateLinks.appStoreURL(fromStorePage: "https://APPS.Apple.com/us/app/x/id5"), u("macappstore://apps.apple.com/us/app/x/id5"), "host case does not matter")
+        XCTAssertEqual(UpdateLinks.appStoreURL(fromStorePage: "https://apps.apple.com/us/app/x/id5?mt=12&utm_source=ad#reviews"), u("macappstore://apps.apple.com/us/app/x/id5"), "tracking and fragment dropped")
+        for bad in ["https://apps.apple.com.evil.com/app/id1", "https://evil.com/apps.apple.com/app/id1", "https://apps.apple.com@evil.com/app/id1",
+                    "https://user:pw@apps.apple.com/app/id1", "https://apps.apple.com:8443/app/id1", "http://itunes.apple.com/app/id1",
+                    "ftp://apps.apple.com/app/id1", "macappstore://apps.apple.com/app/id1", "apps.apple.com/app/id1", "", "https://sub.apps.apple.com/app/id1"] {
+            XCTAssertNil(UpdateLinks.appStoreURL(fromStorePage: bad), bad)
+        }
+    }
+
+    func testMalformedStoreAnswersAreRefused() {
+        for bad in [#"{"results":[{"trackViewUrl":"https://apps.apple.com/a/id1"}]}"#,            // no version
+                    #"{"results":[{"version":"","trackViewUrl":"https://apps.apple.com/a/id1"}]}"#, // empty version
+                    #"{"results":[{"version":"1.0"}]}"#,                                              // no page
+                    #"{"results":[{"version":1.0,"trackViewUrl":"x"}]}"#,                             // version is not text
+                    #"{"results":"none"}"#, #"[]"#, #"null"#, ""] {
+            XCTAssertNil(UpdateLinks.storeEntry(fromLookup: Data(bad.utf8)), bad)
+        }
+    }
 }

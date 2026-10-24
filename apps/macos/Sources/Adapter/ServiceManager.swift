@@ -46,6 +46,9 @@ struct AuxiliaryService {
     let start: () -> Void
     let stop: () -> Void
     var wake: () -> Void = {}
+    /// Whether the service is really doing its job after `start`. Some services decline to start (their own switch is off, or a port is
+    /// taken); without this the manager would report them as running. Nil means "started means running".
+    var isActive: (() -> Bool)? = nil
 }
 
 /// Stands in for a feature that is not built yet, so enabling, permissions and lifecycle can all be exercised now. No shipped feature
@@ -120,13 +123,28 @@ final class ServiceManager: ObservableObject {
 
     /// Hands a background service to the manager. It is started on the next `reconcile`, and from then on follows safe mode,
     /// permissions and wake-from-sleep like a feature does.
+    /// Every id a background service is registered under. A service registered under any other id is a mistake, and a feature that
+    /// names an id missing from here is not counted as implemented (see `FeatureRegistry.runtimeOwners`).
+    static let knownAuxiliaryIDs: Set<String> = [
+        "clipboardMerge", "folderRules", "menuBarHider", "soundMixer", "soundRules", "midi", "mcpServer", "locationAudio", "volumeKeys",
+        "capture", "workspaces", "displayTools", "pointerEffects", "systemMonitor", "safariInbox", "focusSession", "worldClock",
+        "sharedClipboard", "keyboardDevices",
+    ]
+
     func register(_ service: AuxiliaryService) {
+        assert(Self.knownAuxiliaryIDs.contains(service.id) || service.id.hasPrefix("test."), "\(service.id) is not in knownAuxiliaryIDs")
         auxiliary.removeAll { $0.id == service.id }
         auxiliary.append(service)
         auxiliaryStates[service.id] = .off
     }
 
-    func auxiliaryState(_ id: String) -> FeatureState { auxiliaryStates[id] ?? .off }
+    /// What a background service is doing now. A service that can say whether it is really active is asked, so a switch turned on in
+    /// its own screen (which starts it directly) shows as running without waiting for the next check.
+    func auxiliaryState(_ id: String) -> FeatureState {
+        let stored = auxiliaryStates[id] ?? .off
+        guard stored == .off || stored == .running, let active = auxiliary.first(where: { $0.id == id })?.isActive else { return stored }
+        return active() ? .running : .off
+    }
 
     private func reconcileAuxiliary() {
         for service in auxiliary {
@@ -143,10 +161,15 @@ final class ServiceManager: ObservableObject {
             }
             if !auxiliaryRunning.contains(service.id) {
                 service.start()
+                guard service.isActive?() ?? true else {
+                    // It declined to start (its own switch is off). Nothing is running, so nothing is claimed, and the next check tries again.
+                    auxiliaryStates[service.id] = .off
+                    continue
+                }
                 auxiliaryRunning.insert(service.id)
                 Log.info("Features", "\(service.title) started")
             }
-            auxiliaryStates[service.id] = .running
+            auxiliaryStates[service.id] = (service.isActive?() ?? true) ? .running : .off
         }
     }
 

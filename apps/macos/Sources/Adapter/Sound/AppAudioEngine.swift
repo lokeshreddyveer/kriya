@@ -24,6 +24,8 @@ final class AudioSession {
     let key: String
     let processor = AudioProcessor()
     private(set) var failure: String?
+    /// The frames per buffer the output really uses, read back after asking for 1024 (0 until a session has started).
+    private(set) var bufferFrames = 0
 
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
@@ -84,7 +86,15 @@ final class AudioSession {
         // is not affected by that little delay.
         var frames = UInt32(1024)
         var bufferAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSize, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        _ = AudioObjectSetPropertyData(aggregate, &bufferAddress, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
+        let bufferStatus = AudioObjectSetPropertyData(aggregate, &bufferAddress, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
+        // A device may refuse the size or use another one, so what it really uses is read back. The renderer never trusts the request:
+        // it handles however many frames each call brings, up to `scratchFrames`, and anything larger is cut, not overrun.
+        var actual = UInt32(0)
+        var actualSize = UInt32(MemoryLayout<UInt32>.size)
+        if AudioObjectGetPropertyData(aggregate, &bufferAddress, 0, nil, &actualSize, &actual) == noErr { bufferFrames = Int(actual) }
+        if bufferStatus != noErr || Int(actual) > AudioSession.scratchFrames {
+            Log.info("Sound", "The output kept its own buffer size (\(actual) frames; asking for 1024 returned \(bufferStatus)).")
+        }
         let processor = processor
         let scratch = scratch
         // No dispatch queue: with nil, Core Audio runs the block on its own real-time thread. A normal queue adds scheduling delay that
@@ -250,6 +260,7 @@ final class AppAudioEngine: ObservableObject {
     func stopAll() {
         timer?.invalidate(); timer = nil
         for key in Array(sessions.keys) { stopSession(key) }
+        writeNow()
     }
 
     func viewerAppeared() { viewers += 1; refresh(); scheduleTimer() }
@@ -482,7 +493,22 @@ final class AppAudioEngine: ObservableObject {
         profiles.append(AppAudioProfile(name: name, settings: current(key)))
     }
 
-    private func save() { if let data = try? JSONEncoder().encode(settings) { defaults.set(data, forKey: Self.storeKey) } }
+    private var pendingSave: DispatchWorkItem?
+
+    /// Writes the settings a moment after the last change, so dragging a slider does not encode and store them on every movement.
+    /// The sound itself is changed at once (`applySession`); only the saving waits.
+    private func save() {
+        pendingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.writeNow() }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+
+    /// Saves immediately (used on quit and by the delayed save).
+    func writeNow() {
+        pendingSave?.cancel(); pendingSave = nil
+        if let data = try? JSONEncoder().encode(settings) { defaults.set(data, forKey: Self.storeKey) }
+    }
     private func saveProfiles() { if let data = try? JSONEncoder().encode(profiles) { defaults.set(data, forKey: Self.profilesKey) } }
 
     // MARK: Sessions

@@ -132,14 +132,15 @@ enum BridgeToken {
     }
 
     static func loadOrCreate(in support: URL) -> String {
-        if let existing = read(in: support) { return existing }
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        let token = bytes.map { String(format: "%02x", $0) }.joined()
-        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let file = fileURL(in: support)
-        try? token.write(to: file, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        if let existing = read(in: support) {
+            PrivateFile.ensurePrivate(fileURL(in: support))   // checked every time, not only when it was made
+            return existing
+        }
+        // 64 characters from the system's secure generator; if it ever fails, two random UUIDs (also from it) stand in.
+        let token = PrivateFile.randomHex() ?? (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
+        if !PrivateFile.write(Data(token.utf8), to: fileURL(in: support)) {
+            Log.info("Links", "The browser extensions' key could not be saved privately; extensions will not connect until it can.")
+        }
         return token
     }
 }

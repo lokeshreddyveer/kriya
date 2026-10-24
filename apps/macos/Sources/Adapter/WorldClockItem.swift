@@ -34,6 +34,8 @@ final class WorldClockModel: ObservableObject {
         timer = t
     }
 
+    func stop() { timer?.invalidate(); timer = nil }
+
     func refreshEvents() { events = Array((meetings?.today() ?? []).prefix(6)) }
 
     @discardableResult

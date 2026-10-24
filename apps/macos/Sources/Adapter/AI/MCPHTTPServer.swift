@@ -72,23 +72,28 @@ final class MCPHTTPServer: ObservableObject {
 
     /// The secret clients must send. Made once; a new one can be made at any time, which locks out every client.
     var secret: String {
-        if let existing = try? String(contentsOf: secretFile, encoding: .utf8), existing.count >= 32 { return existing.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if let existing = try? String(contentsOf: secretFile, encoding: .utf8), existing.count >= 32 {
+            PrivateFile.ensurePrivate(secretFile)   // looser permissions since it was written are put right every time it is used
+            return existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         return regenerateSecret()
     }
 
     @discardableResult
     func regenerateSecret() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        let token = bytes.map { String(format: "%02x", $0) }.joined()
-        try? FileManager.default.createDirectory(at: secretFile.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try? token.write(to: secretFile, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: secretFile.path)
+        // From the system's secure generator; if it ever fails, two random UUIDs (also from it) stand in, never a fixed or empty key.
+        let token = PrivateFile.randomHex() ?? (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
+        if !PrivateFile.write(Data(token.utf8), to: secretFile) {
+            Log.info("MCP", "The server secret could not be saved privately, so the server will not accept it from a file.")
+        }
         objectWillChange.send()
         return token
     }
 
     var endpoint: String { "http://127.0.0.1:\(port)/mcp" }
+
+    /// Whether the server is really listening (not only switched on).
+    var isActive: Bool { listener != nil }
 
     func start() {
         guard enabled, listener == nil else { return }

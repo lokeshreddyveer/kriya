@@ -47,6 +47,9 @@ final class FocusSessionController: ObservableObject {
         if state.endsAt <= Date() { finish(announce: false) } else { tick(); schedule() }
     }
 
+    /// Stops the countdown without ending the session: the saved state stays, so `start` carries it on again.
+    func stop() { timer?.invalidate(); timer = nil }
+
     func toggle() { isActive ? finish(announce: true) : begin(minutes: nil) }
 
     func begin(minutes: Int?) {

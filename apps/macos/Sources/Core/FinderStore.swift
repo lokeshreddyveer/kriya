@@ -196,7 +196,7 @@ final class FinderStore: ObservableObject {
     /// Created once and kept. The extension sends it with every request; anything without it is ignored.
     var token: String {
         if let saved = defaults.string(forKey: "finderRequestToken"), saved.count >= 32 { return saved }
-        let fresh = (0..<2).map { _ in UUID().uuidString }.joined().replacingOccurrences(of: "-", with: "")
+        let fresh = PrivateFile.randomHex() ?? (0..<2).map { _ in UUID().uuidString }.joined().replacingOccurrences(of: "-", with: "")
         defaults.set(fresh, forKey: "finderRequestToken")
         return fresh
     }

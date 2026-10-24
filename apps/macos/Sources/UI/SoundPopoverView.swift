@@ -401,13 +401,26 @@ private struct GlowSlider: View {
     var bipolar = false
     var label = "Volume"
     @State private var dragging = false
+    /// While a finger or pointer is down the thumb follows it directly from here. The value that goes out to the audio engine (which
+    /// saves, republishes and redraws the whole list) is sent at most every 33 ms and once more at the end, so the drag is never
+    /// waiting on the engine and the engine is not flooded.
+    @State private var drag: Double?
+    @State private var lastSent = Date.distantPast
 
     private var span: Double { range.upperBound - range.lowerBound }
+
+    private func send(_ v: Double, force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastSent) >= 0.033 else { return }
+        lastSent = now
+        value = v
+    }
 
     var body: some View {
         GeometryReader { geo in
             let width = max(geo.size.width, 1)
-            let fraction = CGFloat(min(max((value - range.lowerBound) / span, 0), 1))
+            let shown = drag ?? value
+            let fraction = CGFloat(min(max((shown - range.lowerBound) / span, 0), 1))
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.white.opacity(0.13)).frame(height: 6)
                 if bipolar {
@@ -430,11 +443,21 @@ private struct GlowSlider: View {
             .frame(height: 24)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { drag in
-                    dragging = true
-                    value = range.lowerBound + span * Double(min(max(drag.location.x / width, 0), 1))
+                .onChanged { gesture in
+                    var transaction = Transaction(); transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        dragging = true
+                        let v = range.lowerBound + span * Double(min(max(gesture.location.x / width, 0), 1))
+                        drag = v
+                        send(v)
+                    }
                 }
-                .onEnded { _ in dragging = false })
+                .onEnded { gesture in
+                    let v = range.lowerBound + span * Double(min(max(gesture.location.x / width, 0), 1))
+                    send(v, force: true)
+                    drag = nil
+                    dragging = false
+                })
             .animation(.easeOut(duration: 0.12), value: dragging)
         }
         .frame(height: 24)

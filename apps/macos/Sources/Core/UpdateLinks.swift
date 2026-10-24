@@ -64,9 +64,11 @@ enum UpdateLinks {
     static func appStoreURL(fromStorePage page: String) -> URL? {
         // Only the App Store's own hosts: not any address that merely ends in apple.com.
         guard var parts = URLComponents(string: page), parts.scheme == "https", let host = parts.host?.lowercased(),
-              ["apps.apple.com", "itunes.apple.com"].contains(host) else { return nil }
+              ["apps.apple.com", "itunes.apple.com"].contains(host), parts.user == nil, parts.password == nil, parts.port == nil else { return nil }
         parts.scheme = "macappstore"
-        parts.query = nil
+        parts.host = host
+        parts.query = nil          // tracking parameters
+        parts.fragment = nil
         return parts.url
     }
 

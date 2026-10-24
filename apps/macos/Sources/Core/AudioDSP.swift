@@ -55,18 +55,58 @@ final class AudioProcessor {
     }
 
     deinit {
-        z1.deallocate(); z2.deallocate(); active.deallocate()
+        z1.deallocate(); z2.deallocate(); active.deallocate(); peakCell.deallocate()
     }
 
-    /// Set from any thread; read on the audio thread.
-    var targetGain: Float = 1
-    var muted = false
+    /// Everything the audio thread needs besides the equaliser, as one value. The settings thread edits `pending` under the lock; the
+    /// audio thread copies the whole of it into `live` in one step (without ever waiting), so a buffer never mixes an old gain with a
+    /// new mute or balance, and no field is read while another thread is writing it.
+    struct Params: Equatable {
+        var gain: Float = 1
+        var muted = false
+        var preamp: Float = 1
+        var balance: Float = 0
+        var temporary: Float = 1
+    }
+    private var pending = Params()
+    private var live = Params()
+
+    private func edit(_ change: (inout Params) -> Void) {
+        os_unfair_lock_lock(&lock)
+        change(&pending)
+        os_unfair_lock_unlock(&lock)
+    }
+
+    /// Set from any thread; the audio thread takes them with the equaliser.
+    var targetGain: Float {
+        get { readPending { $0.gain } }
+        set { edit { $0.gain = newValue } }
+    }
+    var muted: Bool {
+        get { readPending { $0.muted } }
+        set { edit { $0.muted = newValue } }
+    }
     /// Gain in front of the equaliser, from the preamp setting (1 is unchanged).
-    var preampGain: Float = 1
+    var preampGain: Float {
+        get { readPending { $0.preamp } }
+        set { edit { $0.preamp = newValue } }
+    }
     /// -1 all left, 0 centred, 1 all right.
-    var balance: Float = 0
+    var balance: Float {
+        get { readPending { $0.balance } }
+        set { edit { $0.balance = newValue } }
+    }
     /// A timed mute or turn-down on top of everything else; 1 does nothing.
-    var tempGain: Float = 1
+    var tempGain: Float {
+        get { readPending { $0.temporary } }
+        set { edit { $0.temporary = newValue } }
+    }
+
+    private func readPending<T>(_ read: (Params) -> T) -> T {
+        os_unfair_lock_lock(&lock)
+        defer { os_unfair_lock_unlock(&lock) }
+        return read(pending)
+    }
     /// Audio Unit effects that run before the equaliser. Set from the main thread, tried (never waited for) on the audio thread.
     private var chainLock = os_unfair_lock_s()
     private var chain: AudioUnitChain?
@@ -77,7 +117,14 @@ final class AudioProcessor {
         os_unfair_lock_unlock(&chainLock)
     }
     /// Loudest sample in the last buffer, 0...1+, for the activity meter.
-    private(set) var peak: Float = 0
+    /// One aligned 32-bit cell written by the audio thread and read by the meter: a single word is never seen half-written, and the
+    /// meter only needs a recent value, so no lock is taken on either side.
+    private let peakCell: UnsafeMutablePointer<Float> = {
+        let cell = UnsafeMutablePointer<Float>.allocate(capacity: 1)
+        cell.initialize(to: 0)
+        return cell
+    }()
+    var peak: Float { peakCell.pointee }
 
     func setEQ(gains: [Float], sampleRate: Float) {
         let g = EQBands.clamped(gains)
@@ -105,18 +152,20 @@ final class AudioProcessor {
         if os_unfair_lock_trylock(&lock) {
             for band in 0..<EQBands.count { active[band] = coefficients[band] }
             activeFlat = flat
+            live = pending
             os_unfair_lock_unlock(&lock)
         }
+        let params = live
         let useEQ = !activeFlat
         let start = currentGain
-        let end = muted ? 0 : targetGain * tempGain
+        let end = params.muted ? 0 : params.gain * params.temporary
         currentGain = end
         let step = (end - start) / Float(frames)
         let preStart = currentPreamp
-        let preEnd = preampGain
+        let preEnd = params.preamp
         currentPreamp = preEnd
         let preStep = (preEnd - preStart) / Float(frames)
-        let sides = SoundBalance.gains(balance)
+        let sides = SoundBalance.gains(params.balance)
 
         // Nothing to do to the sound (volume 100%, no effects): it goes through bit for bit, with no clipping or filtering at all.
         let unity = !useEQ && start == 1 && end == 1 && preStart == 1 && preEnd == 1 && sides.left == 1 && sides.right == 1
@@ -125,7 +174,7 @@ final class AudioProcessor {
             if UnsafeRawPointer(source) != UnsafeRawPointer(output) { memcpy(output, source, count * MemoryLayout<Float>.size) }
             var maxSample: Float = 0
             for i in 0..<count { maxSample = max(maxSample, abs(output[i])) }
-            peak = maxSample
+            peakCell.pointee = maxSample
             return
         }
 
@@ -158,7 +207,7 @@ final class AudioProcessor {
                 output[index] = x
             }
         }
-        peak = maxSample
+        peakCell.pointee = maxSample
         if useEQ {
             // A filter's memory fades toward zero in silence; very tiny numbers make some processors slow down (denormals), which is
             // heard as ticks. They are set to zero once they are too small to matter.

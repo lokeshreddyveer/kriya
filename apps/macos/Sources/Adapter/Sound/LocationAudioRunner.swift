@@ -25,6 +25,9 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
     }
 
+    /// Whether place tracking is really running (not only switched on).
+    var isActive: Bool { started }
+
     func start() {
         guard enabled, !started else { return }
         guard CLLocationManager.locationServicesEnabled() else {

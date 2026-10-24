@@ -457,6 +457,9 @@ final class ScreenCaptureService: ObservableObject {
         actions.openSettings = { [weak self] in self?.openSettings() }
         actions.runCommand = { [weak self] in self?.run(command: $0) }
         actions.captureFolder = { settings.folder }
+        actions.shortcutText = { command in
+            settings.shortcuts.first { $0.command == command }.map { KeyNames.describe(keyCode: $0.keyCode, modifiers: $0.modifiers) }
+        }
         return actions
     }
 

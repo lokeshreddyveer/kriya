@@ -31,6 +31,9 @@ final class MIDITriggerRunner: ObservableObject {
         enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
     }
 
+    /// Whether MIDI is really being listened to (not only switched on).
+    var isActive: Bool { running }
+
     func start() {
         guard enabled, !running else { return }
         let ok = MIDIClientCreateWithBlock("Kriya" as CFString, &client) { [weak self] notification in

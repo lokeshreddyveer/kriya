@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 import Combine
+import Contacts
 import CoreBluetooth
 import CoreLocation
 import EventKit
@@ -19,6 +20,7 @@ enum Permission: String, CaseIterable, Identifiable {
     case microphone
     case bluetooth
     case calendar
+    case contacts
 
     var id: String { rawValue }
 
@@ -34,6 +36,7 @@ enum Permission: String, CaseIterable, Identifiable {
         case .microphone: return "Microphone"
         case .bluetooth: return "Bluetooth"
         case .calendar: return "Calendar"
+        case .contacts: return "Contacts"
         }
     }
 
@@ -52,6 +55,7 @@ enum Permission: String, CaseIterable, Identifiable {
         case .microphone: return "Only for dictation, and for screen recordings that include the microphone. Nothing is kept except the recording you make."
         case .bluetooth: return "Lets sound rules connect and disconnect your paired headphones and speakers, and read whether they are connected."
         case .calendar: return "Lets the launcher show your next event and open its video call. It stays on this Mac."
+        case .contacts: return "Lets the launcher find people by name and show their phone number or email. It stays on this Mac."
         }
     }
 
@@ -67,6 +71,7 @@ enum Permission: String, CaseIterable, Identifiable {
         case .microphone: return "mic"
         case .bluetooth: return "dot.radiowaves.left.and.right"
         case .calendar: return "calendar"
+        case .contacts: return "person.crop.circle"
         }
     }
 
@@ -83,6 +88,7 @@ enum Permission: String, CaseIterable, Identifiable {
         case .microphone: pane = "Privacy_Microphone"
         case .bluetooth: pane = "Privacy_Bluetooth"
         case .calendar: pane = "Privacy_Calendars"
+        case .contacts: pane = "Privacy_Contacts"
         case .notifications: pane = ""
         }
         return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!
@@ -164,6 +170,12 @@ struct SystemPermissionProbe: PermissionProbe {
             case .denied, .restricted, .writeOnly: return .denied
             default: return .notDetermined
             }
+        case .contacts:
+            switch CNContactStore.authorizationStatus(for: .contacts) {
+            case .authorized: return .granted
+            case .denied, .restricted: return .denied
+            default: return .notDetermined
+            }
         }
     }
 
@@ -203,6 +215,7 @@ struct SystemPermissionProbe: PermissionProbe {
         case .microphone: AVCaptureDevice.requestAccess(for: .audio) { _ in }
         case .bluetooth: Self.bluetooth = CBCentralManager(delegate: nil, queue: nil)   // creating the manager is what makes macOS ask
         case .calendar: EKEventStore().requestFullAccessToEvents { _, _ in }
+        case .contacts: CNContactStore().requestAccess(for: .contacts) { _, _ in }
         }
     }
 }

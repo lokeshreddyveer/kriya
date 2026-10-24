@@ -69,6 +69,8 @@ final class SharedClipboardService: ObservableObject {
 
     func start() { schedule() }
 
+    func stop() { timer?.invalidate(); timer = nil }
+
     func setPassphrase(_ text: String) -> String? {
         guard text.count >= BackupCrypto.minimumLength else { return BackupCryptoError.tooShort.errorDescription }
         guard passphrases.save(text) else { return "The passphrase could not be saved in your Keychain." }

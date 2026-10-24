@@ -6,7 +6,9 @@ each one can be switched on or off on its own.
 
 - Works on macOS 14 or later, on Apple silicon and Intel Macs. Apple Intelligence features need macOS 26 and a Mac that supports it.
 - Signed and notarized. It is not sandboxed and not in the App Store, because it has to watch input and move other apps' windows.
-- Everything stays on your Mac. Nothing you copy, select or type is uploaded.
+- What you copy, select or type stays on your Mac unless you switch on something that sends it: an AI provider, a capture upload,
+  iCloud sync or backup, update checks, Wikipedia research, an API command or Homebrew. Each is off until you turn it on, and
+  Local-only mode switches all of them off at once. [Privacy](#privacy) lists every one.
 
 ## Getting started
 
@@ -63,7 +65,8 @@ apart, so a mouse and a trackpad can scroll in opposite directions.
   a click or the wheel stops it), and *window follows the pointer* (hold chosen keys and the window under the pointer follows it).
 - **Presets menu:** import, export or restore defaults.
 - **Rule simulator:** pick a button, keys and an app and see which rule would run, and why, without pressing anything.
-- **Devices:** a timeline of connections and a simple health score for each device.
+- **Devices:** a timeline of connections and a score for each device that is worked out from how often it dropped and reconnected (not from
+  its hardware condition).
 
 **Not available:** Logitech-specific features such as ratchet control, which need the maker's own protocol.
 
@@ -281,7 +284,8 @@ imported rules come in switched off, and any whose folder is missing or not allo
   key or card number are never recorded unless encryption is on, in which case they are saved shown as dots and can expire.
   - *Encrypted history:* seals the history with AES-256-GCM, with a key kept in your login Keychain. An optional Touch ID or
     password lock covers it and locks again on sleep.
-  - *Pause* recording or *Clear* history at any time (cleared content is overwritten on disk).
+  - *Pause* recording or *Clear* history at any time (cleared items are removed from Kriya's history database; on an SSD, macOS may keep the old blocks until they are reused, which
+    is why *Encrypted history* is the way to keep copied content unreadable on disk).
 - History is stored only on this Mac and is never part of a backup.
 
 # Selection bar
@@ -460,7 +464,10 @@ an optional delay, and copy or save the result.
 
 # Link routing and browsers
 
-**Settings › Link Routing.** Make Kriya your default browser and it sends each link where your rules say.
+**Settings › Link Routing.** Make Kriya your default browser and it sends each link where your rules say. Kriya registers for web
+links (http and https) so that macOS offers it as a browser; it is never made the default unless you choose it, and it never shows
+a page itself: every link is passed on to the browser your rules pick, and a link no rule matches goes to the fallback browser you
+set. If that browser is missing, the link opens in Safari rather than being dropped.
 
 - **Rules:** match a site (and its subdomains), an address prefix, text in the address or a regular expression, optionally by the app
   the link came from or keys held. Send it to a browser and profile (Chrome, Edge, Brave, Vivaldi, Chromium), ask which browser, or
@@ -624,7 +631,7 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   Mute, Mute Mic, Next Output, Pick Colour, Whole Page, Record Screen and Read QR.
 - **Menu Bar Window:** what the quick panel shows: tiles, layouts, theme, and its search.
 - **Sleep & Power:** *Keep Awake* in timed sessions, until turned off, only while chosen apps run, or until a battery level.
-- **Backup & Restore:** back up all your settings to a file or to iCloud Drive, restore one, and protect backups with a passphrase
+- **Backup & Restore:** back up all your portable settings (not approvals, keys, histories or anything tied to this Mac) to a file or to iCloud Drive, restore one, and protect backups with a passphrase
   (kept in your Keychain; another Mac asks for it). Clipboard history is never included. A restore saves your current settings
   first so you can undo it; a restore first shows a preview of what would change compared with now, and backups show their sizes and can be checked
   for readability. With iCloud Drive on, if another Mac saved settings after this one, the pane offers them with

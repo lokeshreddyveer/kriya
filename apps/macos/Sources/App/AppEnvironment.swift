@@ -212,6 +212,16 @@ final class AppEnvironment {
             approvals.reload()
             keyboard.store.reload()
             automation.store.reload()
+            // The rest of the stores that can reload, so a restore changes open screens and running services now, not after a relaunch.
+            pointerMenuStore.reload()
+            linkStore.reload()
+            workspaceStore.reload()
+            pointerStore.reload()
+            dragStore.reload()
+            screenStore.reload()
+            remapStore.reload()
+            popoverPrefs.reload()
+            WindowLockStore.shared.reload()
         }
 
         self.paths = paths
@@ -316,17 +326,19 @@ final class AppEnvironment {
         }
         capture.sendToShelf = { [weak fileShelf] url in fileShelf?.add(file: url) }
         executor.registerCommand("capture.restore") { DispatchQueue.main.async { CaptureOverlay.shared.restoreLast() } }
-        capture.start()
+        // Owned by the service manager like the other background services: stopped in safe mode, started again when it ends.
+        // (Screen Recording is asked for when a capture is taken, so a refusal does not stop the shortcuts that explain it.)
+        services.register(AuxiliaryService(id: "capture", title: "Screen capture shortcuts", start: { [weak capture] in capture?.start() }, stop: { [weak capture] in capture?.stop() }))
         timeline.start(events: events)
         keyboard.palette.addProvider { [weak capture] in
             CaptureSettings.commands.map { entry in
                 PaletteEntry(id: entry.command, title: entry.title, subtitle: "Screen capture", symbol: entry.mode.symbol, category: .command) { capture?.capture(entry.mode, action: entry.action) }
             }
         }
-        workspaces.start()
+        services.register(AuxiliaryService(id: "workspaces", title: "Workspaces", start: { [weak workspaces] in workspaces?.start() }, stop: { [weak workspaces] in workspaces?.stop() }))
         SpaceChangeLayouts.shared.controller = windowController
         SpaceChangeLayouts.shared.update()
-        displayTools.start()
+        services.register(AuxiliaryService(id: "displayTools", title: "Displays & corners", start: { [weak displayTools] in displayTools?.start() }, stop: { [weak displayTools] in displayTools?.stop() }))
         executor.registerCommand("clipboard.stack") { [weak pasteStack] in DispatchQueue.main.async { pasteStack?.toggle() } }
         executor.registerCommand("color.pick") { DispatchQueue.main.async { ScreenColorPicker.pick() } }
         executor.registerCommand("focus.session") { [weak self] in DispatchQueue.main.async { self?.focusSession.toggle() } }
@@ -357,8 +369,8 @@ final class AppEnvironment {
         executor.registerCommand("link.route_clipboard") { [weak links] in
             DispatchQueue.main.async { links?.chooseBrowserForClipboardLink() }
         }
-        pointerEffects.start()
-        systemMonitor.start()
+        services.register(AuxiliaryService(id: "pointerEffects", title: "Pointer effects", start: { [weak pointerEffects] in pointerEffects?.start() }, stop: { [weak pointerEffects] in pointerEffects?.stop() }))
+        services.register(AuxiliaryService(id: "systemMonitor", title: "System monitor", start: { [weak systemMonitor] in systemMonitor?.start() }, stop: { [weak systemMonitor] in systemMonitor?.stop() }))
         // These background services are owned by the service manager: it starts them, and stops them in safe mode or when a permission
         // they need is refused, instead of starting them here once and forgetting them.
         let mergeService = clipboardMerger, folderService = folderRules, hiderService = menuBarHider, mixerService = appAudio, soundRuleService = soundRules
@@ -374,14 +386,14 @@ final class AppEnvironment {
         }
         workspaces.putSoundBack = { [weak soundRules] in soundRules?.putSoundBack() }
         configureAITools()
-        services.register(AuxiliaryService(id: "midi", title: "MIDI triggers", start: { MIDITriggerRunner.shared.start() }, stop: { MIDITriggerRunner.shared.stop() }))
-        safariInbox.start()
-        services.register(AuxiliaryService(id: "mcpServer", title: "MCP server", start: { MCPHTTPServer.shared.start() }, stop: { MCPHTTPServer.shared.stop() }))
-        services.register(AuxiliaryService(id: "locationAudio", title: "Sound by place", blockedWhenDenied: [.location], start: { LocationAudioRunner.shared.start() }, stop: { LocationAudioRunner.shared.stop() }))
-        focusSession.start()
+        services.register(AuxiliaryService(id: "midi", title: "MIDI triggers", start: { MIDITriggerRunner.shared.start() }, stop: { MIDITriggerRunner.shared.stop() }, isActive: { MIDITriggerRunner.shared.isActive }))
+        services.register(AuxiliaryService(id: "safariInbox", title: "Safari inbox", start: { [weak safariInbox] in safariInbox?.start() }, stop: { [weak safariInbox] in safariInbox?.stop() }))
+        services.register(AuxiliaryService(id: "mcpServer", title: "MCP server", start: { MCPHTTPServer.shared.start() }, stop: { MCPHTTPServer.shared.stop() }, isActive: { MCPHTTPServer.shared.isActive }))
+        services.register(AuxiliaryService(id: "locationAudio", title: "Sound by place", blockedWhenDenied: [.location], start: { LocationAudioRunner.shared.start() }, stop: { LocationAudioRunner.shared.stop() }, isActive: { LocationAudioRunner.shared.isActive }))
+        services.register(AuxiliaryService(id: "focusSession", title: "Focus sessions", start: { [weak self] in self?.focusSession.start() }, stop: { [weak self] in self?.focusSession.stop() }))
         worldClock.meetings = launcherTools.meetings
-        worldClock.start()
-        sharedClipboard.start()
+        services.register(AuxiliaryService(id: "worldClock", title: "World clock", start: { [weak self] in self?.worldClock.start() }, stop: { [weak self] in self?.worldClock.stop() }))
+        services.register(AuxiliaryService(id: "sharedClipboard", title: "Shared clipboard", start: { [weak self] in self?.sharedClipboard.start() }, stop: { [weak self] in self?.sharedClipboard.stop() }))
         dialogFolders.type = { [weak keyboard] text in keyboard?.injector.insert(text, cursorBack: 0) }
         dialogFolders.applyAutoJump()
         dialogJumpObserver = NotificationCenter.default.addObserver(forName: .kriyaDialogAutoJumpChanged, object: nil, queue: .main) { [weak self] _ in self?.dialogFolders.applyAutoJump() }
@@ -397,20 +409,20 @@ final class AppEnvironment {
         remote.showLauncher = { [weak keyboard] text in keyboard?.palette.show(prefill: text) }
         pointerMenuCancellable = pointerMenuStore.$config.receive(on: DispatchQueue.main).sink { [weak self] config in
             guard let self else { return }
-            self.pointerMenu.setOptionRightClick(config.optionRightClick && self.permissions.isGranted(.inputMonitoring), events: self.events)
+            self.pointerMenu.setOptionRightClick(config.optionRightClick && self.permissions.isGranted(.inputMonitoring) && !self.crashGuard.isSafeMode, events: self.events)
         }
-        keyboardDevices.start()
+        services.register(AuxiliaryService(id: "keyboardDevices", title: "Keyboard device watcher", start: { [weak keyboardDevices] in keyboardDevices?.start() }, stop: { [weak keyboardDevices] in keyboardDevices?.stop() }))
         keyboardCancellable = keyboardDevices.$names.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
             guard let self else { return }
-            self.remap.apply(allowed: self.permissions.isGranted(.inputMonitoring))
+            self.remap.apply(allowed: self.permissions.isGranted(.inputMonitoring) && !self.crashGuard.isSafeMode)
         }
         remapCancellable = remapStore.$config.receive(on: DispatchQueue.main).sink { [weak self] _ in
             guard let self else { return }
-            self.remap.apply(allowed: self.permissions.isGranted(.inputMonitoring))
+            self.remap.apply(allowed: self.permissions.isGranted(.inputMonitoring) && !self.crashGuard.isSafeMode)
         }
         dragCancellable = dragStore.$config.receive(on: DispatchQueue.main).sink { [weak self] config in
             guard let self else { return }
-            if (config.scrollEnabled || config.followModifier != 0 || !config.doubleClicks.isEmpty || !config.buttonScrolls.isEmpty), self.permissions.isGranted(.inputMonitoring) {
+            if (config.scrollEnabled || config.followModifier != 0 || !config.doubleClicks.isEmpty || !config.buttonScrolls.isEmpty), self.permissions.isGranted(.inputMonitoring), !self.crashGuard.isSafeMode {
                 self.dragTools.start()
             } else {
                 self.dragTools.stop()

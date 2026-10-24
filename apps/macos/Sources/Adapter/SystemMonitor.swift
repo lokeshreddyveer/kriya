@@ -43,6 +43,12 @@ final class SystemMonitor: ObservableObject {
 
     func start() { update(); watchBatteries() }
 
+    func stop() {
+        timer?.invalidate(); timer = nil
+        batteryTimer?.invalidate(); batteryTimer = nil
+        lastTicks = nil; lastNet = nil; lastCores = []
+    }
+
     /// Every few minutes, says so when a mouse, keyboard or trackpad is nearly flat. Reads only the battery levels macOS lists.
     private func watchBatteries() {
         batteryTimer?.invalidate(); batteryTimer = nil
