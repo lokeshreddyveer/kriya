@@ -65,8 +65,9 @@ private func makeOverlay(size: CGFloat, shareable: Bool) -> NSPanel {
 
 // MARK: - Magnifier
 
-/// A live, zoomed view of the screen around the pointer, in a small window that follows it. Needs Screen Recording.
-private final class PointerMagnifier: NSObject, SCStreamOutput {
+/// A live, zoomed view of the screen around the pointer, in a small window that follows it. Needs Screen Recording. The capture
+/// follows the pointer from one display to the next, at each display's own scale, and the window takes new settings while it is on.
+final class PointerMagnifier: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private var panel: NSPanel?
     private let imageLayer = CALayer()
@@ -74,18 +75,46 @@ private final class PointerMagnifier: NSObject, SCStreamOutput {
     private var timer: Timer?
     private var screenSize = CGSize.zero
     private var displayOrigin = CGPoint.zero      // the display's top-left, in the accessibility coordinates
-    private var size: Double = 220
+    private(set) var size: Double = 220
     private(set) var zoom: Double = 2.5
+    private(set) var config: PointerEffectsConfig?
+    /// The display being captured, and its scale (a Retina display and an ordinary one differ).
+    private var capturedDisplay: CGDirectDisplayID?
+    private var scale: CGFloat = 2
     private var updating = false
+    private var starting = false
+    private var retargeting = false
+    private var displays: DisplayManager?
     private let queue = DispatchQueue(label: "app.kriya.magnifier", qos: .userInteractive)
 
-    var isOn: Bool { stream != nil }
+    /// Said when the capture ends by itself (Screen Recording taken away, the display went away), so the person is told why.
+    var onStopped: ((String) -> Void)?
+
+    /// On, including the moment it is moving its capture to another display.
+    var isOn: Bool { stream != nil || retargeting }
+    var hasPanel: Bool { panel != nil }
 
     func start(config: PointerEffectsConfig, displays: DisplayManager, zoom: Double) async -> String? {
+        guard !starting, !retargeting, stream == nil else { return nil }
+        starting = true
+        defer { starting = false }
         guard CGPreflightScreenCaptureAccess() else {
             CGRequestScreenCaptureAccess()
             return "The magnifier needs Screen Recording. Allow it in System Settings, then try again."
         }
+        self.config = config
+        self.displays = displays
+        self.zoom = zoom
+        size = config.magnifierSize
+        if let problem = await attach() { return problem }
+        await MainActor.run { showPanel() }
+        return nil
+    }
+
+    /// Points the capture at the display the pointer is on, replacing the stream that was running. Used to start, and again when the
+    /// pointer moves to another display or the displays change.
+    private func attach() async -> String? {
+        guard let config, let displays else { return "Could not capture this display." }
         displays.refresh()
         let pointer = DisplayManager.mouseLocation()
         guard let display = displays.display(at: pointer),
@@ -93,22 +122,16 @@ private final class PointerMagnifier: NSObject, SCStreamOutput {
               let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
               let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true),
               let scDisplay = content.displays.first(where: { $0.displayID == number }) else { return "Could not capture this display." }
-        self.zoom = zoom
-        size = config.magnifierSize
+        let old = stream
+        stream = nil
+        try? await old?.stopCapture()
         screenSize = CGSize(width: display.full.width, height: display.full.height)
         displayOrigin = CGPoint(x: display.full.x, y: display.full.y)
+        scale = screen.backingScaleFactor
 
         let mine = content.applications.filter { $0.bundleIdentifier == Bundle.main.bundleIdentifier }
         let filter = SCContentFilter(display: scDisplay, excludingApplications: mine, exceptingWindows: [])
-        let configuration = SCStreamConfiguration()
-        let scale = screen.backingScaleFactor
-        configuration.width = Int(size * scale)
-        configuration.height = Int(size * scale)
-        configuration.sourceRect = sourceRect(for: pointer, config: config)
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
-        configuration.showsCursor = true
-        configuration.pixelFormat = kCVPixelFormatType_32BGRA
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
+        let stream = SCStream(filter: filter, configuration: streamConfiguration(pointer: pointer, config: config), delegate: self)
         do {
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
             try await stream.startCapture()
@@ -116,8 +139,20 @@ private final class PointerMagnifier: NSObject, SCStreamOutput {
             return "Could not start the magnifier: \(error.localizedDescription)"
         }
         self.stream = stream
-        await MainActor.run { showPanel(config: config) }
+        capturedDisplay = number
         return nil
+    }
+
+    private func streamConfiguration(pointer: CGPoint, config: PointerEffectsConfig) -> SCStreamConfiguration {
+        let configuration = SCStreamConfiguration()
+        let pixels = MagnifierGeometry.pixels(points: size, scale: Double(scale))
+        configuration.width = pixels
+        configuration.height = pixels
+        configuration.sourceRect = sourceRect(for: pointer, config: config)
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+        configuration.showsCursor = true
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        return configuration
     }
 
     func stop() {
@@ -125,6 +160,7 @@ private final class PointerMagnifier: NSObject, SCStreamOutput {
         timer = nil
         let stream = stream
         self.stream = nil
+        capturedDisplay = nil
         Task { try? await stream?.stopCapture() }
         panel?.orderOut(nil)
         panel = nil
@@ -134,9 +170,43 @@ private final class PointerMagnifier: NSObject, SCStreamOutput {
         zoom = min(8, max(1.5, zoom * factor))
     }
 
+    /// New settings while the magnifier is on: its size, shape, whether the audience sees it, and its zoom. The capture picks up the
+    /// new size at the next frame.
+    func update(config new: PointerEffectsConfig) {
+        let old = config
+        config = new
+        size = new.magnifierSize
+        if old?.magnifierZoom != new.magnifierZoom { zoom = new.magnifierZoom }
+        guard let panel else { return }
+        // macOS lets a window's sharing be tightened but not loosened once it exists, so a change is made with a new window.
+        if old?.showWhenSharing != new.showWhenSharing {
+            panel.orderOut(nil)
+            self.panel = nil
+            buildPanel()
+            return
+        }
+        let side = CGFloat(size)
+        panel.setContentSize(NSSize(width: side, height: side))
+        panel.contentView?.frame = NSRect(x: 0, y: 0, width: side, height: side)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        imageLayer.frame = NSRect(x: 0, y: 0, width: side, height: side)
+        imageLayer.cornerRadius = new.magnifierShape == .circle ? side / 2 : 14
+        CATransaction.commit()
+    }
+
     // MARK: Showing it
 
-    private func showPanel(config: PointerEffectsConfig) {
+    private func showPanel() {
+        buildPanel()
+        let timer = Timer(timeInterval: 1.0 / 40.0, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    /// The window that shows the picture. Made new whenever it has to change in a way an open window cannot.
+    private func buildPanel() {
+        guard let config else { return }
         let panel = makeOverlay(size: CGFloat(size), shareable: config.showWhenSharing)
         let view = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
         view.wantsLayer = true
@@ -151,34 +221,44 @@ private final class PointerMagnifier: NSObject, SCStreamOutput {
         panel.hasShadow = true
         panel.orderFrontRegardless()
         self.panel = panel
-        let timer = Timer(timeInterval: 1.0 / 40.0, repeats: true) { [weak self] _ in self?.tick(config: config) }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     /// Moves the window beside the pointer and points the capture at what is under it.
-    private func tick(config: PointerEffectsConfig) {
+    private func tick() {
+        guard let config else { return }
         let pointer = DisplayManager.mouseLocation()
         let mouse = NSEvent.mouseLocation
-        if let panel, let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main
+        if let panel, let screen {
             var origin = NSPoint(x: mouse.x + 28, y: mouse.y + 28)
             let frame = screen.visibleFrame
             if origin.x + CGFloat(size) > frame.maxX { origin.x = mouse.x - 28 - CGFloat(size) }
             if origin.y + CGFloat(size) > frame.maxY { origin.y = mouse.y - 28 - CGFloat(size) }
             panel.setFrameOrigin(origin)
         }
-        guard let stream, !updating else { return }
+        guard let stream, !updating, !retargeting else { return }
+        // The pointer went to another display (or the picture is at another scale there): capture that one instead.
+        if let number = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID, number != capturedDisplay {
+            retarget()
+            return
+        }
         updating = true
-        let configuration = SCStreamConfiguration()
-        configuration.width = Int(size * (NSScreen.main?.backingScaleFactor ?? 2))
-        configuration.height = configuration.width
-        configuration.sourceRect = sourceRect(for: pointer, config: config)
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
-        configuration.showsCursor = true
-        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        let configuration = streamConfiguration(pointer: pointer, config: config)
         Task { [weak self] in
             try? await stream.updateConfiguration(configuration)
             self?.updating = false
+        }
+    }
+
+    private func retarget() {
+        retargeting = true
+        Task { [weak self] in
+            guard let self else { return }
+            let problem = await self.attach()
+            await MainActor.run {
+                self.retargeting = false
+                if let problem { self.stop(); self.onStopped?(problem) }
+            }
         }
     }
 
@@ -198,6 +278,15 @@ private final class PointerMagnifier: NSObject, SCStreamOutput {
             CATransaction.setDisableActions(true)
             self?.imageLayer.contents = cg
             CATransaction.commit()
+        }
+    }
+
+    /// The capture ended without being asked to: Screen Recording was taken away, or the display went. The window goes with it.
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.stream === stream else { return }
+            self.stop()
+            self.onStopped?("The magnifier stopped: \(error.localizedDescription)")
         }
     }
 }
@@ -260,13 +349,17 @@ private final class SpotlightDimView: NSView {
 
 /// Darkens every display except the area around the pointer. One click-through window per display, so the bright area can
 /// sit across two displays, and each follows the pointer.
-private final class PointerSpotlight {
+final class PointerSpotlight {
     private var panels: [(panel: NSPanel, view: SpotlightDimView, screen: NSScreen)] = []
     private var monitors: [Any] = []
     private var screenObserver: NSObjectProtocol?
     private var config: PointerEffectsConfig?
 
     var isOn: Bool { !panels.isEmpty }
+    /// How many windows it has open, one per display.
+    var panelCount: Int { panels.count }
+    /// Whether each window is open to screen sharing, for the tests.
+    var sharingTypes: [NSWindow.SharingType] { panels.map(\.panel.sharingType) }
 
     func start(config: PointerEffectsConfig) {
         guard !isOn else { update(config); return }
@@ -289,8 +382,8 @@ private final class PointerSpotlight {
     func update(_ config: PointerEffectsConfig) {
         let sharingChanged = config.showWhenSharing != self.config?.showWhenSharing
         self.config = config
-        if isOn, sharingChanged { for item in panels { item.panel.sharingType = config.showWhenSharing ? .readOnly : .none } }
-        follow()
+        // macOS lets a window's sharing be tightened but not loosened once it exists, so a change is made by opening new windows.
+        if isOn, sharingChanged { rebuild() } else { follow() }
     }
 
     func stop() {
@@ -352,70 +445,124 @@ private final class PointerSpotlight {
     }
 }
 
-// MARK: - Hiding the pointer when it is idle
+// MARK: - Hiding the pointer
 
-/// Hides the pointer after it has been still for a while and brings it back at the first movement. macOS lets only the app
-/// in front hide the pointer, so this asks the window server to allow it from the background; if that is not possible the
-/// pointer simply stays visible.
-private final class PointerHider {
+/// Hides the pointer after it has been still for a while, while the person types, or when asked, and brings it back at the first
+/// movement. Each reason is kept apart, so turning one off never shows a pointer another still wants hidden, and every hide is matched
+/// with one show on the same display. macOS lets only the app in front hide the pointer, so this asks the window server to allow it
+/// from the background; if that is not possible the pointer simply stays visible.
+final class PointerHider {
     private var timer: Timer?
     private var monitors: [Any] = []
     private var lastMove = Date()
-    private var hidden = false
+    private(set) var state = PointerHideState()
+    /// The display the hide was issued for, so the show is issued for the same one.
+    private var hiddenOn: CGDirectDisplayID?
+    private var idleEnabled = false
+    private var typingEnabled = false
     private var after: TimeInterval = 5
 
-    /// Watches for the pointer moving, which brings it back.
-    private func watchMovement() {
-        guard monitors.isEmpty else { return }
-        let wake: (NSEvent) -> Void = { [weak self] _ in self?.moved() }
-        let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .scrollWheel, .leftMouseDown, .rightMouseDown, .otherMouseDown]
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: events, handler: wake) { monitors.append(global) }
-        if let local = NSEvent.addLocalMonitorForEvents(matching: events, handler: { event in wake(event); return event }) { monitors.append(local) }
-    }
+    var isHidden: Bool { state.isHidden }
 
-    /// Hides the pointer while the person types, until the mouse moves. Works from the background, like hiding when idle.
-    func hideForTyping() {
-        watchMovement()
-        guard !hidden else { return }
-        allowBackgroundCursorControl()
-        CGDisplayHideCursor(CGMainDisplayID())
-        hidden = true
-    }
-
-    func start(after seconds: Double) {
+    /// Turns hiding when idle on or off, and sets how long the pointer must be still.
+    func setIdle(_ on: Bool, after seconds: Double) {
         after = seconds
-        guard timer == nil else { return }
-        lastMove = Date()
-        watchMovement()
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.check() }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        if on, !idleEnabled {
+            idleEnabled = true
+            lastMove = Date()
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.check() }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
+        } else if !on, idleEnabled {
+            idleEnabled = false
+            timer?.invalidate()
+            timer = nil
+            if state.remove(.idle) { show() }
+        }
+        updateWatchers()
     }
 
+    /// Turns hiding while typing on or off.
+    func setTyping(_ on: Bool) {
+        guard typingEnabled != on else { return }
+        typingEnabled = on
+        if !on, state.remove(.typing) { show() }
+        updateWatchers()
+    }
+
+    /// A key was pressed: hide until the mouse moves.
+    func hideForTyping() {
+        guard typingEnabled else { return }
+        add(.typing)
+    }
+
+    /// The "Hide the pointer" command: hide until the mouse moves.
+    func hideManually() { add(.manual) }
+
+    /// The "Show the pointer now" command.
+    func showNow() {
+        if state.removeAll() { show() }
+        updateWatchers()
+    }
+
+    /// Everything off: the pointer is shown and nothing is watched.
     func stop() {
+        idleEnabled = false
+        typingEnabled = false
         timer?.invalidate()
         timer = nil
+        if state.removeAll() { show() }
         for monitor in monitors { NSEvent.removeMonitor(monitor) }
         monitors.removeAll()
-        show()
     }
 
-    func show() {
-        guard hidden else { return }
-        CGDisplayShowCursor(CGMainDisplayID())
-        hidden = false
+    private func add(_ reason: PointerHideReason) {
+        updateWatchers(force: true)
+        if state.add(reason) { hide() }
+    }
+
+    /// The mouse is only watched while something could hide the pointer or the pointer is hidden.
+    private func updateWatchers(force: Bool = false) {
+        let needed = force || idleEnabled || typingEnabled || state.isHidden
+        if needed, monitors.isEmpty {
+            let wake: (NSEvent) -> Void = { [weak self] _ in self?.moved() }
+            let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .scrollWheel, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+            if let global = NSEvent.addGlobalMonitorForEvents(matching: events, handler: wake) { monitors.append(global) }
+            if let local = NSEvent.addLocalMonitorForEvents(matching: events, handler: { event in wake(event); return event }) { monitors.append(local) }
+        } else if !needed, !monitors.isEmpty {
+            for monitor in monitors { NSEvent.removeMonitor(monitor) }
+            monitors.removeAll()
+        }
     }
 
     private func moved() {
         lastMove = Date()
-        show()
+        if state.removeAll() { show() }
+        updateWatchers()
     }
 
     private func check() {
-        guard !hidden, Date().timeIntervalSince(lastMove) >= after else { return }
+        guard idleEnabled, !state.isHidden, Date().timeIntervalSince(lastMove) >= after else { return }
+        if state.add(.idle) { hide() }
+    }
+
+    /// The display the pointer is on.
+    private static func displayUnderPointer() -> CGDirectDisplayID {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main
+        return (screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) ?? CGMainDisplayID()
+    }
+
+    private func hide() {
         allowBackgroundCursorControl()
-        CGDisplayHideCursor(CGMainDisplayID())
-        hidden = true
+        let display = Self.displayUnderPointer()
+        CGDisplayHideCursor(display)
+        hiddenOn = display
+    }
+
+    private func show() {
+        CGDisplayShowCursor(hiddenOn ?? CGMainDisplayID())
+        hiddenOn = nil
     }
 
     private func allowBackgroundCursorControl() {
@@ -477,9 +624,45 @@ final class PointerEffects {
         self.store = store
         self.displays = displays
         self.executor = executor
+        magnifier.onStopped = { [weak self] message in self?.toast.show(message, isError: true) }
+    }
+
+    // Sleep and wake: the spotlight and the magnifier are taken down when the displays go to sleep (a capture does not survive it, and
+    // a transparent window must not be left behind) and put back when they wake.
+    private var sleepObservers: [NSObjectProtocol] = []
+    private var resumeAfterWake: (spotlight: Bool, magnifier: Bool)?
+
+    private func watchSleep() {
+        guard sleepObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObservers = [
+            center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in self?.suspend() },
+            center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in self?.suspend() },
+            center.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.resume() },
+            center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.resume() },
+        ]
+    }
+
+    private func suspend() {
+        guard resumeAfterWake == nil, spotlight.isOn || magnifier.isOn else { return }
+        resumeAfterWake = (spotlight.isOn, magnifier.isOn)
+        if spotlight.isOn { spotlight.stop() }
+        if magnifier.isOn { magnifier.stop() }
+    }
+
+    private func resume() {
+        guard let wanted = resumeAfterWake else { return }
+        resumeAfterWake = nil
+        // The displays take a moment to come back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self else { return }
+            if wanted.spotlight, !self.spotlight.isOn { self.setSpotlight(true) }
+            if wanted.magnifier, !self.magnifier.isOn, self.store.current.enabled { self.toggleMagnifier() }
+        }
     }
 
     func start() {
+        watchSleep()
         for (command, _) in Self.commands { register(command) { [weak self] in self?.run(command) } }
         store.$config
             .receive(on: DispatchQueue.main)
@@ -493,6 +676,9 @@ final class PointerEffects {
 
     func stop() {
         cancellables.removeAll()
+        for observer in sleepObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        sleepObservers.removeAll()
+        resumeAfterWake = nil
         stopWatching()
         hider.stop()
         magnifier.stop()
@@ -544,8 +730,8 @@ final class PointerEffects {
         case "pointer.magnifier": toggleMagnifier()
         case "pointer.zoom_in": magnifier.adjustZoom(by: 1.25)
         case "pointer.zoom_out": magnifier.adjustZoom(by: 0.8)
-        case "pointer.show": hider.show()
-        case "pointer.hide": hider.hideForTyping()
+        case "pointer.show": hider.showNow()
+        case "pointer.hide": hider.hideManually()
         case "pointer.center_display": Self.centerPointerOnItsDisplay()
         case "pointer.spotlight":
             setSpotlight(!spotlight.isOn)
@@ -587,8 +773,10 @@ final class PointerEffects {
         let wantsClicks = (config.enabled && config.clickEnabled) || presentation
         if wantsHalo || wantsClicks { startWatching(halo: wantsHalo, clicks: wantsClicks) } else { stopWatching() }
         if wantsHalo { updateHalo(config) } else { halo?.orderOut(nil) }
-        if config.enabled, config.hideWhenIdle { hider.start(after: config.hideAfterSeconds) } else if !(config.enabled && config.hideWhileTyping) { hider.stop() }
-        if !config.enabled, magnifier.isOn { magnifier.stop() }
+        // Hiding when idle and hiding while typing are separate reasons: turning one off never shows a pointer the other still hides.
+        hider.setIdle(config.enabled && config.hideWhenIdle, after: config.hideAfterSeconds)
+        hider.setTyping(config.enabled && config.hideWhileTyping)
+        if !config.enabled, magnifier.isOn { magnifier.stop() } else if magnifier.isOn { magnifier.update(config: config) }
         if spotlight.isOn { spotlight.update(config) }
         if config.enabled, config.doubleTapControl || config.shakeToLocate || config.magnifierHoldModifier != 0 || config.hideWhileTyping { startFindWatchers() } else { stopFindWatchers() }
     }
@@ -789,7 +977,11 @@ final class PointerEffects {
         let list = displays.ordered
         let pointer = DisplayManager.mouseLocation()
         let target: DisplayInfo?
-        if let index = position.display, Int(index) < list.count { target = list[Int(index)] } else { target = displays.display(at: pointer) }
+        switch PointerPositionResolver.resolve(index: position.display, remembered: store.rememberedDisplay(for: id), connected: list.map(\.id)) {
+        case .display(let place): target = list[place]
+        // Not connected: the display the pointer is on, not whichever monitor now has that place in the row.
+        case .pointerDisplay, .missing: target = displays.display(at: pointer)
+        }
         guard let display = target else { return }
         let point = pointerPositionPoint(area: display.full, x: position.x, y: position.y)
         CGWarpMouseCursorPosition(CGPoint(x: point.x, y: point.y))

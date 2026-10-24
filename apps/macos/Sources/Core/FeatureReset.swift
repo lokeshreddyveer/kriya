@@ -29,6 +29,8 @@ enum FeatureReset {
         ResettableArea(id: "timelines", title: "Device and display history", detail: "The connect and disconnect timelines for devices and displays.", keys: SettingsRegistry.keys(inArea: "timelines")),
         ResettableArea(id: "windowextras", title: "Window locks and workspaces log", detail: "Windows that stay put, the Space-change layout choice, the display-setup layouts and the workspace launch log.",
                        keys: SettingsRegistry.keys(inArea: "windowextras")),
+        ResettableArea(id: "pointer", title: "Pointer positions", detail: "Which display each saved pointer position was made for. The positions themselves are kept with the pointer effects settings.",
+                       keys: SettingsRegistry.keys(inArea: "pointer")),
         ResettableArea(id: "usage", title: "Action usage", detail: "Which selection-bar and saved actions were used, by name only.", keys: SettingsRegistry.keys(inArea: "usage")),
         ResettableArea(id: "notes", title: "Notes settings", detail: "Which notes are pinned. The notes themselves are files and are left alone.", keys: SettingsRegistry.keys(inArea: "notes")),
         ResettableArea(id: "shelfreminders", title: "File Shelf reminders", detail: "How early shelf items warn you before expiring, and which warnings were already shown.", keys: SettingsRegistry.keys(inArea: "shelfreminders")),

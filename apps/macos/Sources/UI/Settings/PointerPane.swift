@@ -9,6 +9,9 @@ struct PointerPane: View {
     @State private var editing: SavedPosition?
     @State private var screenAllowed = CGPreflightScreenCaptureAccess()
     @State private var tab: Tab = .everyday
+    @ObservedObject private var registry = ShortcutRegistry.shared
+    @EnvironmentObject private var navigator: SettingsNavigator
+    @EnvironmentObject private var displays: DisplayManager
 
     enum Tab: String, CaseIterable, Identifiable {
         case everyday = "Everyday", presentation = "Presentation", accessibility = "Accessibility", advanced = "Advanced"
@@ -59,9 +62,36 @@ struct PointerPane: View {
         .tabHint($tab)
         .animation(.smooth(duration: 0.25), value: config.positions)
         .sheet(item: $editing) { position in
-            PositionEditor(position: position, onSave: { store.upsert($0); editing = nil }, onCancel: { editing = nil })
+            PositionEditor(position: position, displays: displays.ordered, remembered: store.rememberedDisplay(for: position.id),
+                           onSave: { store.upsert($0); store.remember($0, among: displays.ordered); editing = nil }, onCancel: { editing = nil })
         }
         .onAppear { screenAllowed = CGPreflightScreenCaptureAccess() }
+    }
+
+    /// A "Try It" button. With the master switch off the commands do nothing, so the button says so instead of seeming broken.
+    @ViewBuilder private func tryIt(_ command: String) -> some View {
+        HStack(spacing: 8) {
+            Button("Try It") { run(command) }.disabled(!config.enabled)
+            if !config.enabled {
+                Text("Turn on “Use pointer effects” first.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Whether macOS accepted a recorded shortcut, and if not who else uses the keys, with a way to the list of every shortcut.
+    @ViewBuilder private func shortcutStatus(command: String, keyCode: UInt16?, modifiers: UInt64) -> some View {
+        if let keyCode, modifiers != 0 {
+            let entry = registry.entries.first { $0.owner == "Pointer effects" && $0.command == command }
+            if let note = PointerShortcutNote.message(entry: entry, others: registry.users(of: keyCode, modifiers: modifiers)) {
+                HStack(alignment: .top, spacing: 8) {
+                    Label(note, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(Theme.warn)
+                    Spacer()
+                    Button("Open the Shortcut Map") { navigator.pane = .shortcutMap }.controlSize(.small)
+                }
+            } else if entry != nil {
+                Label("These keys are working.", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     // MARK: Everyday
@@ -92,7 +122,7 @@ struct PointerPane: View {
             SliderRow(title: "Ring size", value: Binding(get: { config.locateSize }, set: { v in store.update { $0.locateSize = v } }), range: 100...600, format: { "\(Int($0)) pt" })
             Toggle("Double-tap Control to find it", isOn: Binding(get: { config.doubleTapControl }, set: { v in store.update { $0.doubleTapControl = v } }))
             Toggle("Shake the mouse to find it", isOn: Binding(get: { config.shakeToLocate }, set: { v in store.update { $0.shakeToLocate = v } }))
-            Button("Try It") { run("pointer.locate") }
+            tryIt("pointer.locate")
         } header: { Text("Find the pointer") } footer: {
             Text("Three rings spread out from the pointer. You can also give the command “Find the pointer” a shortcut, a button or a hot corner. These need the pointer effects switched on at the top.")
         }
@@ -109,6 +139,7 @@ struct PointerPane: View {
                     set: { new in store.update { $0.presentationKey = new?.keyCode; $0.presentationModifiers = new?.modifiers ?? 0 } }
                 )).frame(width: 190, height: 26)
             }
+            shortcutStatus(command: "pointer.presentation", keyCode: config.presentationKey, modifiers: config.presentationModifiers)
             Toggle("Also dim the screen around the pointer (spotlight)", isOn: Binding(get: { config.presentationSpotlight }, set: { v in store.update { $0.presentationSpotlight = v } }))
         } header: { Text("Presentation mode") } footer: {
             Text("One switch for a talk, a demo or a recording. While it is on, the pointer gets a highlight and every click gets a ring, whatever their own switches say, so your audience can follow. Turn it off and everything goes back to how it was. It works on its own: you do not need “Use pointer effects” on. Press the shortcut to toggle it from anywhere.")
@@ -122,6 +153,7 @@ struct PointerPane: View {
                     set: { new in store.update { $0.spotlightKey = new?.keyCode; $0.spotlightModifiers = new?.modifiers ?? 0 } }
                 )).frame(width: 190, height: 26)
             }
+            shortcutStatus(command: "pointer.spotlight", keyCode: config.spotlightKey, modifiers: config.spotlightModifiers)
             Picker("Shape", selection: Binding(get: { config.spotlightShape }, set: { v in store.update { $0.spotlightShape = v } })) {
                 Text("Circle").tag(SpotlightShape.circle)
                 Text("Rounded rectangle").tag(SpotlightShape.roundedRectangle)
@@ -136,7 +168,7 @@ struct PointerPane: View {
         Section {
             Toggle("Show the effects to people watching a shared screen or a recording", isOn: Binding(get: { config.showWhenSharing }, set: { v in store.update { $0.showWhenSharing = v } }))
         } header: { Text("Your audience") } footer: {
-            Text("When you share your screen or record it, the highlight, rings, magnifier and spotlight are normally hidden from what people see, so only you see them. Turn this on to show them to your audience too, which is what you want for a talk. Some sharing tools capture the whole screen regardless.")
+            Text("Kriya asks macOS to leave the highlight, rings, magnifier and spotlight out of ordinary screen sharing and recording, so only you see them. That is a request, not a guarantee: Kriya cannot tell whether you are sharing, and some sharing and recording tools capture the whole screen and show them anyway. Test with the tool you use. Turn this on to show the effects to your audience on purpose, which is what you want for a talk.")
         }
     }
 
@@ -160,7 +192,7 @@ struct PointerPane: View {
                 if !screenAllowed {
                     Button("Allow…") { CGRequestScreenCaptureAccess(); screenAllowed = CGPreflightScreenCaptureAccess() }
                 }
-                Button("Try It") { run("pointer.magnifier") }
+                tryIt("pointer.magnifier")
             }
         } header: { Text("Magnifier") } footer: {
             Text("A zoomed view around the pointer, in a small window that follows it. Use “Magnify around the pointer” to turn it on and off, and the zoom in and zoom out commands to change it while it is on. Kriya sees the screen only for this and never records it.")
@@ -183,7 +215,7 @@ struct PointerPane: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(position.name)
-                        Text("\(position.display.map { "Display \($0 + 1)" } ?? "Current display") · \(Int(position.x * 100))%, \(Int(position.y * 100))%")
+                        Text("\(PointerPositionResolver.describe(index: position.display, remembered: store.rememberedDisplay(for: position.id), connected: displays.ordered.map(\.id))) · \(Int(position.x * 100))%, \(Int(position.y * 100))%")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -215,12 +247,17 @@ struct PointerPane: View {
                 }
             }
             Button { if let id = AppChoice.choose(prompt: "Hide effects in"), !config.excludedAppIds.contains(id) { store.update { $0.excludedAppIds.append(id) } } } label: { Label("Hide Effects in an App", systemImage: "plus") }
-        } header: { Text("Apps without the halo and rings") }
+        } header: { Text("Apps without the halo and rings") } footer: {
+            Text("Excludes the halo and click rings only. The spotlight, the magnifier and hiding the pointer still work in these apps.")
+        }
     }
 }
 
 private struct PositionEditor: View {
     @State var position: SavedPosition
+    /// The connected displays, left to right, and the one this position was saved for (which may not be connected now).
+    let displays: [DisplayInfo]
+    let remembered: RememberedDisplay?
     let onSave: (SavedPosition) -> Void
     let onCancel: () -> Void
 
@@ -235,7 +272,13 @@ private struct PositionEditor: View {
                     TextField("Name", text: $position.name)
                     Picker("Display", selection: Binding(get: { Int(position.display ?? 99) }, set: { position.display = $0 == 99 ? nil : UInt32($0) })) {
                         Text("The one the pointer is on").tag(99)
-                        ForEach(0..<4, id: \.self) { Text("Display \($0 + 1) (left to right)").tag($0) }
+                        ForEach(Array(displays.enumerated()), id: \.element.id) { index, display in
+                            Text("\(display.name) (display \(index + 1), left to right)").tag(index)
+                        }
+                        // A display this position was saved for that is not connected now, kept so saving does not quietly change it.
+                        if let remembered, let place = position.display, !displays.contains(where: { $0.id == remembered.id }) {
+                            Text("\(remembered.name) (not connected)").tag(Int(place))
+                        }
                     }
                 }
                 Section {

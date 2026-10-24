@@ -74,6 +74,29 @@ final class PointerEffectsStore: ObservableObject {
         reload()
     }
 
+    // MARK: The display a position was saved for
+
+    private static let displaysKey = "pointer.positionDisplays.v1"
+
+    private var remembered: [String: RememberedDisplay] {
+        get { UserDefaults.standard.data(forKey: Self.displaysKey).flatMap { try? JSONDecoder().decode([String: RememberedDisplay].self, from: $0) } ?? [:] }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: Self.displaysKey) }
+    }
+
+    /// The display a position was saved for, by the display's own identity, if it is known.
+    func rememberedDisplay(for positionID: String) -> RememberedDisplay? { remembered[positionID] }
+
+    /// Keeps the identity of the display a position points at, so it still finds the same monitor after the row of displays changes.
+    func remember(_ position: SavedPosition, among displays: [DisplayInfo]) {
+        var all = remembered
+        if let index = position.display, Int(index) < displays.count {
+            all[position.id] = RememberedDisplay(id: displays[Int(index)].id, name: displays[Int(index)].name)
+        } else if position.display == nil {
+            all[position.id] = nil
+        } // else: the display is not connected now; what was remembered stays
+        remembered = all
+    }
+
     func upsert(_ position: SavedPosition) {
         update { config in
             if let index = config.positions.firstIndex(where: { $0.id == position.id }) {
@@ -84,7 +107,12 @@ final class PointerEffectsStore: ObservableObject {
         }
     }
 
-    func delete(_ id: String) { update { $0.positions.removeAll { $0.id == id } } }
+    func delete(_ id: String) {
+        update { $0.positions.removeAll { $0.id == id } }
+        var all = remembered
+        all[id] = nil
+        remembered = all
+    }
 
     func newPosition() -> SavedPosition {
         SavedPosition(id: UUID().uuidString, name: "", display: nil, x: 0.5, y: 0.5)
