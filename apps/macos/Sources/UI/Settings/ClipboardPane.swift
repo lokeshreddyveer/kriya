@@ -27,6 +27,7 @@ struct ClipboardPane: View {
                     message: "Nothing is being recorded. What is already saved stays on this Mac."
                 ) {
                     if !config.isEnabled(.clipboard) { Button("Turn On") { services.setFeature(.clipboard, enabled: true) }.controlSize(.small) }
+                    else if case .needsPermission(let missing) = services.state(.clipboard) { AllowPermissionButtons(missing: missing) }
                 }
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             } else if clip.vault.isLocked {
@@ -132,7 +133,7 @@ private struct ClipBrowser: View {
             Button("Clear History, Keep Pinned and Snippets") { _ = clip.clear(keepPinned: true, keepSnippets: true); refresh() }
             Button("Clear Everything", role: .destructive) { _ = clip.clear(keepPinned: false, keepSnippets: false); refresh() }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("Cleared items are overwritten on disk and cannot be brought back.") }
+        } message: { Text("Cleared items are removed from Kriya's history file and the space they used is overwritten. They cannot be brought back from Kriya. Copies already in a Time Machine backup or an APFS snapshot are not touched.") }
     }
 
     private var toolbar: some View {
@@ -402,10 +403,13 @@ private struct ClipPrivacyTab: View {
                     get: { lock.isEnabled },
                     set: { on in
                         if on { lock.enable(reason: "Turn on the clipboard history lock") { ok in if !ok { note = "The lock stayed off, because the Mac did not confirm who you are." } } }
-                        else { lock.isEnabled = false }
+                        // Switching the lock off asks for Touch ID or the password first, so it cannot be undone by whoever sits down.
+                        else { lock.disable(reason: "Turn off the clipboard history lock") { ok in if !ok { note = "The lock stayed on, because the Mac did not confirm who you are." } } }
                     }
                 ))
-                Picker("Ask again after", selection: $lock.timeoutMinutes) {
+                Picker("Ask again after", selection: Binding(get: { lock.timeoutMinutes }, set: { minutes in
+                    lock.changeTimeout(to: minutes, reason: "Change how long the clipboard history stays open") { ok in if !ok { note = "The time was not changed, because the Mac did not confirm who you are." } }
+                })) {
                     Text("1 minute").tag(1); Text("5 minutes").tag(5); Text("15 minutes").tag(15); Text("1 hour").tag(60)
                 }
                 .disabled(!lock.isEnabled)
@@ -435,7 +439,7 @@ private struct ClipPrivacyTab: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Every item labelled sensitive is deleted and its space overwritten. Pinned items and snippets stay.")
+            Text("Every item labelled sensitive is deleted from Kriya's history file and the space it used is overwritten. Pinned items and snippets stay.")
         }
     }
 }
@@ -484,7 +488,7 @@ private struct VaultSection: View {
         switch asking {
         case .turnOff: return ("Turn encryption off?", "Everything saved is opened and stored as plain text again, and the key is removed from your Keychain.", "Turn Off")
         case .startAgain: return ("Delete the locked history?", "Everything saved while it was encrypted is deleted, because it cannot be opened without the key. Encryption is turned off, and recording starts again.", "Delete and Start Again")
-        default: return ("Encrypt the clipboard history?", "\(clip.stats?.items ?? 0) saved item\((clip.stats?.items ?? 0) == 1 ? "" : "s") will be encrypted now, and so will everything you copy from here on. The old readable copies are overwritten on disk.", "Encrypt")
+        default: return ("Encrypt the clipboard history?", "\(clip.stats?.items ?? 0) saved item\((clip.stats?.items ?? 0) == 1 ? "" : "s") will be encrypted now, and so will everything you copy from here on. The old readable copies are removed from Kriya's file and their space is overwritten.", "Encrypt")
         }
     }
 

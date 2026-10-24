@@ -4,6 +4,7 @@ import SwiftUI
 struct ShelfPane: View {
     @EnvironmentObject private var store: ScreenToolsStore
     @ObservedObject private var shelves = ShelfLibraryStore.shared
+    @State private var confirmEmpty = false
     let shelf: FileShelf
 
     private var config: ScreenToolsConfig { store.config }
@@ -42,7 +43,7 @@ struct ShelfPane: View {
                         HStack {
                             Text(AppChoice.name(for: id))
                             Spacer()
-                            Button(role: .destructive) { store.update { $0.shelfExcludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                            Button(role: .destructive) { store.update { $0.shelfExcludedAppIds.removeAll { $0 == id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Remove \(AppChoice.name(for: id)) from the list").buttonStyle(.borderless)
                         }
                     }
                     Button {
@@ -60,7 +61,7 @@ struct ShelfPane: View {
                     LabeledContent("History", value: "\(shelves.library.history.count)")
                     HStack {
                         Button("Clear the History") { shelves.change { $0.clearHistory() } }.disabled(shelves.library.history.isEmpty)
-                        Button("Empty Every Shelf", role: .destructive) { shelves.change { library in for shelf in library.shelves { library.clear(shelf.id) } } }
+                        Button("Empty Every Shelf…", role: .destructive) { confirmEmpty = true }
                     }
                     Picker("Remind me before items are let go", selection: Binding(get: { ShelfLibraryStore.reminderLeadHours }, set: { ShelfLibraryStore.reminderLeadHours = $0; shelves.objectWillChange.send() })) {
                         Text("Never").tag(0); Text("1 hour before").tag(1); Text("1 day before").tag(24)
@@ -82,8 +83,11 @@ struct ShelfPane: View {
                     Text("The shelf keeps what you put on it until you take it off, even after Kriya restarts. Switch shelves, make new ones and search them from the shelf's own header. Items taken off, or let go after the time above, stay in the history for 30 days and can be put back. Files stay where they are; the shelf only remembers where. Pictures and text are kept on this Mac only.")
                 }
             }
-            .disabled(!config.shelfEnabled)
         }
         .formStyle(.grouped)
+        .confirmationDialog("Empty every shelf?", isPresented: $confirmEmpty, titleVisibility: .visible) {
+            Button("Empty Every Shelf", role: .destructive) { shelves.change { library in for shelf in library.shelves { library.clear(shelf.id) } } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Everything on every shelf is taken off. The files themselves stay where they are, and the history keeps the items for 30 days so they can be put back.") }
     }
 }

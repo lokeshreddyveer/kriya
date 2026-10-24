@@ -338,6 +338,7 @@ private struct LinkRuleEditor: View {
         if rule.name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give the rule a name." }
         if rule.pattern.trimmingCharacters(in: .whitespaces).isEmpty { return "Say what to match." }
         if case .open(let id, _) = rule.target, id.isEmpty { return "Choose a browser." }
+        if rule.matchKind == .regex, (try? NSRegularExpression(pattern: rule.pattern)) == nil { return "That is not a valid regular expression, so it would never match." }
         return nil
     }
 

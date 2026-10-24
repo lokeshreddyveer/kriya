@@ -7,9 +7,13 @@ enum WorkspaceAddress {
     static func url(from text: String) -> URL? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains(where: \.isWhitespace) else { return nil }
-        let candidate = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        let bare = !trimmed.contains("://")
+        guard !trimmed.hasSuffix(":") else { return nil }
+        let candidate = bare ? "https://" + trimmed : trimmed
         guard let url = URL(string: candidate), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let host = url.host, !host.isEmpty else { return nil }
+        // "tel:123" or "mailto:me" is another kind of link, not a page on a host called "tel".
+        if bare, !host.contains("."), host.lowercased() != "localhost", !host.contains(":") { return nil }
         return url
     }
 

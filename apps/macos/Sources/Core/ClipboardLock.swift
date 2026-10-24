@@ -94,6 +94,24 @@ final class ClipboardLock: ObservableObject {
         }
     }
 
+    /// Turns the lock off, but only for someone who can open it: a lock that anyone at an unlocked Mac can switch off protects nothing.
+    /// Calls `then(true)` once it is off, `then(false)` if the person did not prove who they are and it stays on.
+    func disable(reason: String, then: @escaping (Bool) -> Void) {
+        ensureUnlocked(reason: reason) { [weak self] ok in
+            if ok { self?.isEnabled = false }
+            then(ok)
+        }
+    }
+
+    /// Changes how long the history stays open, with the same proof: a longer time is a weaker lock.
+    func changeTimeout(to minutes: Int, reason: String, then: @escaping (Bool) -> Void) {
+        guard minutes != timeoutMinutes else { then(true); return }
+        ensureUnlocked(reason: reason) { [weak self] ok in
+            if ok { self?.timeoutMinutes = minutes }
+            then(ok)
+        }
+    }
+
     func lockNow() {
         unlockedAt = nil
         publish()

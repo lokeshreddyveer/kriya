@@ -33,7 +33,7 @@ struct NotesPane: View {
                         Text(url.deletingPathExtension().lastPathComponent)
                         Spacer()
                         Button("Edit") { NSWorkspace.shared.open(url) }.controlSize(.small)
-                        Button(role: .destructive) { delete(url) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { delete(url) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete template \(url.deletingPathExtension().lastPathComponent)").buttonStyle(.borderless)
                     }
                 }
             } header: { Text("Templates") } footer: {

@@ -187,11 +187,28 @@ private struct SelectionActionEditor: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save() }.keyboardShortcut(.defaultAction)
+                if let problem { Text(problem).font(.callout).foregroundStyle(.secondary) }
+                Button("Save") { save() }.keyboardShortcut(.defaultAction).disabled(problem != nil)
             }
         }
         .padding(20).frame(width: 600, height: 620)
         .onAppear(perform: load)
+    }
+
+    /// What is missing before the action can be saved, said in a sentence.
+    private var problem: String? {
+        if action.title.trimmingCharacters(in: .whitespaces).isEmpty { return "Give it a name." }
+        let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch action.kind {
+        case .urlTemplate: return blank ? "Enter the web address." : textUrlTemplateProblem(template: text)
+        case .translate: return language.trimmingCharacters(in: .whitespaces).isEmpty ? "Enter a language code, such as en." : nil
+        case .script: return blank ? "Write the script." : nil
+        case .shortcut: return blank ? "Name the Shortcut." : nil
+        case .workflow: return blank ? "Choose a workflow." : nil
+        case .intelligence: return aiTask == .custom && aiInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Say what it should do with the text." : nil
+        case .transform: return ops.isEmpty ? "Add a step." : nil
+        default: return nil
+        }
     }
 
     @ViewBuilder

@@ -22,7 +22,7 @@ struct ClockPane: View {
                         TextField("Label", text: $place.label).frame(width: 70)
                         Text(place.zoneID.replacingOccurrences(of: "_", with: " ")).foregroundStyle(.secondary)
                         Spacer()
-                        Button(role: .destructive) { clock.places.removeAll { $0.id == place.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                        Button(role: .destructive) { clock.places.removeAll { $0.id == place.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete \(place.label)").buttonStyle(.borderless)
                     }
                 }
                 HStack {
@@ -34,8 +34,8 @@ struct ClockPane: View {
 
             if clock.places.count >= 2 {
                 Section {
-                    Stepper("Work starts at \(hoursStart):00", value: $hoursStart, in: 0...22)
-                    Stepper("Work ends at \(hoursEnd):00", value: $hoursEnd, in: 1...24)
+                    Stepper("Work starts at \(hoursStart):00", value: $hoursStart, in: 0...max(0, hoursEnd - 1))
+                    Stepper("Work ends at \(hoursEnd):00", value: $hoursEnd, in: min(24, hoursStart + 1)...24)
                     let slots = MeetingOverlap.merged(MeetingOverlap.slots(places: clock.places, hours: BusinessHours(start: hoursStart, end: min(hoursEnd, 24)), from: Date()))
                     if slots.isEmpty {
                         Text("No hour in the next two days is inside everyone's working hours.").font(.callout).foregroundStyle(.secondary)

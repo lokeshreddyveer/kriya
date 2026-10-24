@@ -288,3 +288,45 @@ final class ScreenAuditTests: XCTestCase {
         XCTAssertEqual(change.secondsLeft(now: start.addingTimeInterval(30)), 0)
     }
 }
+
+final class ClipboardLockAuditTests: XCTestCase {
+    private func lock(allow: Bool, enabled: Bool = true) -> (ClipboardLock, () -> Int) {
+        let suite = UserDefaults(suiteName: "kriya-tests-\(UUID().uuidString)")!
+        suite.set(enabled, forKey: "clipboardHistoryLocked")
+        var asked = 0
+        let l = ClipboardLock(defaults: suite, authenticate: { _, done in asked += 1; done(allow) }, watchSystem: false)
+        return (l, { asked })
+    }
+
+    func testTheLockCannotBeSwitchedOffWithoutProvingWhoYouAre() {
+        let (l, asked) = lock(allow: false)
+        let done = expectation(description: "answered")
+        l.disable(reason: "test") { ok in XCTAssertFalse(ok); done.fulfill() }
+        wait(for: [done], timeout: 2)
+        XCTAssertTrue(l.isEnabled, "still on: the Mac did not confirm")
+        XCTAssertEqual(asked(), 1)
+    }
+
+    func testTheOwnerCanSwitchItOffAndTheTimeCanOnlyBeChangedWithTheSameProof() {
+        let (l, asked) = lock(allow: true)
+        let timeout = expectation(description: "timeout")
+        l.changeTimeout(to: 60, reason: "test") { ok in XCTAssertTrue(ok); timeout.fulfill() }
+        wait(for: [timeout], timeout: 2)
+        XCTAssertEqual(l.timeoutMinutes, 60)
+        let off = expectation(description: "off")
+        l.disable(reason: "test") { ok in XCTAssertTrue(ok); off.fulfill() }
+        wait(for: [off], timeout: 2)
+        XCTAssertFalse(l.isEnabled)
+        XCTAssertGreaterThanOrEqual(asked(), 1)
+    }
+
+    func testAnUnchangedTimeAsksNothingAndAnOffLockAsksNothing() {
+        let (l, asked) = lock(allow: false, enabled: false)
+        let same = expectation(description: "same")
+        l.changeTimeout(to: l.timeoutMinutes, reason: "test") { ok in XCTAssertTrue(ok); same.fulfill() }
+        let off = expectation(description: "off")
+        l.disable(reason: "test") { ok in XCTAssertTrue(ok); off.fulfill() }
+        wait(for: [same, off], timeout: 2)
+        XCTAssertEqual(asked(), 0, "a lock that is not on has nothing to prove")
+    }
+}
