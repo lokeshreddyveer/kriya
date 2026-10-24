@@ -546,6 +546,8 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   logs, approvals or tied to this Mac. Backup carries only settings (text size, launcher look and placement, sound rules, world clock, keep awake,
   menu-bar window and more); logs, approvals, consents (for example folder rules, MIDI triggers, what may leave this Mac) and keys never travel in a file. After a restore the
   pane says which settings are in force now and which wait for a restart, with a **Restart Kriya** button. Reset uses the same list.
+- **Settings layout:** every settings pane fits the window it is in. A "feature is off" banner no longer makes Mouse, Keyboard, Windows,
+  Window Buttons, Finder Actions, Selection Bar or Automation taller than the window, which had pushed their tab bars out of sight.
 - **Permissions:** the state of each permission and a button to fix it, shown by feature and with a history of changes (Kriya tells you when one
   changes).
 - **Status on the Overview:** every feature shows whether it is on and working. Settings search finds items inside panes.
