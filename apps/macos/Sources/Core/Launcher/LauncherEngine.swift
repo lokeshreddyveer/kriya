@@ -192,6 +192,14 @@ struct LauncherPrefsData: Codable, Equatable {
     var showTodayEvents: Bool?
     /// People from Contacts show up in results, once the person allowed it.
     var searchContacts: Bool?
+    /// Requests typed in plain words (“mute Spotify for an hour”) are read on this Mac with fixed patterns and shown as one row above the
+    /// results. Nil is on; it never sends anything anywhere.
+    var interpretRequests: Bool?
+    /// “Understand natural-language requests”: when the patterns cannot read a request, offer to ask an AI provider to. Nil is off. Even
+    /// when on, nothing is sent until Return is pressed on that row, and secrets are hidden first.
+    var understandRequests: Bool?
+    var interpretsRequests: Bool { interpretRequests ?? true }
+    var understandsRequests: Bool { understandRequests ?? false }
 
     static let defaultFallbacks = ["web"]
     var activeFallbacks: [String] { fallbacks ?? Self.defaultFallbacks }
@@ -363,6 +371,8 @@ final class LauncherPrefs: ObservableObject {
     func setShowRecentFiles(_ on: Bool) { change { $0.showRecentFiles = on ? nil : false } }
     func setShowTodayEvents(_ on: Bool) { change { $0.showTodayEvents = on ? nil : false } }
     func setSearchContacts(_ on: Bool) { change { $0.searchContacts = on } }
+    func setInterpretRequests(_ on: Bool) { change { $0.interpretRequests = on ? nil : false } }
+    func setUnderstandRequests(_ on: Bool) { change { $0.understandRequests = on ? true : nil } }
 
     func setCurrencyRates(_ on: Bool) { change { $0.currencyRates = on } }
     func setShowMeeting(_ on: Bool) { change { $0.showMeeting = on } }

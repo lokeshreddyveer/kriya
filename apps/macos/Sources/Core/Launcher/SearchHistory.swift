@@ -90,6 +90,9 @@ final class SearchHistoryStore: ObservableObject {
 
     func record(_ text: String) {
         guard isEnabled else { return }
+        // A request typed in plain words ("mute Spotify for an hour", “? …”) is an instruction, often with names and times in it. It is
+        // never kept, whether or not it ran, so the history holds searches and not what was asked of this Mac.
+        guard !IntentGate.isRequest(text) else { return }
         history.record(text)
         save()
     }

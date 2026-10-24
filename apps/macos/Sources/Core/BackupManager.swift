@@ -112,13 +112,28 @@ final class BackupManager: ObservableObject {
     private func sealExistingBackups(passphrase: String) {
         refreshList()
         refreshICloudList()
+        var unsealed: [String] = []
         for file in automaticBackups + iCloudBackups {
             guard let data = try? Data(contentsOf: file.url), !BackupCrypto.isEncrypted(data), let text = String(data: data, encoding: .utf8),
                   let sealed = try? BackupCrypto.seal(text, passphrase: passphrase) else { continue }
-            try? sealed.write(to: file.url, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.url.path)
+            do {
+                try sealed.write(to: file.url, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.url.path)
+            } catch {
+                unsealed.append(file.url.lastPathComponent)
+            }
+        }
+        // A backup that stayed readable is said so, instead of the person believing everything is now protected.
+        if !unsealed.isEmpty {
+            sealProblem = "\(unsealed.count) earlier backup\(unsealed.count == 1 ? " is" : "s are") still not protected (\(unsealed.prefix(3).joined(separator: ", "))): Kriya could not rewrite \(unsealed.count == 1 ? "it" : "them")."
+            Log.info("Backup", sealProblem ?? "")
+        } else {
+            sealProblem = nil
         }
     }
+
+    /// Set when turning protection on could not seal every earlier backup. Shown beside the protection switch.
+    @Published private(set) var sealProblem: String?
 
     // MARK: iCloud Drive
 

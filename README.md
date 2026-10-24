@@ -389,6 +389,33 @@ grows as results appear. With nothing typed it shows, in sections: your **Favori
   “Make an Example” creates a working one. Only add scripts you wrote or trust.
 - **Short names, favorites and matching:** under *How it behaves*, choose how strictly letters must match (loose: `msg` finds Messages;
   strict: starts of words), and whether recent files and today's events show on the opening list.
+- **Requests in plain words:** type what you want and one row appears above the results saying what it understood, whether it runs
+  now or asks first, and why (⌘K › *Why this?* shows how the words were read, and the command that does the same thing so it can have
+  a shortcut). Examples: `mute Spotify for an hour`, `mute Spotify until 3pm`, `set Spotify volume to 40%`, `spotify volume forty`,
+  `move this window to the left half`, `snap top right`, `set a timer for 20 minutes`, `start a 25 minute focus session`,
+  `switch audio output to AirPods`, `mute everything except Spotify`, `run my morning workflow`, `take a screenshot of the window`,
+  `record the screen`, `copy text from the screen`, `find PDFs from last week`, `search YouTube for lofi beats`, `find notes about taxes`,
+  `search my clipboard for invoice`, `add the latest screenshot to the shelf`, `open sound settings`, `how much disk space do I have`,
+  and two things in one sentence (`mute Spotify and move this window left`). Normal search is never replaced: text that is not a request
+  gets no row, and an explicit keyword (`timer 5m`, `yt cats`) is left to the launcher.
+  - *How it is read:* on this Mac, with fixed patterns, before any AI. A name is matched to your apps (name, bundle id, the short names
+    you gave, "this app" for the one in front), sound outputs (and their nicknames), workflows and commands. A name that fits two things
+    is listed, not guessed ("I found two apps named Music."); a missing piece is asked for ("Which output device should I use?"); a
+    missing one is said ("The requested workflow does not exist."). Times: `5 minutes`, `for an hour`, `half an hour`, `1h30m`,
+    `until 3pm`. Levels: `40%`, `40 percent`, `volume forty`.
+  - *What asks first* (Cancel is the default button): muting everything but one app, changing where all sound plays, a workflow that runs
+    code or controls other apps, a command that deletes, installs, exports or changes permissions, opening a program or script file,
+    and anything an AI read. Deleting, erasing, renaming or moving files from a typed request is refused; `uninstall` and `install`
+    open Apps, where they are confirmed. Shell text (`rm -rf`, `$(…)`, `sudo`, pipes) is never run or searched for.
+  - *Understand natural-language requests* (off by default, under *How it behaves*; or start with `?`): for a request the patterns cannot
+    read, a row offers to ask your AI provider. Nothing is sent while you type; Return on the row sends it, with secrets and personal
+    details hidden first, never in Local-only mode, and never with clipboard text or the screen. The answer must be one small JSON object
+    in a fixed shape: an unknown request, an unknown argument, a missing one, an impossible time, an app, workflow or command that does
+    not exist, a path outside your home folder, or shell text is thrown away. What is left is shown for you to approve before it runs,
+    and goes through the same checks and the same confirmation as a request read by pattern.
+  - *Privacy:* requests are not kept in search history. The audit log records only the kind of request, whether it ran or was
+    cancelled, where it was read (patterns or AI) and how many items were hidden before sending: never the words.
+  - Files are found with Spotlight (`mdfind`, with fixed arguments, not a shell) and shown in Finder, skipping your excluded folders.
 
 # Apple Intelligence and AI
 
@@ -438,7 +465,11 @@ an optional delay, and copy or save the result.
   swipe sideways to dismiss. You choose for what (screenshots, recordings, both, never), the position (nine places or near the pointer), the
   display, the size, the distance from the edge, how long it stays (or until closed), how many stack, and whether it waits during a recording.
   Closed cards come back from the optional **menu-bar icon** (always, hidden, or only while there is something to show) or the command
-  `capture.restore`; the icon also lists recent captures and starts a capture. Cards and the editor are hidden from screen sharing and recordings.
+  `capture.restore`. The icon's menu is laid out like a capture tool's: Capture Area, Previous Area, Window, Fullscreen, Scrolling Capture
+  and Capture Menu; Record Screen, Window, Area, GIF, Pause and Stop; Capture Text (OCR) with paragraph, Markdown, table and QR
+  choices; More Tools (hide private text, cut out the subject, pin to screen, live window, pixel ruler, trim); Open Capture History,
+  Recent Captures, Restore Recently Closed Capture; Open Capture Folder and Capture Settings. Each item has an icon and shows its shortcut.
+  Cards and the editor are hidden from screen sharing and recordings.
 - **Upload to your own bucket** (off until set up): Amazon S3, Cloudflare R2, Backblaze B2, MinIO or anything S3-compatible. Requests are signed
   on this Mac (AWS Signature V4) and go straight to your bucket; the secret key is in the Keychain; there is no Kriya server. A public address
   makes the link, otherwise an expiring link (15 minutes to 7 days) from a private bucket; optionally the local file goes to the Trash afterwards.
@@ -629,7 +660,13 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   `quit all` (asks every other app to close), `eject` (all removable disks), `hidden files` (show or hide them in Finder), `pick color`
   (click any pixel to copy its hex code), and `note clipboard` (save the clipboard as a note). The quick panel also has tiles for Notes,
   Mute, Mute Mic, Next Output, Pick Colour, Whole Page, Record Screen and Read QR.
-- **Menu Bar Window:** what the quick panel shows: tiles, layouts, theme, and its search.
+- **Menu Bar Window:** what the quick panel shows: tiles, layouts, theme, and its search. The header has the app's mark with one line
+  that says how things are (all running, one needs a permission, safe mode, paused); every feature row says what it is doing under its
+  name (Running, Off, Needs Accessibility, Held back by safe mode); the footer has Settings, Overview and Quit.
+- **Services and their state:** every background service (capture shortcuts, workspaces, displays, pointer effects, the system monitor,
+  the Safari inbox, focus sessions, the world clock, the shared clipboard, keyboard watching, the sound mixer and rules, MIDI, the MCP
+  server, sound by place) is started, stopped and put back by one manager: stopped in safe mode, when a permission it needs is refused,
+  and told when the Mac wakes. A service that declined to start (its own switch is off) is shown as off, never as running.
 - **Sleep & Power:** *Keep Awake* in timed sessions, until turned off, only while chosen apps run, or until a battery level.
 - **Backup & Restore:** back up all your portable settings (not approvals, keys, histories or anything tied to this Mac) to a file or to iCloud Drive, restore one, and protect backups with a passphrase
   (kept in your Keychain; another Mac asks for it). Clipboard history is never included. A restore saves your current settings

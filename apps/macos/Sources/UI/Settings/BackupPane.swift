@@ -32,6 +32,9 @@ struct BackupPane: View {
             Section {
                 if backup.isProtected {
                     Label("Backups are protected with your passphrase.", systemImage: "lock.shield.fill").foregroundStyle(Theme.ok)
+                    if let problem = backup.sealProblem {
+                        Label(problem, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn).font(.callout)
+                    }
                     Button("Stop Protecting Backups…", role: .destructive) { confirmStopProtecting() }.controlSize(.small)
                 } else {
                     SecureField("Passphrase (at least 8 characters)", text: $phrase)

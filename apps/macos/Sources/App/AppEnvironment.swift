@@ -90,6 +90,8 @@ final class AppEnvironment {
     let timeline = PerformanceTimeline()
     private let captureEditor = CaptureEditorController()
     private(set) var launcherSources: LauncherSources?
+    /// Reads requests typed in plain words and hands them to the features that already exist (see IntentLauncher).
+    var intentLauncher: IntentLauncher?
     let clipboard: ClipboardService
     let approvals: ScriptApprovals
     let selection: SelectionService
@@ -528,6 +530,7 @@ final class AppEnvironment {
             return intelligence?.service.isAvailable == true && intelligence?.service.settings.inSelectionBar == true
         }
         launcherSources = sources
+        configureIntents(sources: sources)
         quickCommands.search = { [weak palette = keyboard.palette] text in palette?.search(text) ?? [] }
         quickCommands.choose = { [weak palette = keyboard.palette] entry in palette?.choose(entry) }
     }

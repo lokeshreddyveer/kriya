@@ -144,6 +144,9 @@ struct LauncherPane: View {
                         }
                     }
                 }))
+                Toggle("Read requests typed in plain words", isOn: Binding(get: { prefs.data.interpretsRequests }, set: { prefs.setInterpretRequests($0) }))
+                Toggle("Understand natural-language requests", isOn: Binding(get: { prefs.data.understandsRequests }, set: { prefs.setUnderstandRequests($0) }))
+                    .disabled(!prefs.data.interpretsRequests || LocalOnly.isOn)
                 LabeledContent("Actions for selected text") {
                     ShortcutRecorder(shortcut: Binding(
                         get: { prefs.hotkey(for: LauncherHotkeys.selectionID).map { RecordedShortcut(keyCode: $0.keyCode, modifiers: $0.modifiers) } },
@@ -154,7 +157,7 @@ struct LauncherPane: View {
                 }
                 if let hotkeyProblem { Text(hotkeyProblem).font(.caption).foregroundStyle(Theme.warn) }
             } header: { Text("How it behaves") } footer: {
-                Text("Select text in any app and press the shortcut: the launcher opens with things to do with it (summarize, change case, search, convert, open). With nothing selected it uses the clipboard. Type a path starting with / or ~ to browse folders: Tab goes into a folder, Shift-Tab goes up, and ⌘K › Add to the File Buffer collects files to move, copy or compress together.")
+                Text("Plain-word requests (“mute Spotify for an hour”, “move this window to the left half”, “set a timer for 20 minutes”, “find PDFs from last week”) are read on this Mac with fixed patterns and shown as one row with what it understood and whether it asks first. Anything that deletes, installs, changes where all sound plays or runs a script asks before it runs. “Understand natural-language requests” adds a row, for requests the patterns cannot read, that sends the request (secrets hidden first, never while you type, never in Local-only mode) to your AI provider and shows its answer for approval before anything happens; start a request with ? to use it once. Requests are never kept in search history. Select text in any app and press the shortcut: the launcher opens with things to do with it (summarize, change case, search, convert, open). With nothing selected it uses the clipboard. Type a path starting with / or ~ to browse folders: Tab goes into a folder, Shift-Tab goes up, and ⌘K › Add to the File Buffer collects files to move, copy or compress together.")
             }
 
             Section {
