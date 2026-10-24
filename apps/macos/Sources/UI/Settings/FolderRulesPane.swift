@@ -101,7 +101,8 @@ struct FolderRulesPane: View {
     private func importRules() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let data = try? Data(contentsOf: url) else { message = "That file could not be read."; return }
         guard let result = store.importRules(data) else { message = "That file is not a set of folder rules."; return }
         message = "Added \(result.added) rule\(result.added == 1 ? "" : "s"), all switched off until you preview them." + (result.skipped > 0 ? " \(result.skipped) were skipped because their folder is missing or not allowed here." : "")
     }

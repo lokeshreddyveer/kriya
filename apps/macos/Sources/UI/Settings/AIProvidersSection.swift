@@ -128,7 +128,8 @@ struct AIProvidersSection: View {
     private func importSettings() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let data = try? Data(contentsOf: url) else { message = "That file could not be read."; return }
         let added = store.importSettings(data)
         message = added == 0 ? "That file has no providers Kriya can use." : "Added \(added), switched off. Add a key to each, then switch it on."
     }
@@ -272,12 +273,16 @@ private struct AIProviderEditor: View {
         Task {
             let outcome = await gateway.testConnection(copy)
             var list: [AIModel] = []
-            if case .success = outcome, copy.kind != .appleIntelligence { list = (try? await gateway.models(for: copy)) ?? [] }
+            var listProblem: String?
+            if case .success = outcome, copy.kind != .appleIntelligence {
+                do { list = try await gateway.models(for: copy); if list.isEmpty { listProblem = "The provider answered but listed no models; type the model name yourself." } }
+                catch { listProblem = "Connected, but the list of models could not be read: \(error.localizedDescription)" }
+            }
             await MainActor.run {
                 testing = false
                 models = list
                 switch outcome {
-                case .success(let text): result = text
+                case .success(let text): result = [text, listProblem].compactMap { $0 }.joined(separator: " ")
                 case .failure(let error): result = error.localizedDescription
                 }
             }

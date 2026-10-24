@@ -135,6 +135,9 @@ final class QuickConfigStore: ObservableObject {
 
     func exportData() -> Data? { QuickConfig.exported(configs) }
 
+    /// Tells the person something about what they just did (an export that failed, a file that could not be read).
+    func report(_ text: String) { message = text }
+
     @discardableResult
     func importData(_ data: Data) -> Int? {
         guard let added = QuickConfig.imported(data, existingNames: configs.map(\.name)) else { message = "That file is not a set of Quick Configs."; return nil }

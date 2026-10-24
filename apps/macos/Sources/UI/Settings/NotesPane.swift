@@ -14,7 +14,10 @@ struct NotesPane: View {
                 LabeledContent("Notes folder") { Text(folder).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary) }
                 HStack {
                     Button("Choose Folder…") { choose() }
-                    Button("Show in Finder") { try? FileManager.default.createDirectory(at: controller.folder, withIntermediateDirectories: true); NSWorkspace.shared.open(controller.folder) }
+                    Button("Show in Finder") {
+                        do { try FileManager.default.createDirectory(at: controller.folder, withIntermediateDirectories: true); problem = nil; NSWorkspace.shared.open(controller.folder) }
+                        catch { problem = "The notes folder could not be made: \(error.localizedDescription)" }
+                    }
                     Button("Open Notes") { controller.show() }
                 }
             } header: { Text("Where notes live") } footer: {

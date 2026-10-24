@@ -70,7 +70,10 @@ struct AppsPane: View {
         }
         .confirmationDialog("Delete the saved copy of \(discarding?.appName ?? "") \(discarding?.version ?? "")?", isPresented: Binding(get: { discarding != nil }, set: { if !$0 { discarding = nil } }), titleVisibility: .visible) {
             Button("Delete the Copy", role: .destructive) {
-                if let entry = discarding { try? FileManager.default.removeItem(at: entry.folder); backups = AppBackup.list() }
+                if let entry = discarding {
+                    do { try FileManager.default.removeItem(at: entry.folder) } catch { message = "The saved copy of \(entry.appName) could not be deleted: \(error.localizedDescription)" }
+                    backups = AppBackup.list()
+                }
                 discarding = nil
             }
             Button("Cancel", role: .cancel) { discarding = nil }

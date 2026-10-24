@@ -229,15 +229,16 @@ struct QuickConfigsSection: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "Kriya Quick Configs.json"
         panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url, let data = quick.exportData() else { return }
-        try? data.write(to: url, options: .atomic)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let data = quick.exportData() else { quick.report("There is nothing to export yet."); return }
+        do { try data.write(to: url, options: .atomic); quick.report("Saved \(url.lastPathComponent).") } catch { quick.report("The file could not be saved: \(error.localizedDescription)") }
     }
 
     private func importFile() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
-        quick.importData(data)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { quick.importData(try Data(contentsOf: url)) } catch { quick.report("That file could not be read: \(error.localizedDescription)") }
     }
 }
 
