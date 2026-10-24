@@ -37,6 +37,8 @@ struct PointerMenuTab: View {
                 Text("An item can be limited to some apps; without any it shows everywhere. Drag to reorder.")
             }
 
+            FavoriteMenuItemsSection()
+
             if let error = menu.lastError {
                 Section { Text(error).font(.callout).foregroundStyle(Theme.danger) }
             }
@@ -200,5 +202,29 @@ struct DefaultAppsSection: View {
         }
         .animation(.smooth(duration: 0.25), value: store.config.defaultApps)
         .animation(.smooth(duration: 0.25), value: result)
+    }
+}
+
+
+/// App menu items kept at the top of that app's pointer menu.
+struct FavoriteMenuItemsSection: View {
+    @ObservedObject private var triggers = WindowTriggerStore.shared
+
+    var body: some View {
+        Section {
+            if triggers.menuFavorites.isEmpty { Text("None yet. Open the pointer menu, open the app's menu inside it, and hold Option while choosing an item.").font(.callout).foregroundStyle(.secondary) }
+            ForEach(triggers.menuFavorites) { favorite in
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(favorite.title)
+                        Text("\(AppChoice.name(for: favorite.appID))\(favorite.detail.isEmpty ? "" : " · " + favorite.detail)").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(role: .destructive) { triggers.removeMenuFavorite(favorite.id) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                }
+            }
+        } header: { Text("Favorite menu items") } footer: {
+            Text("Items from an app's own menus that you use often. They sit at the top of that app's pointer menu. Choosing one presses the item in the app, as if it had been picked from the menu bar.")
+        }
     }
 }

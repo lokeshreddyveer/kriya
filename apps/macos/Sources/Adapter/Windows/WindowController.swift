@@ -162,11 +162,7 @@ final class WindowController: ObservableObject {
     func throwWindow(dx: Int, dy: Int) {
         guard let (window, current, display) = target() else { return }
         let area = usableArea(display)
-        var frame = current
-        let gap = store.currentConfig.gap
-        if dx < 0 { frame.x = area.x + gap } else if dx > 0 { frame.x = area.x + area.width - current.width - gap }
-        if dy < 0 { frame.y = area.y + gap } else if dy > 0 { frame.y = area.y + area.height - current.height - gap }
-        frame.x = max(frame.x, area.x); frame.y = max(frame.y, area.y)
+        let frame = WindowThrow.frame(current: current, area: area, gap: store.currentConfig.gap, dx: dx, dy: dy)
         place(window, to: frame, from: current, label: "Throw", layout: nil)
     }
 
@@ -355,7 +351,7 @@ final class WindowController: ObservableObject {
         diagnostics.note(text)
     }
 
-    private func setMessage(_ text: String) {
+    func setMessage(_ text: String) {
         lastMessage = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             if self?.lastMessage == text { self?.lastMessage = nil }

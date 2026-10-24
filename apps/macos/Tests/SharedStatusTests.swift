@@ -113,7 +113,7 @@ final class SettingsIndexTests: XCTestCase {
 
     func testEveryTabNamedInTheIndexIsARealTab() {
         let valid: [String: Set<String>] = [
-            "mouse": Set(MousePaneTabs.names), "windows": ["Shortcuts", "Options", "Sizes", "Layouts", "Apps"], "displays": ["Displays", "Monitor Controls", "Profiles", "Hot Corners"],
+            "mouse": Set(MousePaneTabs.names), "windows": ["Snap", "Window List", "Layouts", "Triggers", "Sizes", "Apps"], "displays": ["Displays", "Monitor Controls", "Profiles", "Hot Corners"],
             "finder": ["Actions", "Templates", "Apps", "Pointer Menu", "Setup"], "clipboard": ["History", "Snippets", "Privacy", "Settings"], "links": ["Rules", "Options", "Browsers", "Log & Test"],
             "apps": ["Installed", "Install", "Leftovers", "Updates", "Background"], "automation": ["Workflows", "History", "Safety"], "diagnostics": ["Overview", "Health", "Trace", "Timeline", "Audit"],
             "pointer": ["Everyday", "Presentation", "Accessibility", "Advanced"], "keyboard": ["Shortcuts", "Keys", "Snippets", "Expansion", "Launcher"],

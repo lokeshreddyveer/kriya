@@ -39,10 +39,13 @@ final class AppEnvironment {
     let appAudio = AppAudioEngine()
     lazy var quickConfigs = QuickConfigStore(engine: appAudio)
     lazy var windowList = WindowListController(recency: .shared)
+    private var windowTriggers: WindowTriggers?
     private var quickConfigSub: AnyCancellable?
     private var quickConfigCommands = Set<String>()
     private var deviceCommandSubs: [AnyCancellable] = []
     private var deviceCommands = Set<String>()
+    private var favoriteAppSub: AnyCancellable?
+    private var favoriteAppCommands = Set<String>()
     let soundMixer = SoundMixerModel()
     let soundRules = SoundRuleRunner()
     private var pageCapture: PageCaptureService?
@@ -428,15 +431,27 @@ final class AppEnvironment {
         }
         registerSoundCommands()
         registerWindowListCommands()
+        let triggers = WindowTriggers(run: runIdentifier)
+        windowTriggers = triggers
+        triggers.start()
         KeyboardCommands.extra = { [weak automation, weak soundRules, weak self] in
             [(command: "automation.macros", title: "Show the macro menu (workflows by group, for the front app)"),
              (command: "finder.drawer", title: "Show or hide the Finder drawer (selection and kept files)"),
              (command: "sound.restore", title: "Put the sound back how it was before Kriya changed it")]
                 + (soundRules?.modes ?? []).map { (command: "sound.mode.\($0.id)", title: "Sound mode: \($0.name) (turn on or off)") }
                 + (self?.quickConfigs.configs ?? []).map { (command: QuickConfigStore.command(for: $0.id), title: "Quick Config: \($0.name)") }
+                + (self?.appAudio.favorites ?? []).flatMap { id -> [(command: String, title: String)] in
+                    let name = AudioProcessList.name(for: id)
+                    return [(command: "sound.app.mute.\(id)", title: "\(name): mute or unmute"), (command: "sound.app.volume_up.\(id)", title: "\(name): volume up"), (command: "sound.app.volume_down.\(id)", title: "\(name): volume down")]
+                }
                 + (self?.soundMixer.outputs ?? []).map { (command: "sound.set_output.\($0.uid)", title: "Sound output: \(DeviceNames.shared.name(for: $0))") }
                 + (self?.soundMixer.inputs ?? []).map { (command: "sound.set_input.\($0.uid)", title: "Sound input: \(DeviceNames.shared.name(for: $0))") }
                 + (automation?.store.workflows ?? []).filter(\.enabled).map { (command: workflowCommand(workflow: $0), title: "Workflow: \($0.name)") }
+        }
+        keyboard.palette.addProvider { [weak self] in
+            guard let list = self?.windowList else { return [] }
+            return [PaletteEntry(id: "windowlist", title: "Window List", subtitle: "Search every open window, with pictures and favorites", symbol: "macwindow.on.rectangle", category: .command,
+                                 keywords: ["windows", "switch", "find window", "thumbnails", "favorite windows"]) { list.show() }]
         }
         keyboard.palette.addProvider { [weak automation] in
             (automation?.store.workflows ?? []).filter(\.enabled).map { workflow in
@@ -600,6 +615,7 @@ extension AppEnvironment {
         executor.registerCommand("window.list") { DispatchQueue.main.async { list.toggle() } }
         executor.registerCommand("window.favorite_toggle") { DispatchQueue.main.async { list.model.toggleFrontFavorite() } }
         for n in 1...9 { executor.registerCommand("window.favorite_\(n)") { DispatchQueue.main.async { list.model.goToFavorite(number: n) } } }
+        executor.registerCommand("window.reflow") { DispatchQueue.main.async { controller.run(command: "window.reflow") } }
         for name in ["left", "right", "up", "down", "top_left", "top_right", "bottom_left", "bottom_right"] {
             executor.registerCommand("window.throw_\(name)") { DispatchQueue.main.async { controller.run(command: "window.throw_\(name)") } }
         }
@@ -632,6 +648,21 @@ extension AppEnvironment {
             for config in configs {
                 let id = config.id
                 self.executor.registerCommand(QuickConfigStore.command(for: id)) { [weak self] in DispatchQueue.main.async { self?.quickConfigs.apply(id) } }
+            }
+        }
+        // Each favorite app gets its own mute and volume commands, so a shortcut can be set for one app.
+        favoriteAppSub = engine.$favorites.receive(on: DispatchQueue.main).sink { [weak self] favorites in
+            guard let self else { return }
+            for command in self.favoriteAppCommands { self.executor.unregisterCommand(command) }
+            self.favoriteAppCommands = []
+            for id in favorites {
+                for (suffix, change) in [("mute", { (s: inout AppAudioSettings) in s.muted.toggle() }),
+                                         ("volume_up", { (s: inout AppAudioSettings) in s.volume = min(s.volume + 0.1, AppAudioSettings.maxVolume) }),
+                                         ("volume_down", { (s: inout AppAudioSettings) in s.volume = max(s.volume - 0.1, 0) })] as [(String, (inout AppAudioSettings) -> Void)] {
+                    let command = "sound.app.\(suffix).\(id)"
+                    self.favoriteAppCommands.insert(command)
+                    self.executor.registerCommand(command) { DispatchQueue.main.async { engine.update(id, change) } }
+                }
             }
         }
         soundMixer.refresh()

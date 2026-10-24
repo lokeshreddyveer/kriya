@@ -140,6 +140,13 @@ effects at once.
   windows between Spaces).
 - **Apps tab:** placement rules for apps (“Safari always goes on the left half of display 2”), applied when the app opens or
   every time it comes to the front.
+- **Window List:** a searchable list of every open window (Settings › Windows › Window List, the `window.list` command, or the launcher), with a
+  picture of each, the app, the display it is on, badges for *in front*, *minimized* and *hidden*, favorites at the top, recents in order of use, and **Why is
+  this shown?** for each one. Go to a window, close or minimize it, hide or quit its app. **Favorite windows** have commands (`window.favorite_toggle`,
+  `window.favorite_1` to `9`). **Throw** commands slide the window to an edge or corner without resizing it. The radial menu names what it is on and a click
+  outside the ring cancels. **Triggers:** double-tap a modifier key to run a command; put an app's window in place when it opens or comes forward; hide
+  the Dock for chosen apps; wrap the pointer around the screen edges; commands to hide the pointer and to centre it on its display. *Control from outside*
+  lists the Terminal, link, AppleScript and shell form of every window command. **Reflow** (`window.reflow`) tiles the other windows into the space beside a window you snapped to a side. **Favorite menu items:** hold Option while choosing an item in the pointer menu's app menu and it stays at the top of that app's pointer menu.
 - **Window switcher (⌥Tab):** hold ⌥ and tap Tab to step through your windows as cards with large previews, then let go to switch.
   ⌥⇧Tab goes backwards and ⌥` steps through the windows of the front app. While it is open: arrow keys or Tab move, Return picks,
   1–9 pick a card, typing filters by app or title, hovering selects a card and shows a close button, ⌘W closes the window, ⌘M
@@ -512,6 +519,16 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   typed where you are, with “comma”, “period”, “question mark”, “new line” and “new paragraph” turned into the real thing. It listens only
   between the two presses and uses the on-device recogniser; Apple's servers are used only if you allow it for a language the Mac lacks.
 - **Read aloud voices:** choose the voice, speed and pitch the Read Aloud command uses (Settings › Sound).
+- **Sound mixer additions:** **favorites** (a star on an app keeps it at the top even when quiet; *Add Favorite…* picks one; reorder them), apps that stopped
+  playing stay listed for a few minutes (you choose how long), **timed mute** and **turn down to 30%** for 30 seconds, 1, 2 or 5 minutes or your own time,
+  with a fade out before and a fade back in after (cancel or replace any time), a **preamp** (±12 dB), **balance** for each app, **Magic Boost**, an
+  **effects bypass** that keeps your settings, and **Audio Unit effects** (Apple's and third-party, version 2 and 3, grouped by maker with
+  favorites, in an order you set, each with its own window and saved settings). **Quick Configs** save the whole setup (output and input, their
+  volumes, every app's settings, favorites), apply from the mixer or a shortcut, and can be renamed, duplicated, exported and imported. **Apps left alone**
+  are never listened to. Outputs and inputs can have a **nickname and an icon**, show their **delay**, and an output with no volume of its own is turned
+  down in software. **Alerts** keep the problems the mixer met. Each app can have its **own menu-bar icon** (dimmed and slashed when muted); the menu-bar
+  speaker can show the volume and the output's name, and a **compact mixer** hides the extras. Shortcut commands cover the app in front (mute, volume,
+  bypass, reset, timed mutes), each favorite app, each Quick Config, each output and input, and showing the mixer.
 - **Sound:** a mixer, like SoundSource. *This Mac*: system volume and mute, output and input devices, microphone level and mute, sample
   rate and balance. *Apps*: every app making sound gets its own **volume** (up to 400%), **mute**, **output** (one device, or several at
   once), a ten-band **equaliser** with ready-made shapes (Bass Boost, Voice, Small Speakers, Loudness, Headphones and more), and a level

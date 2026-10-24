@@ -8,11 +8,11 @@ struct WindowsPane: View {
     @EnvironmentObject private var permissions: PermissionManager
     @EnvironmentObject private var controller: WindowController
 
-    @State private var tab: Tab = .shortcuts
+    @State private var tab: Tab = .snap
     @State private var confirmReset = false
 
     enum Tab: String, CaseIterable, Identifiable {
-        case shortcuts = "Shortcuts", options = "Options", sizes = "Sizes", layouts = "Layouts", apps = "Apps"
+        case snap = "Snap", windowList = "Window List", layouts = "Layouts", triggers = "Triggers", sizes = "Sizes", apps = "Apps"
         var id: String { rawValue }
     }
 
@@ -36,10 +36,11 @@ struct WindowsPane: View {
 
             Group {
                 switch tab {
-                case .shortcuts: ShortcutsTab()
-                case .options: OptionsTab()
-                case .sizes: SizesTab()
+                case .snap: ShortcutsTab()
+                case .windowList: WindowListTab()
                 case .layouts: LayoutsTab()
+                case .triggers: OptionsTab()
+                case .sizes: SizesTab()
                 case .apps: AppsTab()
                 }
             }
@@ -83,6 +84,16 @@ struct WindowsPane: View {
 }
 
 // MARK: - Shortcuts
+
+/// The window list inside Settings: the same list as the one a shortcut opens, but it stays.
+private struct WindowListTab: View {
+    @EnvironmentObject private var model: WindowListModel
+
+    var body: some View {
+        WindowListView(model: model, showsClose: false)
+            .onDisappear { model.stop() }
+    }
+}
 
 private struct ShortcutsTab: View {
     @EnvironmentObject private var store: WindowStore
@@ -304,6 +315,12 @@ private struct OptionsTab: View {
             } header: { Text("Hot corners") } footer: {
                 Text("A hot corner is a trigger in Automation: pick a corner and how long to rest the pointer, then any window command.")
             }
+
+            ModifierTapSection()
+            AppLayoutTriggerSection()
+            DockHideSection()
+            PointerWrapSection()
+            WindowAutomationSection()
 
             Section("Displays and apps") {
                 Toggle("Bring windows back when displays change", isOn: Binding(get: { config.restoreOnReconnect }, set: { v in store.updateConfig { $0.restoreOnReconnect = v } }))

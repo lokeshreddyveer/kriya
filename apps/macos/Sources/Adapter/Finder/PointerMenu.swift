@@ -4,7 +4,9 @@ import ApplicationServices
 /// Keeps an Accessibility menu element with the menu entry that stands for it.
 private final class AXEntry: NSObject {
     let element: AXUIElement
-    init(_ element: AXUIElement) { self.element = element }
+    /// The titles from the menu bar down to this item, for favorites.
+    let path: [String]
+    init(_ element: AXUIElement, path: [String] = []) { self.element = element; self.path = path }
 }
 
 /// A menu that opens at the pointer. It holds the person's own items for the app in front, and that app's whole menu
@@ -21,6 +23,8 @@ final class PointerMenu: NSObject, NSMenuDelegate {
     private var targetPID: pid_t = 0
     /// Menus that still have to be filled in, with the Accessibility element they come from.
     private var pending: [ObjectIdentifier: AXUIElement] = [:]
+    private var pendingPath: [ObjectIdentifier: [String]] = [:]
+    private let toast = Toast()
 
     init(store: PointerMenuStore, library: ActionLibrary, executor: ActionExecutor) {
         self.store = store
@@ -74,7 +78,20 @@ final class PointerMenu: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         pending.removeAll()
+        pendingPath.removeAll()
 
+        // The items the person marked as favorites for this app come first.
+        if targetPID != 0, let appID = NSRunningApplication(processIdentifier: targetPID)?.bundleIdentifier {
+            let favorites = WindowTriggerStore.shared.menuFavorites.filter { $0.appID == appID }
+            for favorite in favorites {
+                let entry = NSMenuItem(title: favorite.title, action: #selector(runFavorite(_:)), keyEquivalent: "")
+                entry.target = self
+                entry.representedObject = favorite.id
+                entry.image = NSImage(systemSymbolName: "star.fill", accessibilityDescription: "Favorite")
+                menu.addItem(entry)
+            }
+            if !favorites.isEmpty { menu.addItem(.separator()) }
+        }
         if !appMenuOnly {
             for item in pointerMenuItemsForApp(items: config.items, appId: front?.bundleIdentifier) {
                 let entry = NSMenuItem(title: item.title, action: #selector(runItem(_:)), keyEquivalent: "")
@@ -121,6 +138,32 @@ final class PointerMenu: NSObject, NSMenuDelegate {
         }
     }
 
+    /// Runs a favorite: finds the item by its titles, from the menu bar down, and presses it.
+    @objc private func runFavorite(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let favorite = WindowTriggerStore.shared.menuFavorites.first(where: { $0.id == id }), targetPID != 0 else { return }
+        let pid = targetPID
+        NSRunningApplication(processIdentifier: pid)?.activate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            guard let self, let item = self.resolve(favorite.path, pid: pid) else { self?.toast.show("That menu item is not there now", isError: true); return }
+            AXUIElementPerformAction(item, kAXPressAction as CFString)
+        }
+    }
+
+    private func resolve(_ path: [String], pid: pid_t) -> AXUIElement? {
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.4)
+        var bar: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(application, kAXMenuBarAttribute as CFString, &bar) == .success,
+              let barElement = bar, CFGetTypeID(barElement) == AXUIElementGetTypeID() else { return nil }
+        var current = unsafeBitCast(barElement, to: AXUIElement.self)
+        for title in path {
+            let container = children(of: current).first { string($0, kAXRoleAttribute) == kAXMenuRole as String } ?? current
+            guard let next = children(of: container).first(where: { string($0, kAXTitleAttribute) == title }) else { return nil }
+            current = next
+        }
+        return current
+    }
+
     // MARK: The app's own menu bar
 
     /// The app's top-level menus as menu entries. Each fills in when it is opened.
@@ -140,6 +183,7 @@ final class PointerMenu: NSObject, NSMenuDelegate {
             sub.autoenablesItems = false
             sub.delegate = self
             pending[ObjectIdentifier(sub)] = item
+            pendingPath[ObjectIdentifier(sub)] = [title]
             entry.submenu = sub
             entries.append(entry)
         }
@@ -148,6 +192,7 @@ final class PointerMenu: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard let owner = pending.removeValue(forKey: ObjectIdentifier(menu)) else { return }
+        let parentPath = pendingPath.removeValue(forKey: ObjectIdentifier(menu)) ?? []
         // The element's menu is its child of role "menu"; its children are the entries.
         let axMenu = children(of: owner).first { string($0, kAXRoleAttribute) == kAXMenuRole as String } ?? owner
         for item in children(of: axMenu) {
@@ -158,7 +203,7 @@ final class PointerMenu: NSObject, NSMenuDelegate {
             }
             let entry = NSMenuItem(title: title, action: #selector(pressed(_:)), keyEquivalent: "")
             entry.target = self
-            entry.representedObject = AXEntry(item)
+            entry.representedObject = AXEntry(item, path: parentPath + [title])
             entry.isEnabled = bool(item, kAXEnabledAttribute) ?? true
             if let mark = string(item, kAXMenuItemMarkCharAttribute), !mark.isEmpty { entry.state = .on }
             applyShortcut(from: item, to: entry)
@@ -168,6 +213,7 @@ final class PointerMenu: NSObject, NSMenuDelegate {
                 sub.autoenablesItems = false
                 sub.delegate = self
                 pending[ObjectIdentifier(sub)] = item
+                pendingPath[ObjectIdentifier(sub)] = parentPath + [title]
                 entry.submenu = sub
                 entry.action = nil
             }
@@ -195,6 +241,12 @@ final class PointerMenu: NSObject, NSMenuDelegate {
     @objc private func pressed(_ sender: NSMenuItem) {
         guard let entry = sender.representedObject as? AXEntry else { return }
         let pid = targetPID
+        // Holding Option while choosing an item marks it as a favorite, or unmarks it, instead of running it.
+        if NSEvent.modifierFlags.contains(.option), !entry.path.isEmpty, let appID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier {
+            let on = WindowTriggerStore.shared.toggleMenuFavorite(appID: appID, path: entry.path)
+            toast.show(on ? "“\(entry.path.last ?? "")” is a favorite" : "“\(entry.path.last ?? "")” is no longer a favorite")
+            return
+        }
         // Give the menu a moment to close and the app its focus back before the item is pressed.
         if pid != 0 { NSRunningApplication(processIdentifier: pid)?.activate() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {

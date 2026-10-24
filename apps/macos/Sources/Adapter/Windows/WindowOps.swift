@@ -29,6 +29,8 @@ extension WindowController {
             reshape("Shorter") { frame, area, config in windowResizeBy(frame: frame, area: area, dw: 0, dh: -config.resizeStep, keepAspect: false) }
         case "window.cascade":
             arrange("Cascade") { area, count, _ in windowCascadeFrames(area: area, count: UInt32(count), offset: 30) }
+        case "window.reflow":
+            reflow()
         case "window.tile":
             arrange("Tile") { area, count, config in windowTileFrames(area: area, count: UInt32(count), gap: config.gap) }
         case "window.next_same_app":
@@ -62,6 +64,25 @@ extension WindowController {
         for (item, frame) in zip(ordered, planned) {
             place(item.window, to: frame, from: item.frame, label: label, layout: nil)
         }
+        focused.raise()
+    }
+
+    /// After a window is snapped to one side, tiles every other window on that display into the space that is left.
+    private func reflow() {
+        guard let (focused, current, display) = target(checkResizable: false) else { return }
+        let config = store.currentConfig
+        let area = usableArea(display)
+        guard let remaining = WindowReflow.remaining(anchor: current, area: area, gap: config.gap) else {
+            setMessage("Snap the window to a side first, then reflow the others around it.")
+            return
+        }
+        let others = WindowController.openWindows(excluding: config).filter {
+            displays.display(containing: $0.frame)?.id == display.id && $0.window.canResize && !$0.window.isFullScreen && $0.window.key != focused.key
+        }
+        guard !others.isEmpty else { return }
+        let planned = windowTileFrames(area: remaining, count: UInt32(others.count), gap: config.gap)
+        guard planned.count == others.count else { return }
+        for (item, frame) in zip(others, planned) { place(item.window, to: frame, from: item.frame, label: "Reflow", layout: nil) }
         focused.raise()
     }
 

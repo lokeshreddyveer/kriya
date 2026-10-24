@@ -140,7 +140,7 @@ enum WindowCommands {
         ("power.keep_awake.60", "Keep the Mac awake for an hour"), ("power.keep_awake_off", "Let the Mac sleep again"),
         ("shelf.toggle", "Show or hide the file shelf"), ("text.speak", "Read the selected text aloud"), ("text.stop_speaking", "Stop reading aloud"),
         ("workspace.undo_last", "Undo the last workspace"),
-        ("window.list", "Open the window list (search, favorites, thumbnails)"), ("window.favorite_toggle", "Make the window in front a favorite, or not"),
+        ("window.list", "Open the window list (search, favorites, thumbnails)"), ("window.reflow", "Tile the other windows into the space beside this one"), ("window.favorite_toggle", "Make the window in front a favorite, or not"),
         ("window.favorite_1", "Go to favorite window 1"), ("window.favorite_2", "Go to favorite window 2"), ("window.favorite_3", "Go to favorite window 3"),
         ("window.favorite_4", "Go to favorite window 4"), ("window.favorite_5", "Go to favorite window 5"), ("window.favorite_6", "Go to favorite window 6"),
         ("window.favorite_7", "Go to favorite window 7"), ("window.favorite_8", "Go to favorite window 8"), ("window.favorite_9", "Go to favorite window 9"),
