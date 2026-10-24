@@ -235,6 +235,22 @@ pub enum WorkflowTrigger {
     },
     DisplayConnected,
     DisplayDisconnected,
+    /// Every so many minutes while Kriya is running and the Mac is awake. The first run is one interval after it is turned on.
+    Interval {
+        minutes: u32,
+    },
+    /// At a time of day on chosen days (1 = Monday … 7 = Sunday; none chosen means every day). A time that passes while the Mac is
+    /// asleep is run once when it wakes, if that is within 15 minutes.
+    Daily {
+        hour: u8,
+        minute: u8,
+        weekdays: Vec<u8>,
+    },
+    /// When a new item appears directly inside a folder (a file saved, downloaded or moved in). The workflow gets the new paths as
+    /// its input, one per line.
+    FolderChanged {
+        path: String,
+    },
 }
 
 impl WorkflowTrigger {
@@ -253,6 +269,9 @@ impl WorkflowTrigger {
             WorkflowTrigger::AppQuit { .. } => "An app quits",
             WorkflowTrigger::DisplayConnected => "A display is connected",
             WorkflowTrigger::DisplayDisconnected => "A display is disconnected",
+            WorkflowTrigger::Interval { .. } => "Every so often",
+            WorkflowTrigger::Daily { .. } => "At a time of day",
+            WorkflowTrigger::FolderChanged { .. } => "A new item appears in a folder",
         }
     }
 
@@ -297,6 +316,37 @@ impl WorkflowTrigger {
                 if app_id.trim().is_empty() =>
             {
                 return Err(CoreError::invalid("choose an app"));
+            }
+            WorkflowTrigger::Interval { minutes } if !(1..=1440).contains(minutes) => {
+                return Err(CoreError::invalid("choose between 1 minute and 24 hours"));
+            }
+            WorkflowTrigger::Daily {
+                hour,
+                minute,
+                weekdays,
+            } => {
+                if *hour > 23 || *minute > 59 {
+                    return Err(CoreError::invalid("the time of day is not valid"));
+                }
+                if weekdays.iter().any(|d| !(1..=7).contains(d)) {
+                    return Err(CoreError::invalid(
+                        "a day should be from 1 (Monday) to 7 (Sunday)",
+                    ));
+                }
+            }
+            WorkflowTrigger::FolderChanged { path } => {
+                let clean = path.trim();
+                if clean.is_empty() {
+                    return Err(CoreError::invalid("choose a folder"));
+                }
+                if !(clean.starts_with('/') || clean.starts_with("~/")) {
+                    return Err(CoreError::invalid("give the folder's full path"));
+                }
+                if clean.split('/').any(|part| part == "..") || clean.contains('\0') {
+                    return Err(CoreError::invalid(
+                        "the folder path should not go up with ..",
+                    ));
+                }
             }
             _ => {}
         }
@@ -1967,6 +2017,23 @@ pub fn trigger_catalog() -> Vec<TriggerTemplate> {
             "display.slash",
             WorkflowTrigger::DisplayDisconnected,
         ),
+        t("Time", "clock", WorkflowTrigger::Interval { minutes: 60 }),
+        t(
+            "Time",
+            "calendar.badge.clock",
+            WorkflowTrigger::Daily {
+                hour: 9,
+                minute: 0,
+                weekdays: vec![],
+            },
+        ),
+        t(
+            "Files",
+            "folder.badge.plus",
+            WorkflowTrigger::FolderChanged {
+                path: String::new(),
+            },
+        ),
     ]
 }
 
@@ -2638,8 +2705,56 @@ mod tests {
                     | WorkflowTrigger::AppActivated { .. }
                     | WorkflowTrigger::AppLaunched { .. }
                     | WorkflowTrigger::AppQuit { .. }
+                    | WorkflowTrigger::FolderChanged { .. }
             )));
         assert!(condition_catalog().len() >= 7);
+    }
+
+    #[test]
+    fn time_and_folder_triggers_are_checked() {
+        assert!(WorkflowTrigger::Interval { minutes: 1 }.check().is_ok());
+        assert!(WorkflowTrigger::Interval { minutes: 1440 }.check().is_ok());
+        assert!(WorkflowTrigger::Interval { minutes: 0 }.check().is_err());
+        assert!(WorkflowTrigger::Interval { minutes: 1441 }.check().is_err());
+        let daily = |hour, minute, weekdays: Vec<u8>| WorkflowTrigger::Daily {
+            hour,
+            minute,
+            weekdays,
+        };
+        assert!(daily(0, 0, vec![]).check().is_ok());
+        assert!(daily(23, 59, vec![1, 2, 3, 4, 5]).check().is_ok());
+        assert!(daily(24, 0, vec![]).check().is_err());
+        assert!(daily(9, 60, vec![]).check().is_err());
+        assert!(daily(9, 0, vec![0]).check().is_err());
+        assert!(daily(9, 0, vec![8]).check().is_err());
+        let folder = |p: &str| WorkflowTrigger::FolderChanged { path: p.into() };
+        assert!(folder("/Users/me/Downloads").check().is_ok());
+        assert!(folder("~/Downloads").check().is_ok());
+        assert!(folder("").check().is_err());
+        assert!(folder("   ").check().is_err());
+        assert!(folder("Downloads").check().is_err());
+        assert!(folder("/Users/me/../../etc").check().is_err());
+        assert!(folder("~/Downloads/../../etc").check().is_err());
+        // They survive a save and a load, and have names a person can read.
+        for trigger in [
+            WorkflowTrigger::Interval { minutes: 15 },
+            daily(8, 30, vec![1, 3, 5]),
+            folder("~/Downloads"),
+        ] {
+            let json = serde_json::to_string(&trigger).unwrap();
+            assert_eq!(
+                serde_json::from_str::<WorkflowTrigger>(&json).unwrap(),
+                trigger
+            );
+            assert!(!trigger.title().is_empty());
+        }
+        let titles: Vec<_> = trigger_catalog()
+            .iter()
+            .map(|t| t.trigger.title())
+            .collect();
+        assert!(titles.contains(&"Every so often"));
+        assert!(titles.contains(&"At a time of day"));
+        assert!(titles.contains(&"A new item appears in a folder"));
     }
 
     #[test]

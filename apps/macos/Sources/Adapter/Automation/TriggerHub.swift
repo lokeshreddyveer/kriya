@@ -20,6 +20,13 @@ final class TriggerHub {
     private var lastDisplayCount = NSScreen.screens.count
     private var displayWork: DispatchWorkItem?
 
+    /// For “every so often” and “at a time of day”: one check every 20 seconds, only while a workflow wants it.
+    private var scheduleTimer: Timer?
+    private var lastRun: [String: Date] = [:]
+    private var wakeToken: NSObjectProtocol?
+    /// For “a new item appears in a folder”: one watcher per folder.
+    private var folderWatchers: [String: FolderWatcher] = [:]
+
     init(engine: AutomationEngine, context: ServiceContext) {
         self.engine = engine
         self.context = context
@@ -34,6 +41,87 @@ final class TriggerHub {
         configureGestures()
         configureMoves()
         configureNotifications()
+        configureSchedule()
+        configureFolders()
+    }
+
+    // MARK: Time
+
+    private func configureSchedule() {
+        let scheduled = workflows.filter {
+            switch $0.trigger {
+            case .interval, .daily: return true
+            default: return false
+            }
+        }
+        lastRun = lastRun.filter { id, _ in scheduled.contains { $0.id == id } }
+        let now = Date()
+        // “Every so often” first runs one interval after it was turned on, not at once.
+        for workflow in scheduled where lastRun[workflow.id] == nil { if case .interval = workflow.trigger { lastRun[workflow.id] = now } }
+        guard !scheduled.isEmpty else {
+            scheduleTimer?.invalidate(); scheduleTimer = nil
+            if let wakeToken { NSWorkspace.shared.notificationCenter.removeObserver(wakeToken) }
+            wakeToken = nil
+            return
+        }
+        if scheduleTimer == nil {
+            let timer = Timer(timeInterval: 20, repeats: true) { [weak self] _ in self?.checkSchedule() }
+            RunLoop.main.add(timer, forMode: .common)
+            scheduleTimer = timer
+        }
+        if wakeToken == nil {
+            // A time that passed while the Mac slept is run once on waking, if it was within the last 15 minutes (see ScheduleClock).
+            wakeToken = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self?.checkSchedule() }
+            }
+        }
+    }
+
+    private func checkSchedule() {
+        let now = Date(), calendar = Calendar.current
+        for workflow in workflows {
+            switch workflow.trigger {
+            case .interval(let minutes):
+                let last = lastRun[workflow.id] ?? now
+                if ScheduleClock.intervalDue(minutes: minutes, now: now, lastRun: last) {
+                    lastRun[workflow.id] = now
+                    fire(workflow, "Schedule")
+                }
+            case .daily(let hour, let minute, let weekdays):
+                if ScheduleClock.dailyDue(hour: hour, minute: minute, weekdays: [UInt8](weekdays), now: now, lastRun: lastRun[workflow.id], calendar: calendar) {
+                    lastRun[workflow.id] = now
+                    fire(workflow, "Schedule")
+                }
+            default: break
+            }
+        }
+    }
+
+    // MARK: Folders
+
+    private func configureFolders() {
+        var wanted: [String: URL] = [:]
+        for workflow in workflows {
+            guard case .folderChanged(let path) = workflow.trigger else { continue }
+            guard let url = FolderChange.resolve(path) else {
+                Log.info("Automation", "“\(workflow.name)” watches a folder outside your home folder and drives, so it is not watched")
+                continue
+            }
+            wanted[url.path] = url
+        }
+        for (path, watcher) in folderWatchers where wanted[path] == nil { watcher.stop(); folderWatchers[path] = nil }
+        for (path, url) in wanted where folderWatchers[path] == nil {
+            let watcher = FolderWatcher(url: url) { [weak self] added in self?.folderGotItems(url, added) }
+            if watcher.start() { folderWatchers[path] = watcher } else { Log.info("Automation", "A watched folder could not be opened, so it is not watched") }
+        }
+    }
+
+    private func folderGotItems(_ folder: URL, _ names: [String]) {
+        let paths = names.prefix(50).map { folder.appendingPathComponent($0).path }
+        for workflow in workflows {
+            guard case .folderChanged(let path) = workflow.trigger, FolderChange.resolve(path)?.path == folder.path else { continue }
+            fire(workflow, "New item in a folder", input: paths.joined(separator: "\n"))
+        }
     }
 
     func stop() {

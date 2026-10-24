@@ -7,6 +7,8 @@ struct AIToolsSection: View {
     @ObservedObject private var clients = MCPClientManager.shared
     @State private var editing: MCPServerConfig?
     @State private var copied = false
+    /// Where the copied text goes, shown under the buttons while the secret is on the clipboard.
+    @State private var copiedHelp: String?
 
     var body: some View {
         Group {
@@ -55,11 +57,17 @@ struct AIToolsSection: View {
                     Stepper("Port \(server.port)", value: Binding(get: { Int(server.port) }, set: { server.port = UInt16($0) }), in: 1025...65535)
                     LabeledContent("Address", value: server.endpoint)
                     HStack {
-                        Button(copied ? "Copied" : "Copy Setup for a Client") { copySetup() }
+                        Menu(copied ? "Copied" : "Copy Setup for…") {
+                            ForEach(MCPClientSetup.all(endpoint: server.endpoint, secret: server.secret)) { setup in
+                                Button(setup.app) { copySetup(setup) }
+                            }
+                        }
+                        .menuStyle(.button).fixedSize()
                         Button("Make a New Secret", role: .destructive) { server.regenerateSecret() }
                         Spacer()
                         Text("\(server.requests) requests").font(.caption).foregroundStyle(.secondary)
                     }
+                    if let help = copiedHelp { Text(help).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
                     if let status = server.status { Text(status).font(.caption).foregroundStyle(.secondary) }
                 }
             } header: { Text("Kriya as an MCP server") } footer: {
@@ -94,25 +102,17 @@ struct AIToolsSection: View {
         if !config.enabled { clients.disconnect(config.id) }
     }
 
-    private func copySetup() {
-        let setup = """
-        {
-          "mcpServers": {
-            "kriya": {
-              "url": "\(server.endpoint)",
-              "headers": { "Authorization": "Bearer \(server.secret)" }
-            }
-          }
-        }
-        """
+    private func copySetup(_ setup: MCPClientSetup) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(setup, forType: .string)
+        NSPasteboard.general.setString(setup.text, forType: .string)
         copied = true
+        copiedHelp = "\(setup.app): \(setup.instructions) The secret is on the clipboard for a minute and is then taken back."
         // The secret is on the clipboard now; it is taken back after a short while.
         let count = NSPasteboard.general.changeCount
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
             if NSPasteboard.general.changeCount == count { NSPasteboard.general.clearContents() }
             copied = false
+            copiedHelp = nil
         }
     }
 }

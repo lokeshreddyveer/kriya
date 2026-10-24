@@ -669,7 +669,62 @@ private struct TriggerEditor: View {
         case .appQuit(let id): appField(id) { trigger = .appQuit(appId: $0) }
         case .displayConnected, .displayDisconnected:
             Text("Runs after a display is added or removed, once macOS has settled.").font(.caption).foregroundStyle(.secondary)
+        case .interval(let minutes):
+            Picker("Every", selection: Binding(get: { minutes }, set: { trigger = .interval(minutes: $0) })) {
+                ForEach(Self.intervalChoices(including: minutes), id: \.self) { Text(Self.intervalTitle($0)).tag($0) }
+            }
+            Text("Runs while Kriya is open and the Mac is awake. The first run is one interval after you turn the workflow on.").font(.caption).foregroundStyle(.secondary)
+        case .daily(let hour, let minute, let weekdays):
+            DatePicker("At", selection: Binding(get: { Self.time(hour, minute) }, set: { new in
+                let parts = Calendar.current.dateComponents([.hour, .minute], from: new)
+                trigger = .daily(hour: UInt8(parts.hour ?? 9), minute: UInt8(parts.minute ?? 0), weekdays: weekdays)
+            }), displayedComponents: .hourAndMinute)
+            HStack(spacing: 6) {
+                ForEach(Array(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].enumerated()), id: \.offset) { index, name in
+                    let day = UInt8(index + 1)
+                    let on = weekdays.isEmpty || weekdays.contains(day)
+                    Button(name) {
+                        // With no day chosen it runs every day; choosing days narrows it, and choosing all seven goes back to every day.
+                        var chosen = Set<UInt8>(weekdays.isEmpty ? (1...7).map { UInt8($0) } : [UInt8](weekdays))
+                        if chosen.contains(day) { chosen.remove(day) } else { chosen.insert(day) }
+                        if chosen.isEmpty { chosen = [day] }
+                        trigger = .daily(hour: hour, minute: minute, weekdays: chosen.count == 7 ? Data() : Data(chosen.sorted()))
+                    }
+                    .buttonStyle(.bordered).controlSize(.small).tint(on ? Theme.accent : .gray).opacity(on ? 1 : 0.55)
+                }
+            }
+            Text("A time that passes while the Mac sleeps is run once when it wakes, if that is within 15 minutes.").font(.caption).foregroundStyle(.secondary)
+        case .folderChanged(let path):
+            HStack {
+                Text(path.isEmpty ? "No folder chosen" : path).foregroundStyle(path.isEmpty ? .secondary : .primary).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Button("Choose Folder…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
+                    panel.prompt = "Watch"
+                    if panel.runModal() == .OK, let url = panel.url { trigger = .folderChanged(path: url.path) }
+                }.controlSize(.small)
+            }
+            if !path.isEmpty, FolderChange.resolve(path) == nil {
+                Text("Kriya only watches folders in your home folder and on connected drives.").font(.caption).foregroundStyle(Theme.warn)
+            }
+            Text("Runs when a new file or folder appears directly in it (not inside its folders), after it has finished copying or downloading. The workflow's input is the new paths, one per line.").font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private static func time(_ hour: UInt8, _ minute: UInt8) -> Date {
+        Calendar.current.date(bySettingHour: Int(hour), minute: Int(minute), second: 0, of: Date()) ?? Date()
+    }
+
+    private static func intervalChoices(including current: UInt32) -> [UInt32] {
+        var list: [UInt32] = [1, 2, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720, 1440]
+        if !list.contains(current) { list.append(current); list.sort() }
+        return list
+    }
+
+    private static func intervalTitle(_ minutes: UInt32) -> String {
+        if minutes % 60 == 0 { let h = minutes / 60; return h == 1 ? "hour" : "\(h) hours" }
+        return minutes == 1 ? "minute" : "\(minutes) minutes"
     }
 
     private func appField(_ id: String, set: @escaping (String) -> Void) -> some View {

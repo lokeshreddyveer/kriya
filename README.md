@@ -441,7 +441,9 @@ for facts about films, news or anything current. For that, turn on web research 
   clipboard, Finder, capture, sound, browser page and note actions). Each has a risk level, and anything that changes things asks you
   first. You choose which tools each part of Kriya may offer. Kriya can also act as a local **MCP server**, and connect to **MCP
   servers** you add: each is off until you allow it, only the tools you tick are shown to an AI, and one cannot read Kriya's files,
-  clipboard or Keychain.
+  clipboard or Keychain. *Copy Setup for…* puts the right text on the clipboard for **Claude Code** (a `claude mcp add --transport
+  http … --header …` command), **Cursor** (`mcp.json` with `url` and `headers`), **Claude Desktop** (the `mcp-remote` bridge, with
+  the secret in `env`; needs Node.js) or any other app, says where it goes, and takes the secret back off the clipboard after a minute.
 - **Web research (optional, off by default):** lets Apple Intelligence answer from Wikipedia, with the source linked. Only the words of
   your question are sent, and only when you ask.
 - **Drafts:** an AI can propose a workflow for you to read; it is never switched on by itself.
@@ -539,7 +541,11 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   records **mouse clicks** (left, right, double): each is saved as where it landed in the front window, so it still hits the same button
   after the window has moved. Replaying needs Accessibility, and the pointer goes back to where it was.
 - **Automation** (sidebar): *workflows* with a trigger, optional conditions and steps. Triggers include a shortcut, a mouse button, a
-  gesture, a window being placed, something being copied, a hot corner, an app opening or quitting, and a display connecting. Steps
+  gesture, a window being placed, something being copied, a hot corner, an app opening or quitting, a display connecting, **every so
+  often** (every 1 minute to 24 hours, first run one interval after turning it on), **a time of day** (on chosen days; a time that
+  passes while the Mac sleeps runs once on waking if that is within 15 minutes) and **a new item appearing in a folder** (in your
+  home folder or on a drive; it waits until a copy or download has its final name, and the workflow's input is the new paths, one
+  per line). Time and folder triggers run only while Kriya is open and the Mac is awake. Steps
   include opening or quitting apps, running scripts, pressing keys, moving windows, changing text, switching a mouse preset, waiting
   and running another workflow. There is a visual builder, a dry run that lists what would happen, and import and export.
   - Safety: any step that runs code, presses keys or controls the system needs your authorization for that exact content. Imported
