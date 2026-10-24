@@ -373,6 +373,8 @@ final class CommandPalette: NSObject, NSWindowDelegate {
         model.openTick += 1
         let panel = self.panel ?? makePanel()
         self.panel = panel
+        // The launcher can show clipboard text, notes and files: it is left out of screen sharing unless the person turned that off.
+        panel.sharingType = ClipExtraSettings.hideWhenSharing ? .none : .readOnly
         switch LauncherTheme.current.appearance {
         case .system: panel.appearance = nil
         case .dark: panel.appearance = NSAppearance(named: .darkAqua)
@@ -752,12 +754,12 @@ private struct PaletteView: View {
                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.28), lineWidth: 0.75))
                 .transition(.scale.combined(with: .opacity))
             }
-            TextField(model.token?.placeholder ?? (model.selectionText == nil ? "Spotlight Search" : "Do something with the selected text"), text: $model.query)
+            TextField(model.token?.placeholder ?? (model.selectionText == nil ? "Search apps, files and commands" : "Do something with the selected text"), text: $model.query)
                 .textFieldStyle(.plain).font(.system(size: 20, weight: .regular)).focused($focused)
                 .onSubmit { submit() }
                 .onKeyPress(phases: [.down, .repeat]) { press in fieldKey(press) }
             if !model.query.isEmpty {
-                Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.tertiary) }.buttonStyle(.plain)
+                Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.tertiary) }.buttonStyle(.plain).accessibilityLabel("Clear the search")
             }
         }
         .padding(.horizontal, 26)

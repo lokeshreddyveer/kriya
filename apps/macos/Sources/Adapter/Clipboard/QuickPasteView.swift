@@ -121,7 +121,7 @@ struct QuickAccessView: View {
             pauseMenu
             if !model.query.isEmpty {
                 Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plain).accessibilityLabel("Clear the search")
                     .transition(.opacity)
             }
         }
@@ -145,6 +145,7 @@ struct QuickAccessView: View {
         } label: { Image(systemName: store.currentConfig.paused ? "play.circle" : "pause.circle").foregroundStyle(.secondary) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .help(store.currentConfig.paused ? "Resume recording" : "Pause recording")
+        .accessibilityLabel(store.currentConfig.paused ? "Resume recording" : "Pause recording")
     }
 
     /// Narrow the list by the app it was copied in and by when.

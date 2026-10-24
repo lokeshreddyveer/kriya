@@ -55,8 +55,15 @@ final class AIResultWindow {
             window.title = title
             window.contentViewController = NSHostingController(rootView: view)
             window.isReleasedWhenClosed = false
+            window.applyPopupPrivacy()
             window.center()
             self.windows.append(window)
+            // A closed result is let go, so the text it showed is not kept for the rest of the session.
+            var observer: NSObjectProtocol?
+            observer = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self, weak window] _ in
+                self?.windows.removeAll { $0 === window }
+                if let observer { NotificationCenter.default.removeObserver(observer) }
+            }
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
         }

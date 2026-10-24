@@ -434,6 +434,7 @@ final class WindowSwitcher: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.delegate = self
+        panel.applyPopupPrivacy()
         let view = SwitcherView(model: model, scale: { [weak self] in self?.store.currentConfig.switcherScale ?? 1 }, onChoose: { [weak self] in self?.choose($0) }, onClose: { [weak self] in self?.close() })
         let host = NSHostingView(rootView: view)
         host.wantsLayer = true

@@ -158,6 +158,7 @@ final class PromptPanel: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.isReleasedWhenClosed = false
         panel.contentView = host
+        panel.applyPopupPrivacy()
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         let frame = screen?.visibleFrame ?? .zero

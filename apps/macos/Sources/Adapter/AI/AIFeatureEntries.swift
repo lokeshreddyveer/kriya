@@ -15,6 +15,7 @@ final class SemanticResultsWindow {
         w.title = "Search by meaning"
         w.contentViewController = host
         w.isReleasedWhenClosed = false
+        w.applyPopupPrivacy()
         w.center()
         window = w
         NSApp.activate(ignoringOtherApps: true)

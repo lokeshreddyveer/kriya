@@ -233,6 +233,21 @@ struct RecordingHUDView: View {
         Image(systemName: on ? symbol : symbol + ".slash").font(.system(size: 11)).foregroundStyle(on ? Color.white : Color.white.opacity(0.4)).help(help)
     }
 
+    /// Throwing away a recording that has run for a while is asked about first; a few seconds in, it just happens.
+    private func discarding(_ title: String, _ detail: String, _ run: @escaping () -> Void) -> () -> Void {
+        return {
+            guard recorder.elapsed > 10 else { run(); return }
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = title
+            alert.informativeText = "\(detail) It has been running for \(timeText) and cannot be brought back."
+            alert.addButton(withTitle: "Discard")
+            alert.addButton(withTitle: "Keep Recording")
+            NSApp.activate(ignoringOtherApps: true)
+            if alert.runModal() == .alertFirstButtonReturn { run() }
+        }
+    }
+
     private func button(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).frame(width: 22, height: 22) }
             .buttonStyle(.plain).foregroundStyle(.white).help(help).accessibilityLabel(help)
@@ -257,9 +272,9 @@ struct RecordingHUDView: View {
             Spacer(minLength: 4)
             if !starting {
                 button(recorder.state == .paused ? "play.fill" : "pause.fill", recorder.state == .paused ? "Resume" : "Pause", action: onPause)
-                button("arrow.counterclockwise", "Start over (discard this and record again)", action: onRestart)
+                button("arrow.counterclockwise", "Start over (discard this and record again)", action: discarding("Start over?", "What has been recorded is thrown away and a new recording starts.", onRestart))
             }
-            button("xmark.circle", "Cancel (discard this recording)", action: onCancel)
+            button("xmark.circle", "Cancel (discard this recording)", action: discarding("Discard this recording?", "Nothing is saved.", onCancel))
             button("stop.fill", starting ? "Cancel starting" : "Stop and save", action: onStop)
         }
         .padding(.horizontal, 14)

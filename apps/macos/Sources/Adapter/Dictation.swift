@@ -19,6 +19,8 @@ final class DictationService: ObservableObject {
     private var recognizer: SFSpeechRecognizer?
     private var transcript = ""
     private var stopWork: DispatchWorkItem?
+    /// True from the first press until listening has begun or been refused, so a second press during a permission prompt does nothing.
+    private var starting = false
     private let hud = DictationHUD()
     private let toast = Toast()
     /// Types the finished text into the app in front. Set by the app.
@@ -36,13 +38,14 @@ final class DictationService: ObservableObject {
     func toggle() { isListening ? stop() : start() }
 
     func start() {
-        guard !isListening else { return }
+        guard !isListening, !starting else { return }
+        starting = true
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
             DispatchQueue.main.async {
-                guard status == .authorized else { self?.toast.show("Allow Speech Recognition for Kriya in System Settings › Privacy & Security.", isError: true); return }
+                guard status == .authorized else { self?.starting = false; self?.toast.show("Allow Speech Recognition for Kriya in System Settings › Privacy & Security.", isError: true); return }
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     DispatchQueue.main.async {
-                        guard granted else { self?.toast.show("Allow the Microphone for Kriya in System Settings › Privacy & Security.", isError: true); return }
+                        guard granted else { self?.starting = false; self?.toast.show("Allow the Microphone for Kriya in System Settings › Privacy & Security.", isError: true); return }
                         self?.begin()
                     }
                 }
@@ -51,6 +54,7 @@ final class DictationService: ObservableObject {
     }
 
     private func begin() {
+        defer { starting = false }
         let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language)) ?? SFSpeechRecognizer()
         guard let recognizer, recognizer.isAvailable else { toast.show("Speech recognition is not available right now.", isError: true); return }
         if !recognizer.supportsOnDeviceRecognition && !allowServer {
@@ -123,6 +127,7 @@ final class DictationHUD {
             let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: 44), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             p.isOpaque = false; p.backgroundColor = .clear; p.level = .floating; p.hasShadow = true; p.ignoresMouseEvents = true
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            p.applyPopupPrivacy()
             let box = NSVisualEffectView(frame: p.contentView!.bounds)
             box.material = .hudWindow; box.state = .active; box.wantsLayer = true; box.layer?.cornerRadius = 22; box.layer?.masksToBounds = true
             let dot = NSView(frame: NSRect(x: 16, y: 17, width: 10, height: 10)); dot.wantsLayer = true; dot.layer?.backgroundColor = NSColor.systemRed.cgColor; dot.layer?.cornerRadius = 5

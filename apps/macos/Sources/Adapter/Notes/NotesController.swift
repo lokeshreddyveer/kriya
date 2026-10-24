@@ -246,6 +246,7 @@ final class NotesController: NSObject, NSWindowDelegate, ObservableObject {
             p.level = .floating
             p.hidesOnDeactivate = false
             p.isReleasedWhenClosed = false
+            p.applyPopupPrivacy()
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             p.delegate = self
             p.contentView = NSHostingView(rootView: NotesView(model: model, summarize: { [weak self] in self?.summarize($0) }, close: { [weak self] in self?.close() }))

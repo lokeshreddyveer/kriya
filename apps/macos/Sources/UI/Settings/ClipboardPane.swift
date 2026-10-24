@@ -418,11 +418,11 @@ private struct ClipPrivacyTab: View {
             }
 
             Section {
-                Toggle("Hide the quick paste window from screen sharing and screenshots", isOn: $hideWhenSharing)
+                Toggle("Hide Kriya's pop-up windows from screen sharing and screenshots", isOn: $hideWhenSharing)
                 Toggle("Remove a secret from the history right after I paste it", isOn: $deleteSecretsAfterPaste)
                 Toggle("Read the words in copied pictures, so I can search for them", isOn: $ocrImages)
             } header: { Text("Pasting and sharing") } footer: {
-                Text("Other apps and screen-sharing tools do not see the quick paste window (this is a request to macOS; a phone pointed at the screen still sees it). A secret pasted this way is also taken off the clipboard if nothing else was copied meanwhile. Words in pictures are read on this Mac only, stored encrypted with the rest of the history, and never sent anywhere. Right-click any item for Paste Once, or to make it expire.")
+                Text("Other apps and screen-sharing tools do not see the quick paste window, the launcher, notes, the file shelf, AI results and the other pop-up windows that show your own content (this is a request to macOS; a phone pointed at the screen still sees it; a window already open changes the next time it opens). A secret pasted this way is also taken off the clipboard if nothing else was copied meanwhile. Words in pictures are read on this Mac only, stored encrypted with the rest of the history, and never sent anywhere. Right-click any item for Paste Once, or to make it expire.")
             }
 
             Section {

@@ -112,6 +112,7 @@ struct PopoverView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private var searchField: some View {
@@ -122,7 +123,7 @@ struct PopoverView: View {
                 .focused($searchFocused)
                 .onSubmit { hits.first?.run() }
             if !query.isEmpty {
-                Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
+                Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain).accessibilityLabel("Clear the search")
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
@@ -264,16 +265,30 @@ private struct PopoverSection<Content: View>: View {
 /// What the pause switch remembers, so resuming brings back exactly what was on.
 final class FeaturePause: ObservableObject {
     static let shared = FeaturePause()
+    /// Kept on disk, so quitting Kriya while paused does not lose which features to bring back.
+    static let key = "featurePause.v1"
     @Published private(set) var features: [String] = []
     @Published private(set) var remapWasOn = false
     @Published private(set) var cornersWereOn = false
     @Published private(set) var isPaused = false
+
+    private struct Saved: Codable { var features: [String]; var remap: Bool; var corners: Bool }
+
+    init() {
+        if let data = UserDefaults.standard.data(forKey: Self.key), let saved = try? JSONDecoder().decode(Saved.self, from: data) {
+            features = saved.features
+            remapWasOn = saved.remap
+            cornersWereOn = saved.corners
+            isPaused = true
+        }
+    }
 
     func remember(features: [String], remap: Bool, corners: Bool) {
         self.features = features
         remapWasOn = remap
         cornersWereOn = corners
         isPaused = true
+        if let data = try? JSONEncoder().encode(Saved(features: features, remap: remap, corners: corners)) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 
     func clear() {
@@ -281,6 +296,7 @@ final class FeaturePause: ObservableObject {
         remapWasOn = false
         cornersWereOn = false
         isPaused = false
+        UserDefaults.standard.removeObject(forKey: Self.key)
     }
 }
 
@@ -334,6 +350,8 @@ private struct QuickActions: View {
                     }
                     .buttonStyle(TileStyle())
                     .help(tile.title)
+                    .accessibilityLabel(tile.title)
+                    .accessibilityValue(on ? "on" : "")
                 }
             }
         }
@@ -375,6 +393,7 @@ private struct WindowGrid: View {
                             Button { windowController.run(command: command) } label: { MiniScreen(layout: layout) }
                                 .buttonStyle(TileStyle())
                                 .help(layout.title)
+                                .accessibilityLabel("Place the window: \(layout.title)")
                         }
                     }
                 }

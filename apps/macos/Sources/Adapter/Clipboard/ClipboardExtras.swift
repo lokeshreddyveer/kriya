@@ -2,6 +2,12 @@ import AppKit
 import Vision
 
 /// The clipboard settings kept as plain preferences. Each has a safe default, so nothing here is on that was not already.
+extension NSWindow {
+    /// Leaves a pop-up window that shows the person's own content (text, files, notes, results) out of screen sharing and other apps'
+    /// screenshots, unless they turned that off. Applied when the window is made, so a change shows on the next one opened.
+    func applyPopupPrivacy() { sharingType = ClipExtraSettings.hideWhenSharing ? .none : .readOnly }
+}
+
 enum ClipExtraSettings {
     static let hideWhenSharingKey = "clipboard.hideWhenSharing"
     static let ocrImagesKey = "clipboard.ocrImages"

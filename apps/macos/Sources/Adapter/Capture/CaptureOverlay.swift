@@ -274,6 +274,11 @@ final class CaptureOverlay {
         if let file = card.file, FileManager.default.fileExists(atPath: file.path) { return file }
         guard !card.isRecording else { return nil }
         try? FileManager.default.createDirectory(at: tempFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // Pictures written only so they can be dragged or shared do not stay behind: anything older than ten minutes is removed.
+        let old = Date().addingTimeInterval(-600)
+        for file in (try? FileManager.default.contentsOfDirectory(at: tempFolder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+            if let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, modified < old { try? FileManager.default.removeItem(at: file) }
+        }
         let url = tempFolder.appendingPathComponent("Capture \(Int(card.date.timeIntervalSince1970)).png")
         guard let data = card.image.pngData, (try? data.write(to: url)) != nil else { return nil }
         return url
@@ -324,9 +329,9 @@ struct CaptureOverlayView: View {
                         Button("Quick Access Settings…") { actions.openSettings() }
                     }
                 } label: { Image(systemName: "ellipsis.circle").frame(width: 26, height: 22) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More")
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More").accessibilityLabel("More")
                 if CaptureUploadStore.shared.ready {
-                    Button { upload() } label: { Image(systemName: "icloud.and.arrow.up").frame(width: 26, height: 22) }.buttonStyle(.plain).help("Upload to your bucket and copy the link")
+                    Button { upload() } label: { Image(systemName: "icloud.and.arrow.up").frame(width: 26, height: 22) }.buttonStyle(.plain).help("Upload to your bucket and copy the link").accessibilityLabel("Upload to your bucket")
                 }
             }
             .foregroundStyle(.white)
@@ -370,7 +375,7 @@ struct CaptureOverlayView: View {
     }
 
     private func upload(then done: ((String) -> Void)? = nil) {
-        guard let file = CaptureOverlay.shared.fileForDrag(card), let data = try? Data(contentsOf: file) else { return }
+        guard let file = CaptureOverlay.shared.fileForDrag(card), let data = try? Data(contentsOf: file) else { actions.message("The picture could not be read to upload it.", true); return }
         let type = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
         CaptureUploader.upload(data, fileName: file.lastPathComponent, contentType: type) { result in
             DispatchQueue.main.async {

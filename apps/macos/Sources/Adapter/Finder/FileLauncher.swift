@@ -182,6 +182,7 @@ final class FileLauncher: NSObject, NSWindowDelegate {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        panel.applyPopupPrivacy()
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: LauncherView(model: model, onChoose: { [weak self] in self?.choose($0) }, onClose: { [weak self] in self?.close() }))
         return panel

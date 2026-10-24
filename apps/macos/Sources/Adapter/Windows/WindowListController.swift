@@ -178,6 +178,7 @@ final class WindowListController: NSObject, NSWindowDelegate {
             p.level = .floating
             p.hidesOnDeactivate = false
             p.isReleasedWhenClosed = false
+            p.applyPopupPrivacy()
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             p.delegate = self
             p.setFrameAutosaveName("KriyaWindowList")

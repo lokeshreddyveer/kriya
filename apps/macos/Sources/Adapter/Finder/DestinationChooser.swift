@@ -21,6 +21,7 @@ final class DestinationChooser {
         panel.isMovableByWindowBackground = true
         panel.level = .floating
         panel.isReleasedWhenClosed = false
+        panel.applyPopupPrivacy()
         panel.hidesOnDeactivate = false
         let finish: (URL?) -> Void = { url in
             chosen = url

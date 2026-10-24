@@ -77,6 +77,7 @@ final class FinderDrawer: ObservableObject {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        panel.applyPopupPrivacy()
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: FinderDrawerView(drawer: self))
         // The window's own close button must stop the polling too, or Finder keeps being asked while nothing is shown.

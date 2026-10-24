@@ -102,7 +102,7 @@ private struct SwitcherCard: View {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 18)).symbolRenderingMode(.palette)
                             .foregroundStyle(.white, Color.black.opacity(0.6))
                     }
-                    .buttonStyle(.plain).help("Close this window")
+                    .buttonStyle(.plain).help("Close this window").accessibilityLabel("Close the window \(card.title.isEmpty ? card.appName : card.title)")
                     .padding(6).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .transition(.opacity)
                 }

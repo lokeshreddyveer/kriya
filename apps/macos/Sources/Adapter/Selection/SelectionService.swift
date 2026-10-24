@@ -130,6 +130,7 @@ final class SelectionToolbar {
         panel.level = .popUpMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isReleasedWhenClosed = false
+        panel.applyPopupPrivacy()
         panel.hidesOnDeactivate = false
         return panel
     }

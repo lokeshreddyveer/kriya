@@ -227,6 +227,7 @@ final class FileShelf: NSObject, NSWindowDelegate, ObservableObject {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        panel.applyPopupPrivacy()
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: ShelfView(model: model, onClose: { [weak self] in self?.hide() }))
         return panel

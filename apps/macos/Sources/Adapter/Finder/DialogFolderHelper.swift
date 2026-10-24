@@ -99,6 +99,7 @@ final class DialogFolderHelper {
         let p = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: 330, height: min(CGFloat(choices.count) * 40 + 110, 500)), styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
         p.isOpaque = false; p.backgroundColor = .clear; p.level = .floating; p.hasShadow = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.applyPopupPrivacy()
         p.contentView = NSHostingView(rootView: DialogFolderView(choices: choices, onPick: { [weak self] choice in self?.go(to: choice, in: app) }, onClose: { [weak self] in self?.close() },
                                                                  onHidden: { [weak self] in self?.toggleHiddenFiles(in: app) }))
         let mouse = NSEvent.mouseLocation

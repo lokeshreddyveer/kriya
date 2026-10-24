@@ -49,6 +49,8 @@ enum SettingsRegistry {
         s("launcherPrefs.v1", "launcher"), s("launcherQuicklinks.v1", "launcher"), s("launcherScripts.v1", "launcher"), s("launcherScriptFolders.v1", "launcher"),
         s("launcherAPICommands.v1", "launcher"), a("launcherAskBeforeRunning", "launcher"), s("launcherSearchHistoryOn", "launcher"),
         a("launcherApprovals.v1", "launcher"), h("launcherSearchHistory.v1", "launcher"), h("recentApps.v1", "launcher"), m("launcherRates.v1", "launcher"),
+        // The menu-bar window's pause: what to bring back. Belongs to this moment on this Mac.
+        m("featurePause.v1"),
         // Appearance and placement
         s("ui.textSize", "appearance", .live), s("launcherTheme", "appearance", .live), s("launcherAccent", "appearance", .live),
         s("launcherPlacement", "appearance", .live), s("launcherTopCenter", "appearance"), s("switcherStyle", "appearance", .live),

@@ -92,6 +92,7 @@ final class IntelligencePanel: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.delegate = self
+        panel.applyPopupPrivacy()
         panel.contentView = NSHostingView(rootView: IntelligenceResultView(job: job, onClose: { [weak self] in self?.close() }))
         self.panel = panel
 
