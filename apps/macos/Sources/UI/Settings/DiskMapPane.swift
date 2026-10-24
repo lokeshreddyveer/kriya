@@ -8,6 +8,7 @@ struct DiskMapPane: View {
     @State private var confirmTrash = false
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Button { scanner.up() } label: { Image(systemName: "chevron.left") }.disabled(scanner.path.count < 2 || scanner.scanning)
@@ -44,6 +45,7 @@ struct DiskMapPane: View {
             Text("Click a folder to look inside it. Right-click a tile to show it in Finder or move it to the Trash. Nothing is removed unless you choose that.").font(.caption).foregroundStyle(.secondary)
         }
         .padding(20)
+        }
         .onAppear { if !started { started = true; scanner.scan() } }
     }
 

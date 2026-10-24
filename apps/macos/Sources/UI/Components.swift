@@ -75,7 +75,7 @@ struct Banner<Actions: View>: View {
             Image(systemName: symbol).foregroundStyle(tint).font(.title3)
             VStack(alignment: .leading, spacing: 6) {
                 if let title { Text(title).font(.headline) }
-                Text(message).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(message).font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 8) { actions() }
             }
             Spacer(minLength: 0)
