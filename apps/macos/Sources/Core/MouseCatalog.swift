@@ -140,6 +140,12 @@ enum WindowCommands {
         ("power.keep_awake.60", "Keep the Mac awake for an hour"), ("power.keep_awake_off", "Let the Mac sleep again"),
         ("shelf.toggle", "Show or hide the file shelf"), ("text.speak", "Read the selected text aloud"), ("text.stop_speaking", "Stop reading aloud"),
         ("workspace.undo_last", "Undo the last workspace"),
+        ("sound.mixer.toggle", "Show or hide the sound mixer"), ("sound.front.mute", "Mute or unmute the app in front"),
+        ("sound.front.volume_up", "Turn the app in front up"), ("sound.front.volume_down", "Turn the app in front down"),
+        ("sound.front.bypass_effects", "Bypass or use the effects of the app in front"), ("sound.front.reset_effects", "Reset the effects of the app in front"),
+        ("sound.front.reset", "Reset the sound of the app in front"), ("sound.front.mute_30", "Mute the app in front for 30 seconds"),
+        ("sound.front.mute_60", "Mute the app in front for 1 minute"), ("sound.front.mute_120", "Mute the app in front for 2 minutes"),
+        ("sound.timer.cancel", "Cancel timed mutes"), ("sound.effects.toggle_all", "Bypass or use the effects on all sound"),
     ]
 
     /// Every window command the core knows, then the pointer commands the mouse feature adds.

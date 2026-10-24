@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = StatusItemController(env: env, openSettings: { [weak self] pane in self?.showSettings(pane) })
         clockItem = WorldClockStatusItem(model: env.worldClock)
         soundItem = SoundStatusItem(engine: env.appAudio, mixer: env.soundMixer, openSettings: { [weak self] in self?.showSettings(.sound) })
+        soundItem?.quickConfigs = env.quickConfigs
         monitorItem = MonitorStatusItem(monitor: env.systemMonitor, openSettings: { [weak self] in self?.showSettings(.system) })
 
         env.keyboard.palette.openSettings = { [weak self] pane in self?.showSettings(pane) }

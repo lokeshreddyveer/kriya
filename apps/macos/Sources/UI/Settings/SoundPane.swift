@@ -21,6 +21,16 @@ struct SoundPane: View {
             } footer: { Text("Many monitors over HDMI or DisplayPort ignore the volume keys. With this on, the keys change Kriya’s “All sound” level instead, only while such an output is in use. Click the menu-bar speaker for this mixer; right-click it for outputs and mutes. Shortcuts has actions to set an app’s volume, mute an app, switch the output and set the Mac’s volume.") }
             SoundMixerContent()
             Section {
+                QuickConfigsSection()
+            } header: { Text("Quick Configs") } footer: {
+                Text("A Quick Config saves the whole sound setup: the output and input, their volumes, every app's volume, mute, output and effects, and your favorites. Apply it from here, the menu-bar mixer or a shortcut (each one is listed in Keyboard › Shortcuts as “Quick Config: name”). Export one to move it to another Mac.")
+            }
+            Section {
+                ExcludedAppsSection()
+            } header: { Text("Apps left alone") } footer: {
+                Text("Kriya never listens to an app on this list, so its sound reaches the speakers untouched and it does not appear in the mixer. Use it for an app that misbehaves when its sound is routed, or for apps that need the lowest possible delay.")
+            }
+            Section {
                 DictationSection()
             } header: { Text("Dictation") } footer: {
                 Text("Give “Start or stop dictation” a shortcut in Keyboard (or use the Dictate tile). Press it, speak, press it again, and the words are typed where you are. Say “comma”, “period”, “question mark”, “new line” or “new paragraph” for punctuation. It listens only between the two presses and uses the Mac's on-device recogniser.")
@@ -61,6 +71,11 @@ struct SoundPane: View {
                 Text("Do something when headphones connect or an app opens or quits: switch the output, mute the microphone, set the volume, or connect a Bluetooth device.")
             }
             Section {
+                SoundAlertsSection()
+            } header: { Text("Alerts") } footer: {
+                Text("Problems from changing an app's sound, such as macOS refusing to let Kriya listen. They stay here after the message in the mixer goes away.")
+            }
+            Section {
                 SoundHistorySection()
             } header: { Text("Device history") } footer: {
                 Text("When sound devices connected and disconnected. A device that keeps coming back is a flaky connection.")
@@ -76,22 +91,32 @@ struct SoundPane: View {
 struct SoundMixerContent: View {
     @EnvironmentObject private var engine: AppAudioEngine
     @EnvironmentObject private var mixer: SoundMixerModel
+    @ObservedObject private var names = DeviceNames.shared
 
     var body: some View {
         Section {
             HStack(spacing: 10) {
-                Button { mixer.toggleMute() } label: { Image(systemName: mixer.muted ? "speaker.slash.fill" : volumeSymbol) }.buttonStyle(.borderless).frame(width: 22)
-                Slider(value: Binding(get: { mixer.volume }, set: { mixer.setVolume($0) }), in: 0...1)
-                Text("\(Int((mixer.volume * 100).rounded()))%").monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                Button { mixer.hasVolume ? mixer.toggleMute() : engine.update(AppAudioEngine.systemKey) { $0.muted.toggle() } } label: {
+                    Image(systemName: (mixer.hasVolume ? mixer.muted : engine.current(AppAudioEngine.systemKey).muted) ? "speaker.slash.fill" : volumeSymbol)
+                }.buttonStyle(.borderless).frame(width: 22)
+                // An output with no volume of its own (many monitors over HDMI) is turned down in software instead.
+                if mixer.hasVolume {
+                    Slider(value: Binding(get: { mixer.volume }, set: { mixer.setVolume($0) }), in: 0...1)
+                    Text("\(Int((mixer.volume * 100).rounded()))%").monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                } else {
+                    Slider(value: Binding(get: { min(engine.current(AppAudioEngine.systemKey).volume, 1) }, set: { v in engine.update(AppAudioEngine.systemKey) { $0.volume = v } }), in: 0...1)
+                    Text("\(Int((min(engine.current(AppAudioEngine.systemKey).volume, 1) * 100).rounded()))%").monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                }
             }
-            .disabled(!mixer.hasVolume)
-            if !mixer.hasVolume { Text("This output has no volume of its own. Use “All sound” below, or the keyboard volume keys.").font(.caption).foregroundStyle(.secondary) }
+            if !mixer.hasVolume { Text("This output has no volume of its own, so this slider turns the sound down in software (the same as “All sound” below).").font(.caption).foregroundStyle(.secondary) }
             Picker("Output", selection: Binding(get: { mixer.outputID }, set: { mixer.chooseOutput($0) })) {
-                ForEach(mixer.outputs) { Text($0.name).tag($0.id) }
+                ForEach(mixer.outputs) { Text(names.name(for: $0)).tag($0.id) }
             }
+            DeviceLabelRow(device: mixer.outputs.first { $0.id == mixer.outputID }, input: false)
             Picker("Input", selection: Binding(get: { mixer.inputID }, set: { mixer.chooseInput($0) })) {
-                ForEach(mixer.inputs) { Text($0.name).tag($0.id) }
+                ForEach(mixer.inputs) { Text(names.name(for: $0)).tag($0.id) }
             }
+            DeviceLabelRow(device: mixer.inputs.first { $0.id == mixer.inputID }, input: true)
             HStack(spacing: 10) {
                 Image(systemName: mixer.micMuted ? "mic.slash.fill" : "mic.fill").frame(width: 22)
                 Slider(value: Binding(get: { mixer.inputVolume }, set: { mixer.setInputVolume($0) }), in: 0...1)
@@ -104,9 +129,10 @@ struct SoundMixerContent: View {
         Section {
             AppMixerRow(key: AppAudioEngine.systemKey, name: "All sound", symbol: "speaker.wave.3.fill", bundleID: nil)
             if engine.apps.isEmpty { Text("No app is making sound right now.").foregroundStyle(.secondary) }
-            ForEach(engine.apps) { app in AppMixerRow(key: app.id, name: app.name, symbol: "app", bundleID: app.bundleID) }
+            ForEach(engine.apps) { app in AppMixerRow(key: app.id, name: app.name, symbol: "app", bundleID: app.bundleID, isFavorite: app.isFavorite, isRecent: app.isRecent) }
+            FavoriteAppsControls()
         } header: { Text("Apps") } footer: {
-            Text("Move an app's slider past 100% to make it louder, up to 400%. Kriya listens to the app's sound only to change it and plays it straight back; nothing is recorded. The first time, macOS asks you to allow it.")
+            Text("Favorites stay at the top even when they are quiet. An app that stopped playing stays listed for a few minutes. Move an app's slider past 100% to make it louder, up to 400%. Kriya listens to the app's sound only to change it and plays it straight back; nothing is recorded. The first time, macOS asks you to allow it.")
         }
     }
 
@@ -121,6 +147,8 @@ struct AppMixerRow: View {
     let name: String
     let symbol: String
     let bundleID: String?
+    var isFavorite = false
+    var isRecent = false
     @State private var showEQ = false
 
     private var settings: AppAudioSettings { engine.current(key) }
@@ -132,12 +160,22 @@ struct AppMixerRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(name).lineLimit(1)
                     if let problem = engine.problems[key] { Text(problem).font(.caption).foregroundStyle(Theme.warn).lineLimit(3) }
+                    else if let change = engine.timed[key] { TimedChangeLabel(change: change) }
                     else if !settings.isDefault { Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                    else if isRecent { Text("Played a moment ago").font(.caption).foregroundStyle(.tertiary) }
                 }
                 Spacer()
+                if key != AppAudioEngine.systemKey {
+                    Button { engine.setFavorite(key, !isFavorite) } label: { Image(systemName: isFavorite ? "star.fill" : "star").foregroundStyle(isFavorite ? Theme.warn : .secondary) }
+                        .buttonStyle(.borderless).accessibilityLabel(isFavorite ? "Remove favorite" : "Make favorite").help(isFavorite ? "Remove from favorites" : "Keep at the top of the mixer")
+                }
                 LevelMeter(level: engine.level(of: key)).frame(width: 46, height: 6)
                 Menu {
-                    Button("Equaliser…") { showEQ.toggle() }
+                    Button("Effects…") { showEQ.toggle() }
+                    TimedMuteMenu(key: key)
+                    if !settings.effectsAreFlat || settings.effectsBypassed {
+                        Button(settings.effectsBypassed ? "Use Effects Again" : "Bypass Effects") { engine.update(key) { $0.effectsBypassed.toggle() } }
+                    }
                     Menu("Output") {
                         Button { engine.update(key) { $0.outputs = [] } } label: { Label("Follow the Mac's output", systemImage: settings.outputs.isEmpty ? "checkmark" : "") }
                         ForEach(mixer.outputs) { device in
@@ -150,7 +188,8 @@ struct AppMixerRow: View {
                         Button("Save These Settings as a Profile…") { saveProfile() }
                     }
                     Divider()
-                    Button("Reset", role: .destructive) { engine.reset(key) }.disabled(settings.isDefault)
+                    Button("Reset", role: .destructive) { engine.reset(key) }.disabled(settings.isDefault && engine.timed[key] == nil)
+                    if key != AppAudioEngine.systemKey { Button("Leave This App Alone", role: .destructive) { engine.setExcluded(key, true) } }
                 } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("More")
                 .menuStyle(.borderlessButton).frame(width: 28)
             }
@@ -159,7 +198,7 @@ struct AppMixerRow: View {
                 Slider(value: Binding(get: { settings.volume }, set: { v in engine.update(key) { $0.volume = (abs(v - 1) < 0.03 ? 1 : v) } }), in: 0...AppAudioSettings.maxVolume)
                 Text("\(Int((settings.volume * 100).rounded()))%").monospacedDigit().font(.callout).foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
             }
-            if showEQ { EQView(key: key).transition(.opacity.combined(with: .move(edge: .top))) }
+            if showEQ { AppEffectsView(key: key).transition(.opacity.combined(with: .move(edge: .top))) }
         }
         .padding(.vertical, 2)
         .animation(.smooth(duration: 0.18), value: showEQ)
@@ -180,7 +219,11 @@ struct AppMixerRow: View {
             let names = settings.outputs.compactMap { uid in mixer.outputs.first { $0.uid == uid }?.name }
             parts.append(names.isEmpty ? "Other output" : names.joined(separator: " + "))
         }
-        if let preset = EQPreset.matching(settings.eq), preset != .flat { parts.append(preset.title) } else if !settings.eq.allSatisfy({ abs($0) < 0.01 }) { parts.append("Custom equaliser") }
+        if settings.effectsBypassed { parts.append("Effects bypassed") } else {
+            if let preset = EQPreset.matching(settings.eq), preset != .flat { parts.append(preset.title) } else if !settings.eq.allSatisfy({ abs($0) < 0.01 }) { parts.append("Custom equaliser") }
+            if abs(settings.preamp) >= 0.05 { parts.append(String(format: "Preamp %+.0f dB", settings.preamp)) }
+            if abs(settings.balance) >= 0.01 { parts.append("Balance \(settings.balance < 0 ? "left" : "right")") }
+        }
         return parts.joined(separator: " · ")
     }
 

@@ -222,4 +222,27 @@ final class AudioControl {
         var v = Float32(min(max(value, 0), 1))
         return AudioObjectSetPropertyData(device, &a, 0, nil, UInt32(MemoryLayout<Float32>.size), &v) == noErr
     }
+
+    // MARK: Latency and lookup
+
+    /// What a device adds before sound reaches it, in milliseconds: its own delay, its safety offset and one buffer. Nil if unknown.
+    func latencyMilliseconds(of device: AudioDeviceID, input: Bool = false) -> Double? {
+        let scope = input ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput
+        guard let rate = sampleRate(of: device), rate > 0 else { return nil }
+        func value(_ selector: AudioObjectPropertySelector) -> UInt32 {
+            var a = address(selector, scope: scope)
+            var v = UInt32(0)
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            return AudioObjectGetPropertyData(device, &a, 0, nil, &size, &v) == noErr ? v : 0
+        }
+        var b = address(kAudioDevicePropertyBufferFrameSize)
+        var buffer = UInt32(0)
+        var bsize = UInt32(MemoryLayout<UInt32>.size)
+        _ = AudioObjectGetPropertyData(device, &b, 0, nil, &bsize, &buffer)
+        let frames = value(kAudioDevicePropertyLatency) + value(kAudioDevicePropertySafetyOffset) + buffer
+        return frames == 0 ? nil : Double(frames) / rate * 1000
+    }
+
+    /// The device with this unique name, if it is connected.
+    func device(uid: String) -> AudioDevice? { devices().first { $0.uid == uid } }
 }

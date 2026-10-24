@@ -6,9 +6,11 @@ import SwiftUI
 /// A speaker in the menu bar. Click for the mixer; right-click for outputs and quick mutes.
 final class SoundStatusItem: NSObject, NSPopoverDelegate {
     static let enabledKey = "soundMenuBar.enabled"
+    static let toggleNotification = Notification.Name("kriya.sound.toggleMixer")
     private let engine: AppAudioEngine
     private let mixer: SoundMixerModel
     private let openSettings: () -> Void
+    var quickConfigs: QuickConfigStore?
     private var item: NSStatusItem?
     private let popover = NSPopover()
     private var cancellables = Set<AnyCancellable>()
@@ -24,7 +26,15 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate {
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.sync() }.store(in: &cancellables)
         mixer.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.refreshIcon() } }.store(in: &cancellables)
+        NotificationCenter.default.publisher(for: Self.toggleNotification).receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.toggleMixer() }.store(in: &cancellables)
         sync()
+    }
+
+    /// Opens or closes the mixer from a shortcut, even when the menu-bar speaker is switched off.
+    private func toggleMixer() {
+        if item == nil { UserDefaults.standard.set(true, forKey: Self.enabledKey); sync() }
+        if let button = item?.button { clicked(button, forcing: true) }
     }
 
     private func sync() {
@@ -57,13 +67,16 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate {
         button.image = image
     }
 
-    @objc private func clicked(_ sender: NSStatusBarButton) {
-        guard let event = NSApp.currentEvent else { return }
-        if event.type == .rightMouseUp || event.modifierFlags.contains(.control) { popover.performClose(nil); showMenu(); return }
+    @objc private func clicked(_ sender: NSStatusBarButton) { clicked(sender, forcing: false) }
+
+    private func clicked(_ sender: NSStatusBarButton, forcing: Bool) {
+        let event = NSApp.currentEvent
+        if !forcing, let event, event.type == .rightMouseUp || event.modifierFlags.contains(.control) { popover.performClose(nil); showMenu(); return }
+        if !forcing, event == nil { return }
         if popover.isShown { popover.performClose(nil); return }
         let view = ScrollView { Form { SoundMixerContent() }.formStyle(.grouped).scrollDisabled(true) }
             .frame(width: 400, height: 560)
-            .environmentObject(engine).environmentObject(mixer)
+            .environmentObject(engine).environmentObject(mixer).environmentObject(quickConfigs ?? QuickConfigStore(engine: engine))
         popover.contentViewController = NSHostingController(rootView: view)
         popover.contentSize = NSSize(width: 400, height: 560)
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)

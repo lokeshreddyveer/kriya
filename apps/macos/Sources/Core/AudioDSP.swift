@@ -41,10 +41,17 @@ final class AudioProcessor {
     private var z1 = [Float](repeating: 0, count: EQBands.count * AudioProcessor.maxChannels)
     private var z2 = [Float](repeating: 0, count: EQBands.count * AudioProcessor.maxChannels)
     private var currentGain: Float = 1
+    private var currentPreamp: Float = 1
 
     /// Set from any thread; read on the audio thread.
     var targetGain: Float = 1
     var muted = false
+    /// Gain in front of the equaliser, from the preamp setting (1 is unchanged).
+    var preampGain: Float = 1
+    /// -1 all left, 0 centred, 1 all right.
+    var balance: Float = 0
+    /// A timed mute or turn-down on top of everything else; 1 does nothing.
+    var tempGain: Float = 1
     /// Loudest sample in the last buffer, 0...1+, for the activity meter.
     private(set) var peak: Float = 0
 
@@ -64,15 +71,21 @@ final class AudioProcessor {
         let locked = os_unfair_lock_trylock(&lock)
         let useEQ = locked && !flat
         let start = currentGain
-        let end = muted ? 0 : targetGain
+        let end = muted ? 0 : targetGain * tempGain
         currentGain = end
         let step = (end - start) / Float(frames)
+        let preStart = currentPreamp
+        let preEnd = preampGain
+        currentPreamp = preEnd
+        let preStep = (preEnd - preStart) / Float(frames)
+        let sides = SoundBalance.gains(balance)
         var maxSample: Float = 0
         for frame in 0..<frames {
             let g = start + step * Float(frame)
+            let pre = preStart + preStep * Float(frame)
             for ch in 0..<channels {
                 let index = frame * channels + ch
-                var x = input[index]
+                var x = input[index] * pre
                 if useEQ {
                     let slot = min(firstChannel + ch, Self.maxChannels - 1)
                     for band in 0..<EQBands.count {
@@ -85,7 +98,9 @@ final class AudioProcessor {
                         x = y
                     }
                 }
-                x = Self.softClip(x * g)
+                let channel = firstChannel + ch
+                let side: Float = channel == 0 ? sides.left : (channel == 1 ? sides.right : 1)
+                x = Self.softClip(x * g * side)
                 maxSample = max(maxSample, abs(x))
                 output[index] = x
             }
@@ -151,15 +166,40 @@ struct AppAudioSettings: Codable, Equatable {
     /// UIDs of the output devices. Empty means the Mac's current output. More than one plays on all of them at once.
     var outputs: [String] = []
     var eq: [Float] = EQPreset.flat.gains
+    /// Gain in front of the equaliser, in decibels, -12...12.
+    var preamp: Float = 0
+    /// -1 all left, 0 centred, 1 all right.
+    var balance: Float = 0
+    /// Plays the sound without the equaliser, preamp and balance, keeping them set for later.
+    var effectsBypassed = false
 
     static let maxVolume = 4.0
 
-    var isDefault: Bool { abs(volume - 1) < 0.005 && !muted && outputs.isEmpty && eq.allSatisfy { abs($0) < 0.01 } }
+    init() {}
+
+    // Settings saved before the preamp, balance and bypass existed have no such keys; they load as unchanged.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        volume = try c.decodeIfPresent(Double.self, forKey: .volume) ?? 1
+        muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+        outputs = try c.decodeIfPresent([String].self, forKey: .outputs) ?? []
+        eq = try c.decodeIfPresent([Float].self, forKey: .eq) ?? EQPreset.flat.gains
+        preamp = try c.decodeIfPresent(Float.self, forKey: .preamp) ?? 0
+        balance = try c.decodeIfPresent(Float.self, forKey: .balance) ?? 0
+        effectsBypassed = try c.decodeIfPresent(Bool.self, forKey: .effectsBypassed) ?? false
+    }
+
+    /// Whether the equaliser, preamp and balance all do nothing.
+    var effectsAreFlat: Bool { eq.allSatisfy { abs($0) < 0.01 } && abs(preamp) < 0.05 && abs(balance) < 0.01 }
+
+    var isDefault: Bool { abs(volume - 1) < 0.005 && !muted && outputs.isEmpty && effectsAreFlat }
 
     var clamped: AppAudioSettings {
         var s = self
         s.volume = min(max(volume, 0), Self.maxVolume)
         s.eq = EQBands.clamped(eq)
+        s.preamp = min(max(preamp, -SoundPreamp.limit), SoundPreamp.limit)
+        s.balance = min(max(balance, -1), 1)
         return s
     }
 }

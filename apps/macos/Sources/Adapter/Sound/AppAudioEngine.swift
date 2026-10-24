@@ -10,6 +10,9 @@ struct AudioApp: Identifiable, Equatable {
     let bundleID: String
     var isPlaying: Bool
     var level: Float
+    var isFavorite = false
+    /// Was playing a little while ago and is only kept in the list for now.
+    var isRecent = false
 }
 
 /// One running change to the sound of one app (or of everything): Kriya taps the app's audio with Core Audio, shapes it, and
@@ -90,10 +93,16 @@ final class AudioSession {
 
     func apply(_ settings: AppAudioSettings) {
         let s = settings.clamped
+        let effects = !s.effectsBypassed
         processor.targetGain = Float(s.volume)
         processor.muted = s.muted
-        processor.setEQ(gains: s.eq, sampleRate: Float(sampleRate()))
+        processor.preampGain = effects ? SoundBalance.preampGain(db: s.preamp) : 1
+        processor.balance = effects ? s.balance : 0
+        processor.setEQ(gains: effects ? s.eq : EQPreset.flat.gains, sampleRate: Float(sampleRate()))
     }
+
+    /// A timed mute or turn-down on top of the settings.
+    func setTemporary(_ factor: Float) { processor.tempGain = factor }
 
     func stop() {
         if aggregateID != kAudioObjectUnknown, let procID {
@@ -148,11 +157,31 @@ final class AppAudioEngine: ObservableObject {
     static let systemKey = "system"
     private static let storeKey = "appAudio.settings.v1"
     private static let profilesKey = "appAudio.profiles.v1"
+    private static let favoritesKey = "appAudio.favorites.v1"
+    private static let excludedKey = "appAudio.excluded.v1"
+    private static let recentKey = "appAudio.recentMinutes"
+    private static let alertsKey = "soundAlerts.v1"
 
     @Published private(set) var apps: [AudioApp] = []
     @Published private(set) var settings: [String: AppAudioSettings]
     @Published var profiles: [AppAudioProfile] { didSet { saveProfiles() } }
-    @Published private(set) var problems: [String: String] = [:]
+    @Published private(set) var problems: [String: String] = [:] {
+        didSet {
+            for (key, message) in problems where oldValue[key] != message { recordAlert(key: key, message: message) }
+        }
+    }
+    /// Apps shown at the top of the mixer, in the order the person put them.
+    @Published private(set) var favorites: [String]
+    /// Apps Kriya never touches: no listening, no settings applied, not shown.
+    @Published private(set) var excluded: Set<String>
+    /// Mutes and turn-downs that end by themselves, by app.
+    @Published private(set) var timed: [String: TimedChange] = [:]
+    /// What went wrong lately, newest first.
+    @Published private(set) var alerts: [SoundAlert]
+    /// How long an app that stopped playing stays in the list.
+    @Published var recentMinutes: Int { didSet { defaults.set(recentMinutes, forKey: Self.recentKey) } }
+    private var lastPlayed: [String: Date] = [:]
+    private var tick: Timer?
 
     private let defaults: UserDefaults
     /// Sessions need macOS 14.2; they are held as plain objects so the rest of the app can build for older systems.
@@ -180,6 +209,11 @@ final class AppAudioEngine: ObservableObject {
         self.defaults = defaults
         settings = (defaults.data(forKey: Self.storeKey).flatMap { try? JSONDecoder().decode([String: AppAudioSettings].self, from: $0) }) ?? [:]
         profiles = (defaults.data(forKey: Self.profilesKey).flatMap { try? JSONDecoder().decode([AppAudioProfile].self, from: $0) }) ?? []
+        favorites = defaults.stringArray(forKey: Self.favoritesKey) ?? []
+        excluded = Set(defaults.stringArray(forKey: Self.excludedKey) ?? [])
+        alerts = (defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode([SoundAlert].self, from: $0) }) ?? []
+        let minutes = defaults.object(forKey: Self.recentKey) as? Int ?? SoundAppList.defaultRecentMinutes
+        recentMinutes = min(max(minutes, 1), 240)
     }
 
     deinit { stopAll() }
@@ -199,7 +233,7 @@ final class AppAudioEngine: ObservableObject {
 
     private func scheduleTimer() {
         timer?.invalidate(); timer = nil
-        let busy = settings.values.contains { !$0.isDefault }
+        let busy = settings.values.contains { !$0.isDefault } || !timed.isEmpty
         guard viewers > 0 || busy else { return }
         let t = Timer(timeInterval: viewers > 0 ? 1.5 : 5, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(t, forMode: .common)
@@ -220,7 +254,110 @@ final class AppAudioEngine: ObservableObject {
         scheduleTimer()
     }
 
-    func reset(_ key: String) { update(key) { $0 = AppAudioSettings() } }
+    func reset(_ key: String) { timed[key] = nil; update(key) { $0 = AppAudioSettings() } }
+
+    // MARK: Favorites, excluded apps, alerts
+
+    func isFavorite(_ key: String) -> Bool { favorites.contains(key) }
+
+    func setFavorite(_ key: String, _ on: Bool) {
+        if on, !favorites.contains(key), key != Self.systemKey { favorites.append(key) }
+        if !on { favorites.removeAll { $0 == key } }
+        defaults.set(favorites, forKey: Self.favoritesKey)
+        refresh()
+    }
+
+    func moveFavorite(_ key: String, by offset: Int) {
+        favorites = SoundAppList.move(key, by: offset, in: favorites)
+        defaults.set(favorites, forKey: Self.favoritesKey)
+        refresh()
+    }
+
+    func setExcluded(_ key: String, _ on: Bool) {
+        if on {
+            excluded.insert(key)
+            timed[key] = nil
+            stopSession(key)
+            problems[key] = nil
+        } else {
+            excluded.remove(key)
+        }
+        defaults.set(excluded.sorted(), forKey: Self.excludedKey)
+        refresh()
+    }
+
+    private func recordAlert(key: String, message: String) {
+        guard !message.isEmpty else { return }
+        alerts = SoundAlert.adding(SoundAlert(at: Date(), app: AudioProcessList.name(for: key), message: message), to: alerts)
+        if let data = try? JSONEncoder().encode(alerts) { defaults.set(data, forKey: Self.alertsKey) }
+    }
+
+    func clearAlerts() {
+        alerts = []
+        defaults.removeObject(forKey: Self.alertsKey)
+    }
+
+    // MARK: Timed mute and turn-down
+
+    /// Mutes (level 0) or turns down one app for a while, fading out first and back in after if asked. A change already running for
+    /// the app is replaced.
+    func startTimed(_ key: String, level: Float, duration: TimeInterval, fadeOut: TimeInterval = 0, fadeIn: TimeInterval = 0) {
+        guard !excluded.contains(key) else { return }
+        timed[key] = TimedChange(level: min(max(level, 0), 1), duration: max(duration, 1), fadeOut: max(fadeOut, 0), fadeIn: max(fadeIn, 0), start: Date())
+        applySession(for: key)
+        startTick()
+    }
+
+    func cancelTimed(_ key: String) {
+        guard timed[key] != nil else { return }
+        timed[key] = nil
+        endTemporary(key)
+    }
+
+    func cancelAllTimed() { for key in Array(timed.keys) { cancelTimed(key) } }
+
+    private func endTemporary(_ key: String) {
+        if #available(macOS 14.2, *) { session(key)?.setTemporary(1) }
+        if current(key).isDefault { stopSession(key); problems[key] = nil }
+    }
+
+    private func startTick() {
+        guard tick == nil else { return }
+        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.stepTimed() }
+        RunLoop.main.add(t, forMode: .common)
+        tick = t
+    }
+
+    private func stepTimed() {
+        let now = Date()
+        for (key, change) in timed {
+            if change.isFinished(at: now) { timed[key] = nil; endTemporary(key); continue }
+            if #available(macOS 14.2, *) { session(key)?.setTemporary(change.factor(at: now)) }
+        }
+        if timed.isEmpty { tick?.invalidate(); tick = nil }
+    }
+
+    // MARK: Whole setups
+
+    /// Puts every app back to exactly what a saved setup had, and its favorites.
+    func replaceAll(settings next: [String: AppAudioSettings], favorites list: [String]) {
+        let clean = next.mapValues(\.clamped).filter { !$0.value.isDefault }
+        let before = Set(settings.keys)
+        settings = clean
+        favorites = list.filter { $0 != Self.systemKey }
+        defaults.set(favorites, forKey: Self.favoritesKey)
+        save()
+        for key in before.union(clean.keys) { applySession(for: key) }
+        scheduleTimer()
+        refresh()
+    }
+
+    /// The app in front, as the mixer names it.
+    func frontAppKey() -> String? {
+        guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return nil }
+        let key = AudioProcessList.groupKey(forBundleID: id)
+        return excluded.contains(key) ? nil : key
+    }
 
     func apply(profile: AppAudioProfile, to key: String) { update(key) { $0 = profile.settings } }
 
@@ -239,7 +376,8 @@ final class AppAudioEngine: ObservableObject {
 
     private func applySession(for key: String) {
         let s = current(key)
-        if s.isDefault {
+        if excluded.contains(key) { stopSession(key); problems[key] = nil; return }
+        if s.isDefault, timed[key] == nil {
             stopSession(key); problems[key] = nil
             return
         }
@@ -253,6 +391,7 @@ final class AppAudioEngine: ObservableObject {
             stopSession(key)
         } else {
             problems[key] = nil
+            if let change = timed[key] { session.setTemporary(change.factor(at: Date())) }
         }
     }
 
@@ -263,20 +402,21 @@ final class AppAudioEngine: ObservableObject {
         var groups: [String: [AudioProcessList.Entry]] = [:]
         for entry in all { groups[AudioProcessList.groupKey(for: entry), default: []].append(entry) }
 
-        var list: [AudioApp] = groups.compactMap { key, entries in
-            guard !key.isEmpty, key != "\(Bundle.main.bundleIdentifier ?? "")" else { return nil }
-            let playing = entries.contains { $0.isOutputRunning }
-            guard playing || settings[key] != nil else { return nil }
-            return AudioApp(id: key, name: AudioProcessList.name(for: key), bundleID: key, isPlaying: playing, level: peak(of: key))
+        let now = Date()
+        var playing = Set<String>()
+        for (key, entries) in groups where !key.isEmpty && key != "\(Bundle.main.bundleIdentifier ?? "")" && entries.contains(where: { $0.isOutputRunning }) {
+            playing.insert(key)
+            lastPlayed[key] = now
         }
-        // Apps that have settings but are not running still show, so they can be changed or reset.
-        for key in settings.keys where key != Self.systemKey && !list.contains(where: { $0.id == key }) {
-            list.append(AudioApp(id: key, name: AudioProcessList.name(for: key), bundleID: key, isPlaying: false, level: 0))
+        let entries = SoundAppList.entries(
+            playing: playing, favorites: favorites, withSettings: Set(settings.keys).subtracting([Self.systemKey]), lastPlayed: lastPlayed,
+            excluded: excluded, now: now, recentWindow: TimeInterval(recentMinutes * 60), name: { AudioProcessList.name(for: $0) })
+        let list: [AudioApp] = entries.map { e in
+            AudioApp(id: e.id, name: AudioProcessList.name(for: e.id), bundleID: e.id, isPlaying: e.isPlaying, level: peak(of: e.id), isFavorite: e.isFavorite, isRecent: e.isRecent && !e.isPlaying)
         }
-        list.sort { ($0.isPlaying ? 0 : 1, $0.name.lowercased()) < ($1.isPlaying ? 0 : 1, $1.name.lowercased()) }
         if list != apps { apps = list }
 
-        for (key, s) in settings where !s.isDefault && key != Self.systemKey {
+        for key in Set(settings.keys).union(timed.keys) where key != Self.systemKey && !excluded.contains(key) && (!current(key).isDefault || timed[key] != nil) {
             let present = Set((groups[key] ?? []).map(\.object))
             if sessions[key] == nil, !present.isEmpty { applySession(for: key) }
             else if sessions[key] != nil {

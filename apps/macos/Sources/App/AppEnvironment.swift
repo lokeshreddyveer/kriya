@@ -37,6 +37,11 @@ final class AppEnvironment {
     let notes = NotesController()
     let clipboardRules = ClipboardRuleStore()
     let appAudio = AppAudioEngine()
+    lazy var quickConfigs = QuickConfigStore(engine: appAudio)
+    private var quickConfigSub: AnyCancellable?
+    private var quickConfigCommands = Set<String>()
+    private var deviceCommandSubs: [AnyCancellable] = []
+    private var deviceCommands = Set<String>()
     let soundMixer = SoundMixerModel()
     let soundRules = SoundRuleRunner()
     private var pageCapture: PageCaptureService?
@@ -420,11 +425,15 @@ final class AppEnvironment {
                 }
             }
         }
-        KeyboardCommands.extra = { [weak automation, weak soundRules] in
+        registerSoundCommands()
+        KeyboardCommands.extra = { [weak automation, weak soundRules, weak self] in
             [(command: "automation.macros", title: "Show the macro menu (workflows by group, for the front app)"),
              (command: "finder.drawer", title: "Show or hide the Finder drawer (selection and kept files)"),
              (command: "sound.restore", title: "Put the sound back how it was before Kriya changed it")]
                 + (soundRules?.modes ?? []).map { (command: "sound.mode.\($0.id)", title: "Sound mode: \($0.name) (turn on or off)") }
+                + (self?.quickConfigs.configs ?? []).map { (command: QuickConfigStore.command(for: $0.id), title: "Quick Config: \($0.name)") }
+                + (self?.soundMixer.outputs ?? []).map { (command: "sound.set_output.\($0.uid)", title: "Sound output: \(DeviceNames.shared.name(for: $0))") }
+                + (self?.soundMixer.inputs ?? []).map { (command: "sound.set_input.\($0.uid)", title: "Sound input: \(DeviceNames.shared.name(for: $0))") }
                 + (automation?.store.workflows ?? []).filter(\.enabled).map { (command: workflowCommand(workflow: $0), title: "Workflow: \($0.name)") }
         }
         keyboard.palette.addProvider { [weak automation] in
@@ -519,6 +528,7 @@ extension View {
             .environmentObject(env.notes)
             .environmentObject(env.appAudio)
             .environmentObject(env.soundMixer)
+            .environmentObject(env.quickConfigs)
             .environmentObject(env.soundRules)
             .environmentObject(env.focusSession)
             .environmentObject(env.worldClock)
@@ -580,6 +590,53 @@ extension EnvironmentValues {
 
 
 extension AppEnvironment {
+    /// Shortcut-ready commands for the sound mixer: the app in front, timed mutes, saved setups and the devices.
+    fileprivate func registerSoundCommands() {
+        let engine = appAudio
+        func onFront(_ change: @escaping (AppAudioEngine, String) -> Void) -> () -> Void {
+            { DispatchQueue.main.async { if let key = engine.frontAppKey() { change(engine, key) } } }
+        }
+        let fade = { UserDefaults.standard.object(forKey: "soundTimedFadeSeconds") as? Double ?? 2 }
+        executor.registerCommand("sound.mixer.toggle") { NotificationCenter.default.post(name: SoundStatusItem.toggleNotification, object: nil) }
+        executor.registerCommand("sound.front.mute", handler: onFront { e, k in e.update(k) { $0.muted.toggle() } })
+        executor.registerCommand("sound.front.volume_up", handler: onFront { e, k in e.update(k) { $0.volume = min($0.volume + 0.1, AppAudioSettings.maxVolume) } })
+        executor.registerCommand("sound.front.volume_down", handler: onFront { e, k in e.update(k) { $0.volume = max($0.volume - 0.1, 0) } })
+        executor.registerCommand("sound.front.bypass_effects", handler: onFront { e, k in e.update(k) { $0.effectsBypassed.toggle() } })
+        executor.registerCommand("sound.front.reset_effects", handler: onFront { e, k in e.update(k) { $0.eq = EQPreset.flat.gains; $0.preamp = 0; $0.balance = 0; $0.effectsBypassed = false } })
+        executor.registerCommand("sound.front.reset", handler: onFront { e, k in e.reset(k) })
+        for seconds in [30, 60, 120] {
+            executor.registerCommand("sound.front.mute_\(seconds)", handler: onFront { e, k in e.startTimed(k, level: 0, duration: TimeInterval(seconds), fadeOut: fade(), fadeIn: fade()) })
+        }
+        executor.registerCommand("sound.timer.cancel") { DispatchQueue.main.async { engine.cancelAllTimed() } }
+        executor.registerCommand("sound.effects.toggle_all") { DispatchQueue.main.async { engine.update(AppAudioEngine.systemKey) { $0.effectsBypassed.toggle() } } }
+
+        quickConfigSub = quickConfigs.$configs.receive(on: DispatchQueue.main).sink { [weak self] configs in
+            guard let self else { return }
+            for command in self.quickConfigCommands { self.executor.unregisterCommand(command) }
+            self.quickConfigCommands = Set(configs.map { QuickConfigStore.command(for: $0.id) })
+            for config in configs {
+                let id = config.id
+                self.executor.registerCommand(QuickConfigStore.command(for: id)) { [weak self] in DispatchQueue.main.async { self?.quickConfigs.apply(id) } }
+            }
+        }
+        soundMixer.refresh()
+        let register: ([AudioDevice], Bool) -> Void = { [weak self] devices, isInput in
+            guard let self else { return }
+            let prefix = isInput ? "sound.set_input." : "sound.set_output."
+            for device in devices {
+                let command = prefix + device.uid
+                self.deviceCommands.insert(command)
+                self.executor.registerCommand(command) { [weak self] in
+                    DispatchQueue.main.async { if let d = AudioControl.shared.device(uid: device.uid) { AudioControl.shared.setDefault(d); self?.soundMixer.refresh() } }
+                }
+            }
+        }
+        deviceCommandSubs = [
+            soundMixer.$outputs.receive(on: DispatchQueue.main).sink { register($0, false) },
+            soundMixer.$inputs.receive(on: DispatchQueue.main).sink { register($0, true) },
+        ]
+    }
+
     /// Connects the tools an AI may ask for to the parts of Kriya that do the work. A tool whose part is not connected here says it
     /// is not available.
     fileprivate func configureAITools() {
