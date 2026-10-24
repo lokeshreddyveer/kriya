@@ -404,6 +404,12 @@ final class AppEnvironment {
         services.register(AuxiliaryService(id: "midi", title: "MIDI triggers", start: { MIDITriggerRunner.shared.start() }, stop: { MIDITriggerRunner.shared.stop() }, isActive: { MIDITriggerRunner.shared.isActive }))
         services.register(AuxiliaryService(id: "safariInbox", title: "Safari inbox", start: { [weak safariInbox] in safariInbox?.start() }, stop: { [weak safariInbox] in safariInbox?.stop() }))
         services.register(AuxiliaryService(id: "mcpServer", title: "MCP server", start: { MCPHTTPServer.shared.start() }, stop: { MCPHTTPServer.shared.stop() }, isActive: { MCPHTTPServer.shared.isActive }))
+        SettingsReloader.register(.sound) { [appAudio, soundRules] in
+            appAudio.reload()
+            soundRules.reload()
+            DevicePriorityRunner.shared.reload()
+            LocationAudioRunner.shared.reload()
+        }
         services.register(AuxiliaryService(id: "locationAudio", title: "Sound by place", blockedWhenDenied: [.location], start: { LocationAudioRunner.shared.start() }, stop: { LocationAudioRunner.shared.stop() }, isActive: { LocationAudioRunner.shared.isActive }))
         services.register(AuxiliaryService(id: "soundDevices", title: "Sound device order", start: { DevicePriorityRunner.shared.start() }, stop: { DevicePriorityRunner.shared.stop() }, isActive: { DevicePriorityRunner.shared.isActive }))
         AutoEQRunner.shared.target = appAudio

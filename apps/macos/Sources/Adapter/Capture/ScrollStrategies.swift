@@ -161,12 +161,15 @@ final class AccessibilityScroller {
         return CGRect(origin: point, size: dims)
     }
 
-    /// The size of what the scroll area holds: its biggest child.
+    /// The size of what the scroll area holds: the box around all its children, so a document made of several blocks is measured whole,
+    /// not by its biggest block.
     private static func contentSize(of area: AXUIElement) -> CGSize? {
         var out: CFTypeRef?
         guard AXUIElementCopyAttributeValue(area, kAXChildrenAttribute as CFString, &out) == .success, let children = out as? [AXUIElement] else { return nil }
-        let sizes = children.compactMap { frame(of: $0)?.size }
-        return sizes.max { $0.height * $0.width < $1.height * $1.width }
+        let frames = children.compactMap { frame(of: $0) }.filter { $0.width > 0 && $0.height > 0 }
+        guard let first = frames.first else { return nil }
+        let box = frames.dropFirst().reduce(first) { $0.union($1) }
+        return box.size
     }
 
     private func value(_ element: AXUIElement?) -> Double? {

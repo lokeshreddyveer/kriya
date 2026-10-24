@@ -343,7 +343,7 @@ enum SettingsIndex {
         e("workspaces", nil, "Workspaces", "app groups focus favourite windows"), e("buttons", nil, "Window buttons", "red yellow green traffic lights"),
         e("displays", "Displays", "Displays and resolution", "refresh dimming arrangement"), e("displays", "Monitor Controls", "Monitor brightness and input (DDC)", "external monitor preset hdmi displayport"),
         e("displays", "Profiles", "Display profiles", "save arrangement"), e("displays", "Hot Corners", "Hot corners", "screen edges"),
-        e("finder", "Actions", "Finder actions", "copy move rename compress convert undo recent operations"), e("finder", "Templates", "File and folder templates", "new file"),
+        e("finder", "Actions", "Finder actions", "copy move rename compress convert undo recent operations"), e("finder", "Templates", "File and folder templates", "new file"), e("finder", "Menus", "Finder right-click menus", "context menu items submenu order"),
         e("finder", "Apps", "Open With and app defaults", "terminal"), e("finder", "Pointer Menu", "Pointer menu", "right-click"),
         e("finder", "Setup", "Finder extension", "drawer window history folder sets open save dialog folders"),
         e("folderRules", nil, "Folder rules", "watch move archive trash dry run undo"),

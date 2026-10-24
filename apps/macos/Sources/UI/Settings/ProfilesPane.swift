@@ -94,6 +94,7 @@ struct ProfilesPane: View {
 private struct ProfileDetail: View {
     let profile: Profile
     @EnvironmentObject private var store: ProfileStore
+    @State private var saveProblem: String?
 
     private enum Choice: Hashable { case inherit, on, off }
 
@@ -128,12 +129,16 @@ private struct ProfileDetail: View {
                         set: { on in
                             var updated = profile
                             updated.isEnabled = on
-                            try? store.save(updated)
+                            do { try store.save(updated); saveProblem = nil } catch { saveProblem = error.userMessage }
                         }
                     ))
                 }
             } header: {
                 Text(profile.name)
+            }
+
+            if let saveProblem {
+                Section { Label("Could not save this profile: \(saveProblem)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger).font(.callout) }
             }
 
             Section {

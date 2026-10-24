@@ -28,6 +28,11 @@ struct PermissionsPane: View {
                             if let permission = Permission.allCases.first(where: { $0.title == row.permission }) {
                                 let status = permissions.status(permission)
                                 StateBadge(text: status == .granted ? "Allowed" : status.label, color: status == .granted ? Theme.ok : status.color)
+                            } else if row.permission.localizedCaseInsensitiveContains("safari") {
+                                // Safari keeps this switch itself; Kriya cannot read it, so it shows where to set it.
+                                StateBadge(text: "Set in Safari", color: .secondary)
+                                Spacer()
+                                Button("Open Safari") { NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Safari.app")) }.controlSize(.small)
                             }
                         }
                         Text(row.features.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)

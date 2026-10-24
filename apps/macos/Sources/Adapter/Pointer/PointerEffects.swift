@@ -839,15 +839,22 @@ final class PointerEffects {
             shakeTrail.append((NSEvent.mouseLocation, now))
             shakeTrail.removeAll { now.timeIntervalSince($0.time) > 0.6 }
             // Several quick turns of direction along the same line is a shake.
-            var turns = 0
-            var lastDirection = 0.0
+            // Along either axis: a shake can be side to side or up and down.
+            var turnsX = 0, turnsY = 0
+            var lastX = 0.0, lastY = 0.0
             for index in 1..<max(shakeTrail.count, 1) {
                 let dx = shakeTrail[index].point.x - shakeTrail[index - 1].point.x
-                guard abs(dx) > 8 else { continue }
-                if lastDirection != 0, dx.sign != lastDirection.sign { turns += 1 }
-                lastDirection = dx
+                let dy = shakeTrail[index].point.y - shakeTrail[index - 1].point.y
+                if abs(dx) > 8 {
+                    if lastX != 0, dx.sign != lastX.sign { turnsX += 1 }
+                    lastX = dx
+                }
+                if abs(dy) > 8 {
+                    if lastY != 0, dy.sign != lastY.sign { turnsY += 1 }
+                    lastY = dy
+                }
             }
-            if turns >= 4, now.timeIntervalSince(lastShakeFind) > 1.5 {
+            if max(turnsX, turnsY) >= 4, now.timeIntervalSince(lastShakeFind) > 1.5 {
                 lastShakeFind = now
                 shakeTrail.removeAll()
                 locate()

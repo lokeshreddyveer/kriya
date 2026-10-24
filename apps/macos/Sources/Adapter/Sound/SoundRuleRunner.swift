@@ -60,6 +60,16 @@ final class SoundRuleRunner: ObservableObject {
         deviceVolumes = defaults.data(forKey: "soundDeviceVolumes.v1").flatMap { try? JSONDecoder().decode(DeviceVolumes.self, from: $0) } ?? DeviceVolumes()
     }
 
+    /// Reads the saved rules, modes and volumes again after a restore, so open screens and the running checks use them now.
+    func reload() {
+        rules = (defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([SoundRule].self, from: $0) }) ?? []
+        modes = defaults.data(forKey: Self.modesKey).flatMap { try? JSONDecoder().decode([SoundMode].self, from: $0) } ?? SoundMode.starters
+        remembersVolumes = defaults.bool(forKey: "soundRemembersVolumes")
+        notifiesDevices = defaults.bool(forKey: "soundNotifiesDevices")
+        deviceVolumes = defaults.data(forKey: "soundDeviceVolumes.v1").flatMap { try? JSONDecoder().decode(DeviceVolumes.self, from: $0) } ?? DeviceVolumes()
+        if let active = activeModeID, !modes.contains(where: { $0.id == active }) { activeModeID = nil }
+    }
+
     func start() {
         guard timer == nil else { return }
         knownDevices = Set(audio.devices().map(\.name))

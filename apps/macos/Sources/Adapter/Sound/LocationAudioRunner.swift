@@ -17,6 +17,13 @@ final class LocationAudioRunner: NSObject, ObservableObject, CLLocationManagerDe
     private let manager = CLLocationManager()
     private var started = false
 
+    /// Reads the saved places again after a restore.
+    func reload() {
+        places = UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([PlaceRule].self, from: $0) } ?? []
+        let on = UserDefaults.standard.bool(forKey: Self.enabledKey)
+        if on != enabled { enabled = on }
+    }
+
     private override init() {
         places = UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([PlaceRule].self, from: $0) } ?? []
         enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)

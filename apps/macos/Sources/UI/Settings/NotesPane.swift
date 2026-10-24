@@ -6,6 +6,7 @@ struct NotesPane: View {
     @State private var saved: [URL] = []
     @State private var lockedCount = 0
     @State private var pinnedCount = 0
+    @State private var problem: String?
 
     var body: some View {
         Form {
@@ -25,6 +26,8 @@ struct NotesPane: View {
                 Text("A locked note is encrypted with a key kept in your Keychain. Its title and text are never searched or shown in lists. If that Keychain key is lost, for example after erasing this Mac without a backup of the Keychain, the note cannot be read again and Kriya cannot recover it. Unlock a note first if you want a plain copy that any app can open.")
                     .font(.callout).foregroundStyle(.secondary)
             } header: { Text("Locked notes") }
+
+            if let problem { Section { Label(problem, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger).font(.callout) } }
 
             Section {
                 if saved.isEmpty { Text("No saved templates. Use “Save This Note as a Template…” in the notes window.").font(.callout).foregroundStyle(.secondary) }
@@ -59,7 +62,7 @@ struct NotesPane: View {
     }
 
     private func delete(_ url: URL) {
-        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        do { try FileManager.default.trashItem(at: url, resultingItemURL: nil); problem = nil } catch { problem = "“\(url.deletingPathExtension().lastPathComponent)” could not be moved to the Trash: \(error.localizedDescription)" }
         withAnimation(.smooth(duration: 0.2)) { refresh() }
     }
 

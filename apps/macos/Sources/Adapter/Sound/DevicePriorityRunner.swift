@@ -46,6 +46,17 @@ final class DevicePriorityRunner: ObservableObject {
 
     var isActive: Bool { started }
 
+    /// Reads the saved order and switches again after a restore.
+    func reload() {
+        let defaults = UserDefaults.standard
+        outputPriority = defaults.stringArray(forKey: Self.outputKey) ?? []
+        inputPriority = defaults.stringArray(forKey: Self.inputKey) ?? []
+        savedNames = defaults.dictionary(forKey: "soundDevices.names.v1") as? [String: String] ?? [:]
+        switchBack = defaults.object(forKey: Self.switchBackKey) as? Bool ?? true
+        let on = defaults.bool(forKey: Self.enabledKey)
+        if on != enabled { enabled = on }
+    }
+
     func start() {
         guard enabled, !started else { return }
         started = true

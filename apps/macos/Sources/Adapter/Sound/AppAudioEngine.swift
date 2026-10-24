@@ -395,6 +395,24 @@ final class AppAudioEngine: ObservableObject {
 
     deinit { stopAll() }
 
+    /// Reads everything saved again, after a restore replaced it, and puts each app's setting into force now.
+    func reload() {
+        let before = Set(settings.keys)
+        settings = (defaults.data(forKey: Self.storeKey).flatMap { try? JSONDecoder().decode([String: AppAudioSettings].self, from: $0) }) ?? [:]
+        profiles = (defaults.data(forKey: Self.profilesKey).flatMap { try? JSONDecoder().decode([AppAudioProfile].self, from: $0) }) ?? []
+        favorites = defaults.stringArray(forKey: Self.favoritesKey) ?? []
+        excluded = Set(defaults.stringArray(forKey: Self.excludedKey) ?? [])
+        favoritePlugins = defaults.stringArray(forKey: Self.favoritePluginsKey) ?? []
+        menuBarApps = defaults.stringArray(forKey: Self.menuBarAppsKey) ?? []
+        boostApps = Set(defaults.stringArray(forKey: Self.boostKey) ?? [])
+        let minutes = defaults.object(forKey: Self.recentKey) as? Int ?? SoundAppList.defaultRecentMinutes
+        recentMinutes = min(max(minutes, 1), 240)
+        // Apps that had a setting and no longer do go back to normal; the rest get the restored one.
+        for key in before.union(settings.keys) { applySession(for: key) }
+        refresh()
+        scheduleTimer()
+    }
+
     // MARK: Starting and stopping
 
     /// Brings back what was set before, and keeps new processes of those apps covered.

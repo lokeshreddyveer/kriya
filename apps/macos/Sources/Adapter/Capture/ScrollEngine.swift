@@ -267,12 +267,14 @@ final class ScrollEngine {
             if frames.count >= maxFrames || frames.count * firstShot.width * firstShot.height >= maxPixels { reason = "Stopped: that is as much as fits in memory."; hitLimit = true; break }
             let way = current()
             let before = await world.position(axis: axis)
-            _ = await world.scroll(by: way.direction * step, axis: axis, using: way.strategy)
+            let acted = await world.scroll(by: way.direction * step, axis: axis, using: way.strategy)
             let (shot, sig) = try await settled(axis)
             let after = await world.position(axis: axis)
             if let after { onPosition(after.fraction) }
 
-            if ScrollMatch.same(sig, sigs[sigs.count - 1]) {
+            // A way of scrolling that says it could not act is not trusted to explain a change in the picture: an animation, a loading
+            // spinner or the cursor can change it without the page having moved.
+            if !acted || ScrollMatch.same(sig, sigs[sigs.count - 1]) {
                 // The page did not move. At the start that means this way of scrolling does not work here (or goes the other way):
                 // try the next. Later it means the end, once a few more looks have given a slow page time to load more.
                 if frames.count == 1, wayIndex + 1 < ways.count {

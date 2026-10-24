@@ -234,7 +234,7 @@ private struct MousePresetsTab: View {
             sidebar.frame(width: 220)
             Divider()
             if let preset = selected {
-                PresetEditor(preset: preset)
+                PresetEditor(preset: preset, onSelect: { id in withAnimation(.smooth) { selectedID = id } })
                     .id(preset.id)
                     .transition(.opacity)
                     .frame(maxWidth: .infinity)
@@ -335,6 +335,8 @@ private struct MousePresetsTab: View {
 
 private struct PresetEditor: View {
     let preset: MousePreset
+    /// Called with the id of a preset this editor made, so the list shows the new one.
+    var onSelect: (String) -> Void = { _ in }
     @EnvironmentObject private var mouse: MouseStore
 
     @State private var section: Section = .scrolling
@@ -372,6 +374,10 @@ private struct PresetEditor: View {
         .onAppear { name = preset.name }
     }
 
+    private func duplicateToEdit(_ id: String) {
+        if let copy = mouse.duplicate(presetID: id) { onSelect(copy) }
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -394,7 +400,7 @@ private struct PresetEditor: View {
                     Image(systemName: "lock").foregroundStyle(.secondary)
                     Text("Built-in presets cannot be changed.")
                         .font(.callout).foregroundStyle(.secondary)
-                    Button("Duplicate to Edit") { mouse.duplicate(presetID: preset.id) }.controlSize(.small)
+                    Button("Duplicate to Edit") { duplicateToEdit(preset.id) }.controlSize(.small)
                 }
             }
         }
