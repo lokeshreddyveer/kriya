@@ -9,10 +9,19 @@ final class ScreenCaptureService: ObservableObject {
     let settings: CaptureSettingsStore
 
     @Published private(set) var isCapturing = false
+    /// The actions that take a picture of a chosen place, which Kriya's selector can serve.
+    static let nativeActions: Set<CaptureAction> = [.normal, .redacted, .text, .textJoined, .textMarkdown, .textTable, .qr, .cutout, .area, .previousArea]
+    /// Lets the native capture flow say it is done.
+    func finishCapture() { isCapturing = false }
+    func beginCapture() { isCapturing = true }
+    /// Hands a picture on for reading text, hiding, editing and delivery, away from the main thread (reading text takes a moment).
+    func processInBackground(_ image: CGImage, action: CaptureAction, settings: CaptureSettings) {
+        queue.async { [self] in process(image, action: action, settings: settings) }
+    }
     /// Kriya's own screen recorder, with its control strip, keys and camera.
     let recording = RecordingController()
 
-    private let toast = Toast()
+    let toast = Toast()
     private let recognizer = TextRecognizer()
     let ruler = PixelRuler()
     private let queue = DispatchQueue(label: "app.kriya.capture", qos: .userInitiated)
@@ -24,7 +33,7 @@ final class ScreenCaptureService: ObservableObject {
     /// Opens the editor with a picture and calls back with the finished one (nil when the person cancels). Set by the app.
     var showEditor: (CGImage, @escaping (CGImage?) -> Void) -> Void = { image, done in done(image) }
     /// The app that was in front when the last capture began, for naming it.
-    private var frontApp: String?
+    var frontApp: String?
     /// Whether Kriya may capture the screen. Replaced in tests.
     var hasPermission: () -> Bool = { CGPreflightScreenCaptureAccess() }
     var requestPermission: () -> Void = { _ = CGRequestScreenCaptureAccess() }
@@ -53,6 +62,8 @@ final class ScreenCaptureService: ObservableObject {
 
     /// The macOS recorder while it is choosing what to record or recording. Kept so Kriya's Stop can end it.
     @Published private(set) var systemRecorder: Process?
+    /// When the macOS recorder was started, for the timer in the menu bar.
+    private(set) var systemRecordingStart: Date?
 
     /// What is recording now, for the menu-bar icon and menu: Kriya's own recorder, or macOS's.
     enum RecordingKind { case kriya, macOS }
@@ -82,6 +93,8 @@ final class ScreenCaptureService: ObservableObject {
     // MARK: Starting and shortcuts
 
     func start() {
+        // Recordings cut off by a crash or a power cut last time are found and shown, a few seconds after launch.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.recoverUnfinishedRecordings() }
         // The menu-bar icon is there from launch (unless hidden in Settings), not only after the first capture.
         DispatchQueue.main.async { CaptureOverlay.shared.actions = self.overlayActions(settings: self.settings.settings); CaptureOverlay.shared.settingsChanged() }
         hotkeys = HotkeyCenter(owner: "Screen capture", title: { command in
@@ -110,6 +123,11 @@ final class ScreenCaptureService: ObservableObject {
     /// Runs one of the capture commands by name. False if the name is not one.
     @discardableResult
     func run(command: String) -> Bool {
+        if command.hasPrefix("capture.area."), command != "capture.area" {
+            let id = String(command.dropFirst("capture.area.".count))
+            // Everything that touches the screen happens on the main thread; from there it is done now, from elsewhere it is waited for.
+            return Thread.isMainThread ? captureNamedArea(id: id) : DispatchQueue.main.sync { captureNamedArea(id: id) }
+        }
         guard let entry = CaptureSettings.commands.first(where: { $0.command == command }) else { return false }
         DispatchQueue.main.async { self.capture(entry.mode, action: entry.action) }
         return true
@@ -125,11 +143,16 @@ final class ScreenCaptureService: ObservableObject {
             else if systemRecorder?.isRunning == true { toast.show("macOS's recorder cannot be paused. Stop it, or use “Record Screen” for a recording that can.", isError: true) }
             return
         case .stopRecording:
-            // Whichever recorder is running is the one that stops: Kriya's own, or macOS's.
-            if recording.isRecording { recording.stop() }
+            // Whichever recorder is running is the one that stops: Kriya's own, or macOS's, or a scrolling capture in progress.
+            if let session = scrollSession { Task { @MainActor in session.stop() } }
+            else if recording.isRecording { recording.stop() }
             else if !stopSystemRecorder() { toast.show("There is no recording to stop.") }
             return
         case .mirror: recording.showMirror(); return
+        case .chooser: DispatchQueue.main.async { self.showChooser() }; return
+        case .scroll:
+            // Asking for a scrolling capture while one is running ends it, keeping what was taken.
+            if let session = scrollSession { Task { @MainActor in session.stop() }; return }
         case .trimRecording: DispatchQueue.main.async { self.trimRecording() }; return
         default: break
         }
@@ -149,6 +172,7 @@ final class ScreenCaptureService: ObservableObject {
         // A menu closes when you click, so the screen is taken after a countdown, with nothing to click. It opens in the editor to be
         // cropped to the menu.
         var action = action
+        if action == .menu, usesNativeSelector { return nativeMenuCapture(settings: current) }
         if action == .menu {
             current.delaySeconds = max(current.delaySeconds, 5)
             current.openEditor = true
@@ -158,7 +182,8 @@ final class ScreenCaptureService: ObservableObject {
         if action == .recordScreen || action == .recordWindow || action == .recordApp {
             var options = current.recording
             options.source = action == .recordWindow ? .window : action == .recordApp ? .app : .screen
-            recording.start(options, into: current.folder, namePattern: current.namePattern, app: frontApp, mode: options.source.rawValue, target: NSWorkspace.shared.frontmostApplication)
+            // The app in front is fixed now, before any countdown or permission question, so that is the app recorded.
+            startRecordingAfterTimer(options, settings: current, seconds: timerSeconds(for: current), target: NSWorkspace.shared.frontmostApplication)
             return
         }
         if action == .record || action == .recordGIF { return record(asGIF: action == .recordGIF, settings: current) }
@@ -168,6 +193,12 @@ final class ScreenCaptureService: ObservableObject {
             isCapturing = false
             DispatchQueue.main.async { if !PinnedShots.shared.pinClipboardOrLatest(folder: current.folder) { self.toast.show("There is no picture on the clipboard or in the capture folder to pin.", isError: true) } }
             return
+        }
+        // Region, window and screen go through Kriya's own selector (frozen screen, magnifier, keyboard control, self-timer) unless
+        // macOS's own tool is chosen; the actions that are not a picture of a place keep their own paths above.
+        if usesNativeSelector, Self.nativeActions.contains(action) {
+            if action == .previousArea { return nativePreviousArea(settings: current) }
+            return nativeCapture(action == .area ? .region : mode, action: action == .area ? .normal : action, settings: current)
         }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("kriya-capture-\(UUID().uuidString).png")
         if action == .area || action == .previousArea {
@@ -229,12 +260,13 @@ final class ScreenCaptureService: ObservableObject {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let stamp = ScreenCaptureArguments.fileName(for: Date()).replacingOccurrences(of: "Capture", with: "Recording").replacingOccurrences(of: ".png", with: "")
         let movie = folder.appendingPathComponent(stamp + ".mov")
+        let delay = timerSeconds(for: settings)
         toast.show("Choose what to record, then click the stop button in the menu bar, or use “Stop Recording” in Kriya's menu or its shortcut.")
         // The recorder runs on its own and tells when it has ended, so nothing here waits for it, a failure to start is said, and Kriya's
         // Stop can end it.
         let process: Process
         do {
-            process = try recorderLauncher(["-i", "-v", movie.path]) { [weak self] ended in
+            process = try recorderLauncher(["-i", "-v"] + (delay > 0 ? ["-T", String(delay)] : []) + [movie.path]) { [weak self] ended in
                 DispatchQueue.main.async { self?.systemRecorderEnded(ended, movie: movie, asGIF: asGIF, settings: settings) }
             }
         } catch {
@@ -243,11 +275,13 @@ final class ScreenCaptureService: ObservableObject {
             return
         }
         systemRecorder = process
+        systemRecordingStart = Date()
         CaptureOverlay.shared.recordingChanged()
     }
 
     private func systemRecorderEnded(_ ended: Process, movie: URL, asGIF: Bool, settings: CaptureSettings) {
         systemRecorder = nil
+        systemRecordingStart = nil
         isCapturing = false
         CaptureOverlay.shared.recordingChanged()
         let saved = FileManager.default.fileExists(atPath: movie.path)
@@ -268,33 +302,26 @@ final class ScreenCaptureService: ObservableObject {
         }
     }
 
-    /// Scrolls the window in front from top to bottom and joins what it sees.
-    private func scrollingCapture(settings: CaptureSettings) {
-        guard AXIsProcessTrusted() else {
-            isCapturing = false
-            toast.show("Allow Accessibility for Kriya to scroll the window for you.", isError: true)
-            return
-        }
-        guard let frame = AXWindow.focused()?.frame?.cg, frame.width > 100, frame.height > 100 else {
-            isCapturing = false
-            toast.show("There is no window in front to capture.", isError: true)
-            return
-        }
-        toast.show("Capturing the whole page. Keep the mouse still.")
-        queue.async { [self] in
-            let image = ScrollingCapture(capturer: capturer).run(frame: frame)
-            DispatchQueue.main.async {
-                self.isCapturing = false
-                guard let image else { self.toast.show("The page could not be captured.", isError: true); return }
-                self.deliver(image, settings: settings, hidden: 0)
-            }
-        }
-    }
+    /// A scrolling capture: the area that scrolls is chosen, then it is taken a screen at a time and joined (see `ScrollEngine`).
+    private func scrollingCapture(settings: CaptureSettings) { startScrollingCapture(settings: settings) }
+
+    /// The scrolling capture running now, if one is.
+    var scrollSession: ScrollCaptureSession?
 
     private static let areaKey = "capture.previousArea.v1"
     private let areaPicker = AreaPicker()
+    let selector = CaptureSelector()
+    let chooser = CaptureChooser()
+    /// Kriya's own selector takes region, window and screen captures; tests turn it off to use the stand-in screenshot tool.
+    var nativeSelectorEnabled = true
+    /// A timer chosen in the all-in-one chooser, used by the next capture only.
+    var oneShotTimer: Int?
+    /// The last menu capture, so it can be taken again.
+    var hasMenuCapture = false
+    /// Called when a saved area is added or removed, so its command can be added or removed too.
+    var onSavedAreasChanged: () -> Void = {}
 
-    private var previousArea: PreviousArea? {
+    var previousArea: PreviousArea? {
         get { UserDefaults.standard.data(forKey: Self.areaKey).flatMap { try? JSONDecoder().decode(PreviousArea.self, from: $0) } }
         set {
             if let data = newValue.flatMap({ try? JSONEncoder().encode($0) }) { UserDefaults.standard.set(data, forKey: Self.areaKey) }
@@ -376,7 +403,7 @@ final class ScreenCaptureService: ObservableObject {
         }
     }
 
-    private func process(_ image: CGImage, action: CaptureAction, settings: CaptureSettings) {
+    func process(_ image: CGImage, action: CaptureAction, settings: CaptureSettings) {
         switch action {
         case .text:
             let text = (try? recognizer.text(in: image)) ?? ""
@@ -416,7 +443,7 @@ final class ScreenCaptureService: ObservableObject {
                 if settings.saveToFolder, let name = self.save(cut, to: settings.folder) { done += ", saved as \(name)" }
                 self.toast.show("Subject cut out: " + done)
             }
-        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror, .menu, .trimRecording, .area, .previousArea:
+        case .record, .recordGIF, .scroll, .ruler, .pin, .recordScreen, .recordWindow, .recordApp, .pauseRecording, .stopRecording, .mirror, .menu, .trimRecording, .area, .previousArea, .chooser:
             DispatchQueue.main.async { self.isCapturing = false }
         case .normal, .redacted:
             var picture = image
@@ -526,6 +553,15 @@ final class ScreenCaptureService: ObservableObject {
         actions.openSettings = { [weak self] in self?.openSettings() }
         actions.runCommand = { [weak self] in self?.run(command: $0) }
         actions.captureFolder = { settings.folder }
+        actions.recordingElapsed = { [weak self] in
+            guard let self else { return nil }
+            if self.recording.isRecording { return self.recording.recorder.elapsed }
+            return self.systemRecordingStart.map { Date().timeIntervalSince($0) }
+        }
+        actions.savedAreas = { [weak self] in
+            CaptureExtraSettings.modes.areas(layout: AreaPicker.currentLayout, frontApp: NSWorkspace.shared.frontmostApplication?.bundleIdentifier).map { ($0.name, $0.command) }
+        }
+        actions.hasMenuCapture = { [weak self] in self?.hasMenuCapture ?? false }
         actions.recordingKind = { [weak self] in
             switch self?.recordingKind {
             case .kriya: return .kriya

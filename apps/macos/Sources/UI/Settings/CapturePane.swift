@@ -36,10 +36,12 @@ struct CapturePane: View {
                         Button { capture.capture(mode) } label: { Label(mode.title, systemImage: mode.symbol) }
                     }
                     Button { capture.capture(.region, action: .text) } label: { Label("Copy Text", systemImage: "text.viewfinder") }
+                    Button { capture.capture(.region, action: .chooser) } label: { Label("All-in-One", systemImage: "square.grid.3x3") }
                     Spacer()
                 }
                 HStack(spacing: 8) {
-                    Button { capture.capture(.window, action: .scroll) } label: { Label("Whole Page", systemImage: "arrow.down.to.line") }
+                    Button { capture.capture(.window, action: .scroll) } label: { Label("Scrolling", systemImage: "arrow.down.to.line") }
+                    Button { capture.capture(.screen, action: .menu) } label: { Label("Menu", systemImage: "filemenu.and.cursorarrow") }
                     Button { capture.capture(.region, action: .record) } label: { Label("Record", systemImage: "record.circle") }
                     Button { capture.capture(.region, action: .recordGIF) } label: { Label("Record GIF", systemImage: "photo.stack") }
                     Button { capture.capture(.region, action: .qr) } label: { Label("Read QR Code", systemImage: "qrcode.viewfinder") }
@@ -50,8 +52,10 @@ struct CapturePane: View {
                 .disabled(capture.isCapturing)
                 RecordingControls(capture: capture)
             } header: { Text("Capture now") } footer: {
-                Text("Region and window captures use the system's own selection: drag, or click a window, and press Escape to cancel. “Copy Text” reads the words in the region you pick and copies only the text. “Whole Page” scrolls the window in front by itself and joins the pages, so keep the mouse still; pages with a bar fixed at the top may repeat it. “Record” and “Record GIF” use the system recorder: choose the area, then click its stop button in the menu bar. “Read QR Code” copies what the code says. “Pixel Ruler” freezes the screen: move for a magnifier and the colour under the pointer, drag to measure a box, click to measure the box of one colour, hold ⌥ for distances to the edges, C copies the colour and Return copies the size.")
+                Text("Region, window and screen captures use Kriya's selector (see “How capturing works” below): drag, or click a window or display, and press Escape to cancel. “Copy Text” reads the words in the region you pick and copies only the text. “Scrolling” asks for the area that scrolls, then takes it a screen at a time and joins the pictures (a toolbar that does not scroll is kept once). “Record” and “Record GIF” use the system recorder: choose the area, then click its stop button in the menu bar. “Read QR Code” copies what the code says. “Pixel Ruler” freezes the screen: move for a magnifier and the colour under the pointer, drag to measure a box, click to measure the box of one colour, hold ⌥ for distances to the edges, C copies the colour and Return copies the size.")
             }
+
+            CaptureModesSection(capture: capture)
 
             RecordingSection(store: store)
 

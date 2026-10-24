@@ -55,6 +55,8 @@ enum CaptureAction: String, CaseIterable, Identifiable, Codable {
     case mirror
     /// A capture of the whole screen after a countdown, so a menu can be opened first. It opens in the editor to be cropped.
     case menu
+    /// Opens the panel that offers every kind of capture.
+    case chooser
     /// Read the text and copy it as one paragraph (no line breaks), as Markdown paragraphs, or a table as CSV.
     case textJoined, textMarkdown, textTable
     var id: String { rawValue }
@@ -117,6 +119,7 @@ struct CaptureSettings: Codable, Equatable {
         ("capture.rec.stop", "Stop and save the recording", .screen, .stopRecording),
         ("capture.mirror", "Float a live copy of the window in front", .window, .mirror),
         ("capture.menu", "Capture a menu (5 seconds to open it, then crop)", .screen, .menu),
+        ("capture.all", "Open the capture chooser (every kind of capture in one panel)", .region, .chooser),
     ]
 
     static var defaultFolder: URL {

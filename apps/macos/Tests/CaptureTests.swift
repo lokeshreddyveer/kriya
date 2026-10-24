@@ -205,6 +205,7 @@ final class ScreenCaptureServiceTests: XCTestCase {
         service = ScreenCaptureService(settings: settings)
         service.pasteboard = board
         service.hasPermission = { true }
+        service.nativeSelectorEnabled = false       // these tests drive the stand-in screenshot tool, not the on-screen selector
         calls = []
     }
 

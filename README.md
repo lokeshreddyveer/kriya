@@ -455,6 +455,36 @@ for facts about films, news or anything current. For that, turn on web research 
 **Settings › Screen Capture** (needs Screen Recording). Capture a region, a window or the whole screen with the system tool, with
 an optional delay, and copy or save the result.
 
+- **One chooser:** `capture.all` (give it a shortcut) opens a small panel with every kind of capture: Area, Window, Full screen,
+  Scrolling, Record, GIF, Text, Menu and Previous. Keys 1 to 9 pick one, the arrows move, ⏎ repeats the last one used (the panel
+  opens with it marked), and a timer row adds a countdown to that capture.
+- **Choosing on a frozen screen:** area, window and full-screen captures are chosen on a frozen picture of every display, so what
+  you capture is exactly what you saw. *Area* has a crosshair and a magnifier (with the pointer's position and the colour under it),
+  the size beside the area as you drag, and edges that snap to the screen and to windows (⌘ turns snapping off). ⇧ keeps a square, `R`
+  goes round the fixed shapes (1:1, 16:9, 9:16, 4:3, 3:2), ⌥ grows the area from the centre, Space carries it while you drag. Once
+  chosen it can be moved and resized by dragging or with the arrow keys (⌥ resizes, ⇧ moves ten points), ⏎ captures and ⎋ cancels. A
+  toolbar under it captures, copies only, saves only, opens the editor, pins, copies the text in it, or hides private text first.
+  *Window* highlights the window under the pointer and a click takes it, as it looks under **Window captures** (the window alone;
+  with a shadow Kriya draws; on a backdrop; or as macOS captures it). *Full screen* captures the display you click, the one under
+  the pointer, the main one, or all of them in one picture, can leave the desktop's icons out and cut the notch's strip off, and
+  never includes Kriya's own windows. Settings › Screen Capture › *How capturing works* can switch back to macOS's own selection tool.
+- **Self-timer:** 3, 5, 10 or your own number of seconds for area, window, full-screen, menu, scrolling and recording captures: a
+  large countdown in the middle of the display with a Cancel (and ⎋). The target is fixed before the countdown, so clicking elsewhere
+  cannot change it. A menu capture always gives at least five seconds, and the menu item changes to *Recapture Menu* after the first.
+- **Previous and saved areas:** *Capture Previous Area* repeats the last area exactly (same display, same place, same size). If the
+  displays changed it says: “The previous area is no longer valid. Select a new area.” An area can be saved under a name (for any app
+  or only while one app is in front), listed in the capture menu, and run as a command (`capture.area.…`) from a shortcut, a mouse
+  button, a hot corner or a workflow.
+- **Scrolling capture:** choose the area that scrolls; it can go down, across, or down and across, and Kriya can scroll for you or you
+  can scroll while it watches. Kriya halves its steps when two pictures do not join, turns round if the wheel goes the other way,
+  tries Page Down when the wheel does nothing, and keeps a toolbar or footer that does not scroll once instead of down the whole
+  page. A panel outside the area shows the pictures taken and the length, with Pause, Stop and Cancel; a very long capture is warned
+  about, and one past 80,000 pixels is stopped and kept. If some pictures could not be joined, they are left out and the result says so.
+- **Recording safety:** the control strip shows the time, whether the Mac's sound, the microphone and the camera are on, and a warning
+  when the disk is running low (a recording is stopped and saved while there is still room if it is nearly full). It has Pause,
+  *Start over* (discard and record again), Cancel (discard) and Stop, and works while the recording is still starting. A recording is
+  written in pieces, so one cut off by a crash or a power cut can still be played up to its last few seconds; Kriya finds it at the
+  next start and shows it in Finder.
 - **Shortcuts:** every capture command can have its own keys. macOS handles ⌘⇧3, ⌘⇧4 and ⌘⇧5 itself before any app sees them, so while
   its screenshot shortcuts are on, pressing them here takes a macOS screenshot instead, and Kriya's own on those keys is refused. The
   pane says so, and *Let Kriya use ⌘⇧3, ⌘⇧4 and ⌘⇧5* turns macOS's off (it remembers which, and *Give Them Back to macOS* turns

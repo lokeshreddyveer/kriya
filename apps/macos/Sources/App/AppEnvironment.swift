@@ -322,6 +322,11 @@ final class AppEnvironment {
         for entry in CaptureSettings.commands {
             executor.registerCommand(entry.command) { [weak capture] in DispatchQueue.main.async { capture?.capture(entry.mode, action: entry.action) } }
         }
+        // Each saved area is a command of its own, kept in step with the list.
+        let areaCommands = AreaCommandRegistry(executor: executor)
+        let syncAreas = { [weak capture] in areaCommands.sync { _ = capture?.run(command: $0) } }
+        capture.onSavedAreasChanged = syncAreas
+        syncAreas()
         capture.showEditor = { [captureEditor, weak capture] image, done in
             guard let capture else { done(image); return }
             captureEditor.show(image, service: capture, completion: done)

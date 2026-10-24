@@ -19,6 +19,12 @@ struct CaptureOverlayActions {
     var shortcutText: (String) -> String? = { _ in nil }
     /// Which recorder is running now, if one is.
     var recordingKind: () -> OverlayRecordingKind = { .none }
+    /// How long the recording running now has been going, in seconds, for the timer beside the icon.
+    var recordingElapsed: () -> TimeInterval? = { nil }
+    /// Saved areas to offer now, by name and command.
+    var savedAreas: () -> [(name: String, command: String)] = { [] }
+    /// Whether a menu capture was made before, so it can be taken again.
+    var hasMenuCapture: () -> Bool = { false }
 }
 
 /// Who is recording: Kriya's own recorder (which can pause) or macOS's (which can only stop).
@@ -387,7 +393,8 @@ final class QuickAccessStatusItem: NSObject, NSMenuDelegate {
 
     func update(mode: QuickAccessIcon, active: Bool, overlay: CaptureOverlay) {
         self.overlay = overlay
-        let wanted = mode == .visible || (mode == .automatic && active)
+        let recording = overlay.actions.recordingKind() != .none
+        let wanted = mode == .visible || (mode == .automatic && active) || (mode == .whileRecording && recording)
         if wanted, item == nil {
             let created = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
             created.button?.target = self
@@ -397,16 +404,43 @@ final class QuickAccessStatusItem: NSObject, NSMenuDelegate {
             NSStatusBar.system.removeStatusItem(item)
             self.item = nil
         }
-        // The icon turns red and filled while something is recording, so it can be seen from across the menu bar.
+        // The icon turns red and filled while something is recording, so it can be seen from across the menu bar, and a running
+        // time sits beside it.
         guard let button = item?.button else { return }
-        if overlay.actions.recordingKind() != .none {
+        if recording {
             let image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")
             button.image = image?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.systemRed]))
             button.image?.isTemplate = false
+            refreshTimer()
+            if ticker == nil {
+                let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.refreshTimer() }
+                RunLoop.main.add(t, forMode: .common)
+                ticker = t
+            }
         } else {
+            ticker?.invalidate(); ticker = nil
             button.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Kriya captures")
             button.image?.isTemplate = true
+            button.title = ""
+            button.imagePosition = .imageOnly
+            item?.length = NSStatusItem.squareLength
         }
+    }
+
+    private var ticker: Timer?
+
+    /// "● 01:23" beside the icon while recording (if that is on), and nothing otherwise.
+    private func refreshTimer() {
+        guard let button = item?.button, let overlay else { return }
+        guard CaptureExtraSettings.modes.showRecordingTimer, let seconds = overlay.actions.recordingElapsed() else {
+            button.title = ""
+            button.imagePosition = .imageOnly
+            item?.length = NSStatusItem.squareLength
+            return
+        }
+        button.attributedTitle = NSAttributedString(string: " " + RecordingTime.text(seconds), attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)])
+        button.imagePosition = .imageLeading
+        item?.length = NSStatusItem.variableLength
     }
 
     @objc private func clicked() {
@@ -432,12 +466,23 @@ final class QuickAccessStatusItem: NSObject, NSMenuDelegate {
             add(kind == .kriya ? "Pause or Resume Recording" : "Pause (macOS's recorder cannot pause)", "pause.circle", "capture.rec.pause", to: menu, enabled: kind == .kriya)
             menu.addItem(.separator())
         }
+        add("All-in-One…", "square.grid.3x3", "capture.all", to: menu)
+        menu.addItem(.separator())
         add("Capture Area", "viewfinder", "capture.region", to: menu)
         add("Capture Previous Area", "arrow.counterclockwise", "capture.again", to: menu)
         add("Capture Window", "macwindow", "capture.window", to: menu)
         add("Capture Fullscreen", "display", "capture.screen", to: menu)
         add("Scrolling Capture", "arrow.up.and.down.text.horizontal", "capture.scroll", to: menu)
-        add("Capture Menu", "filemenu.and.cursorarrow", "capture.menu", to: menu)
+        add(overlay.actions.hasMenuCapture() ? "Recapture Menu" : "Capture Menu", "filemenu.and.cursorarrow", "capture.menu", to: menu)
+        let saved = overlay.actions.savedAreas()
+        if !saved.isEmpty {
+            let parent = NSMenuItem(title: "Saved Areas", action: nil, keyEquivalent: "")
+            parent.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: nil)
+            let sub = NSMenu()
+            for area in saved { add(area.name, "viewfinder", area.command, to: sub) }
+            parent.submenu = sub
+            menu.addItem(parent)
+        }
         menu.addItem(.separator())
         add("Record Screen", "record.circle", "capture.rec.screen", to: menu, enabled: kind == .none)
         add("Record Window", "macwindow.badge.plus", "capture.rec.window", to: menu, enabled: kind == .none)

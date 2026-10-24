@@ -72,6 +72,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         cancelStart = false
         setState(.starting)
         Task {
+            var marked: URL?
             do {
                 try await Self.askPermissions(for: options)
                 if cancelStart { throw Cancelled() }
@@ -82,6 +83,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 let name = fileName ?? RecordingFileName.make(for: Date()) { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
                 let url = folder.appendingPathComponent(name)
+                RecordingRecovery.begin(url)       // until it ends properly, this says the recording may need recovering
+                marked = url
                 try await begin(filter: filter, configuration: configuration, options: options, url: url)
                 if cancelStart { throw Cancelled() }   // the stream just started is ended by the clean-up below
                 await MainActor.run {
@@ -90,6 +93,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                     completion(nil)
                 }
             } catch {
+                if let marked { RecordingRecovery.end(marked); try? FileManager.default.removeItem(at: marked) }
                 await cleanUpAfterFailedStart()
                 await MainActor.run {
                     self.setState(.idle)
@@ -171,7 +175,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
             let url = self.outputURL
             guard let writer = self.writer, self.framesWritten > 0, let url else {
                 self.writer?.cancelWriting()
-                if let url { try? FileManager.default.removeItem(at: url) }
+                if let url { try? FileManager.default.removeItem(at: url); RecordingRecovery.end(url) }
                 self.reset()
                 DispatchQueue.main.async {
                     self.setState(.idle)
@@ -181,6 +185,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
             }
             [self.videoInput, self.systemAudioInput, self.micInput].forEach { $0?.markAsFinished() }
             writer.finishWriting {
+                RecordingRecovery.end(url)
                 let failed = writer.status == .failed ? writer.error : nil
                 self.queue.async {
                     self.reset()
@@ -296,6 +301,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private func makeWriter(width: Int, height: Int) throws {
         guard let url = outputURL else { throw Failure("No place to save the recording.") }
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        // Written in pieces every few seconds, so a recording that is cut off (a crash, a power cut) can still be played up to the
+        // last piece instead of being lost.
+        writer.movieFragmentInterval = CMTime(seconds: 4, preferredTimescale: 600)
         let hdr = options.hdr && Self.hdrAvailable
         var compression: [String: Any] = [
             AVVideoAverageBitRateKey: Self.bitRate(width: width, height: height, fps: options.framesPerSecond, hdr: hdr),

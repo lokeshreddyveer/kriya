@@ -6,6 +6,13 @@ enum CaptureExtraSettings {
     static let keepOriginalKey = "capture.keepOriginal"
     static let beautifyKey = "capture.beautify.v1"
     static let excludedAppsKey = "capture.excludedApps.v1"
+    static let modesKey = "capture.modes.v1"
+
+    /// How the capture modes behave: the selector, the self-timer, windows, displays, saved areas.
+    static var modes: CaptureModeSettings {
+        get { UserDefaults.standard.data(forKey: modesKey).flatMap { try? JSONDecoder().decode(CaptureModeSettings.self, from: $0) } ?? CaptureModeSettings() }
+        set { if let data = try? JSONEncoder().encode(newValue) { UserDefaults.standard.set(data, forKey: modesKey) } }
+    }
 
     /// How pictures are saved. PNG unless changed.
     static var format: CaptureFormat {

@@ -29,9 +29,16 @@ enum QuickAccessScope: String, Codable, CaseIterable, Identifiable {
 }
 
 enum QuickAccessIcon: String, Codable, CaseIterable, Identifiable {
-    case visible, hidden, automatic
+    case visible, hidden, automatic, whileRecording
     var id: String { rawValue }
-    var title: String { switch self { case .visible: return "Always visible"; case .hidden: return "Hidden"; case .automatic: return "Only while there is something to show" } }
+    var title: String {
+        switch self {
+        case .visible: return "Always visible"
+        case .hidden: return "Hidden"
+        case .automatic: return "Only while there is something to show"
+        case .whileRecording: return "Only while recording"
+        }
+    }
 }
 
 enum QuickAccessDisplay: String, Codable, CaseIterable, Identifiable {

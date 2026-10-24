@@ -24,12 +24,36 @@ final class RecordingController: ObservableObject {
         recorder.onFinish = { [weak self] result in self?.finished(result) }
     }
 
+    /// What the recording running now was started with, so it can be started over.
+    private struct Started {
+        var options: RecordingOptions
+        var folder: URL
+        var namePattern: String?
+        var app: String?
+        var mode: String
+        var target: NSRunningApplication?
+    }
+
+    private var last: Started?
+    /// A cancel or a start-over is under way: the movie that results is thrown away.
+    private var discarding = false
+    private var restart: Started?
+    private var diskTimer: Timer?
+    private let status = RecordingStatusBox()
+
     func start(_ options: RecordingOptions, into folder: URL, namePattern: String? = nil, app: String? = nil, mode: String = "recording", target: NSRunningApplication? = nil) {
         guard !recorder.isActive else { return }
-        let hud = RecordingHUD(recorder: recorder, onPause: { [weak self] in self?.recorder.togglePause() }, onStop: { [weak self] in self?.recorder.stop() })
+        let started = Started(options: options, folder: folder, namePattern: namePattern, app: app, mode: mode, target: target)
+        last = started
+        discarding = false
+        let info = RecordingStatus(options: options)
+        status.value = info
+        let hud = RecordingHUD(recorder: recorder, status: info, onPause: { [weak self] in self?.recorder.togglePause() }, onStop: { [weak self] in self?.recorder.stop() },
+                               onRestart: { [weak self] in self?.startOver() }, onCancel: { [weak self] in self?.cancel() })
         self.hud = hud
         hud.show()
         if options.showKeystrokes { keystrokes.show() }
+        watchDisk(folder: folder, status: info)
         let begin = {
             let fileName = CaptureNaming.fileName(pattern: namePattern.map { $0.replacingOccurrences(of: "Capture", with: "Recording") } ?? "Kriya Recording {date} {time}", date: Date(), app: app, mode: mode, ext: "mov") {
                 FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
@@ -37,8 +61,17 @@ final class RecordingController: ObservableObject {
             self.recorder.start(options: options, into: folder, excluding: [hud.windowNumber], fileName: fileName, target: target) { [weak self] error in
                 guard let self, let error else { return }
                 self.tearDown()
-                // Stop pressed during the start is not a failure.
-                if error is ScreenRecorder.Cancelled { self.toast.show("Recording cancelled.") } else { self.toast.show(error.localizedDescription, isError: true) }
+                if error is ScreenRecorder.Cancelled {
+                    // Stop or cancel pressed during the start is not a failure; a start-over begins again.
+                    if let again = self.restart {
+                        self.restart = nil
+                        self.start(again.options, into: again.folder, namePattern: again.namePattern, app: again.app, mode: again.mode, target: again.target)
+                        return
+                    }
+                    self.toast.show("Recording cancelled.")
+                } else {
+                    self.toast.show(error.localizedDescription, isError: true)
+                }
                 self.onEnd()
             }
         }
@@ -53,11 +86,57 @@ final class RecordingController: ObservableObject {
         }
     }
 
+    /// Ends the recording and throws it away.
+    func cancel() {
+        discarding = true
+        restart = nil
+        recorder.stop()
+    }
+
+    /// Throws this recording away and starts another with the same choices.
+    func startOver() {
+        guard let last else { return }
+        discarding = true
+        restart = last
+        recorder.stop()
+    }
+
+    /// Checks the room on the disk every couple of seconds: a warning in the strip when it is getting short, and the recording is
+    /// stopped and saved while there is still room to save it when it is nearly gone.
+    private func watchDisk(folder: URL, status info: RecordingStatus) {
+        diskTimer?.invalidate()
+        diskTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self, weak info] _ in
+            guard let self, let info, let free = RecordingDisk.freeBytes(at: folder) else { return }
+            switch RecordingDisk.level(freeBytes: free) {
+            case .fine: if info.diskWarning != nil { info.diskWarning = nil }
+            case .low: info.diskWarning = "Disk space is low: \(RecordingDisk.describe(freeBytes: free)) left"
+            case .critical:
+                info.diskWarning = "Disk is nearly full: saving now"
+                self.toast.show("The disk is nearly full, so the recording was stopped and saved.", isError: true)
+                self.recorder.stop()
+                self.diskTimer?.invalidate()
+            }
+        }
+    }
+
     func togglePause() { recorder.togglePause() }
     func stop() { recorder.stop() }
 
     private func finished(_ result: Result<URL, Error>) {
         tearDown()
+        if discarding {
+            discarding = false
+            if case .success(let url) = result { try? FileManager.default.removeItem(at: url) }
+            if let again = restart {
+                restart = nil
+                toast.show("Starting over…")
+                start(again.options, into: again.folder, namePattern: again.namePattern, app: again.app, mode: again.mode, target: again.target)
+                return
+            }
+            toast.show("Recording cancelled.")
+            onEnd()
+            return
+        }
         switch result {
         case .success(let url):
             toast.show("Recording saved as \(url.lastPathComponent)")
@@ -70,6 +149,8 @@ final class RecordingController: ObservableObject {
     }
 
     private func tearDown() {
+        diskTimer?.invalidate()
+        diskTimer = nil
         hud?.hide()
         hud = nil
         keystrokes.hide()
@@ -82,4 +163,9 @@ final class RecordingController: ObservableObject {
             if let problem { self?.toast.show(problem, isError: true) }
         }
     }
+}
+
+/// Holds the strip's status between the start of a recording and its end.
+final class RecordingStatusBox {
+    var value: RecordingStatus?
 }

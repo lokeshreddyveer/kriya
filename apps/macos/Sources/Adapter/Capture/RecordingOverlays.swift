@@ -170,22 +170,38 @@ final class WebcamBubble {
 
 // MARK: - The control strip
 
-/// A small strip with the time, Pause and Stop. It is kept out of the video.
+/// What the strip shows besides the time: which inputs are on, and whether the disk is running out of room.
+final class RecordingStatus: ObservableObject {
+    let systemAudio: Bool
+    let microphone: Bool
+    let camera: Bool
+    @Published var diskWarning: String?
+
+    init(options: RecordingOptions) {
+        systemAudio = options.systemAudio
+        microphone = options.microphone
+        camera = options.webcam
+    }
+}
+
+/// A small strip with the time, which inputs are on, a warning if the disk is nearly full, and Pause, Restart, Cancel and Stop. It is
+/// kept out of the video, and it works from the moment it appears, while the recording is still starting.
 final class RecordingHUD {
     private var panel: NSPanel?
     private let hosting: NSHostingView<RecordingHUDView>
 
-    init(recorder: ScreenRecorder, onPause: @escaping () -> Void, onStop: @escaping () -> Void) {
-        hosting = NSHostingView(rootView: RecordingHUDView(recorder: recorder, onPause: onPause, onStop: onStop))
+    init(recorder: ScreenRecorder, status: RecordingStatus, onPause: @escaping () -> Void, onStop: @escaping () -> Void, onRestart: @escaping () -> Void, onCancel: @escaping () -> Void) {
+        hosting = NSHostingView(rootView: RecordingHUDView(recorder: recorder, status: status, onPause: onPause, onStop: onStop, onRestart: onRestart, onCancel: onCancel))
     }
 
     /// The window's number, to leave it out of the recording. Zero until it is shown.
     var windowNumber: Int { panel?.windowNumber ?? 0 }
 
     func show() {
-        let size = NSSize(width: 250, height: 44)
+        let size = NSSize(width: 360, height: 48)
         let panel = makeFloatingPanel(size: size, clickThrough: false)
         panel.isMovableByWindowBackground = true
+        panel.sharingType = .none
         hosting.frame = NSRect(origin: .zero, size: size)
         panel.contentView = hosting
         if let screen = screenUnderPointer() {
@@ -204,28 +220,50 @@ final class RecordingHUD {
 
 struct RecordingHUDView: View {
     @ObservedObject var recorder: ScreenRecorder
+    @ObservedObject var status: RecordingStatus
     let onPause: () -> Void
     let onStop: () -> Void
+    let onRestart: () -> Void
+    let onCancel: () -> Void
 
-    private var timeText: String {
-        let total = Int(recorder.elapsed)
-        return String(format: "%d:%02d", total / 60, total % 60)
+    private var timeText: String { RecordingTime.text(recorder.elapsed) }
+    private var starting: Bool { recorder.state == .starting }
+
+    private func chip(_ symbol: String, _ on: Bool, _ help: String) -> some View {
+        Image(systemName: on ? symbol : symbol + ".slash").font(.system(size: 11)).foregroundStyle(on ? Color.white : Color.white.opacity(0.4)).help(help)
+    }
+
+    private func button(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).frame(width: 22, height: 22) }
+            .buttonStyle(.plain).foregroundStyle(.white).help(help).accessibilityLabel(help)
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Circle().fill(recorder.state == .paused ? Color.orange : Color.red).frame(width: 10, height: 10)
-            Text(recorder.state == .paused ? "Paused  \(timeText)" : timeText)
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white)
-            Spacer()
-            Button(action: onPause) { Image(systemName: recorder.state == .paused ? "play.fill" : "pause.fill") }
-                .buttonStyle(.plain).foregroundStyle(.white).help(recorder.state == .paused ? "Resume" : "Pause")
-            Button(action: onStop) { Image(systemName: "stop.fill") }
-                .buttonStyle(.plain).foregroundStyle(.white).help("Stop and save")
+        HStack(spacing: 10) {
+            Circle().fill(recorder.state == .paused ? Color.orange : starting ? Color.gray : Color.red).frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(starting ? "Starting…" : recorder.state == .paused ? "Paused  \(timeText)" : timeText)
+                    .font(.system(size: 14, weight: .medium, design: .monospaced)).foregroundStyle(.white)
+                if let warning = status.diskWarning {
+                    Text(warning).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(1)
+                } else {
+                    HStack(spacing: 6) {
+                        chip("speaker.wave.2", status.systemAudio, status.systemAudio ? "Recording the Mac's sound" : "The Mac's sound is not recorded")
+                        chip("mic", status.microphone, status.microphone ? "Recording the microphone" : "The microphone is not recorded")
+                        chip("video", status.camera, status.camera ? "The camera is shown" : "No camera")
+                    }
+                }
+            }
+            Spacer(minLength: 4)
+            if !starting {
+                button(recorder.state == .paused ? "play.fill" : "pause.fill", recorder.state == .paused ? "Resume" : "Pause", action: onPause)
+                button("arrow.counterclockwise", "Start over (discard this and record again)", action: onRestart)
+            }
+            button("xmark.circle", "Cancel (discard this recording)", action: onCancel)
+            button("stop.fill", starting ? "Cancel starting" : "Stop and save", action: onStop)
         }
-        .padding(.horizontal, 16)
-        .frame(width: 250, height: 44)
-        .background(Capsule().fill(Color.black.opacity(0.82)))
+        .padding(.horizontal, 14)
+        .frame(width: 360, height: 48)
+        .background(Capsule().fill(Color.black.opacity(0.84)))
     }
 }
