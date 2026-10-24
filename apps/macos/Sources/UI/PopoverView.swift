@@ -443,7 +443,7 @@ private struct FeaturesSection: View {
                                 .foregroundStyle(state == .off ? Color.secondary : Color.primary)
                             Spacer(minLength: 0)
                             if case .needsPermission = state { StatusDot(color: Theme.warn) }
-                            Toggle("", isOn: Binding(get: { config.isEnabled(feature) }, set: { on in withAnimation(.smooth) { services.setFeature(feature, enabled: on) } }))
+                            Toggle(PopoverCatalog.shortTitle(feature), isOn: Binding(get: { config.isEnabled(feature) }, set: { on in withAnimation(.smooth) { services.setFeature(feature, enabled: on) } }))
                                 .labelsHidden().toggleStyle(.switch).controlSize(.mini)
                         }
                         .padding(.horizontal, 8).padding(.vertical, 5)
@@ -474,7 +474,7 @@ private struct PopoverFeatureRow: View {
         case .running: return "Running"
         case .off: return "Off"
         case .safeMode: return "Held back by safe mode"
-        case .needsPermission(let missing): return missing.first.map { "Needs \($0.title)" } ?? "Needs a permission"
+        case .needsPermission(let missing): return missing.isEmpty ? "Needs a permission" : "Needs " + missing.map(\.title).joined(separator: " and ")
         case .failed: return "Could not start"
         }
     }
@@ -516,15 +516,19 @@ private struct PopoverFeatureRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open \(feature.title) settings")
-                Toggle("", isOn: binding)
+                Toggle(feature.title, isOn: binding)
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.mini)
             }
-            if case .needsPermission(let missing) = state, let first = missing.first {
-                HStack(spacing: 8) {
-                    StateBadge(text: "Needs \(first.title)", color: Theme.warn)
-                    Button("Allow") { permissions.request(first) }.controlSize(.small)
+            if case .needsPermission(let missing) = state, !missing.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(missing) { permission in
+                        HStack(spacing: 8) {
+                            StateBadge(text: "Needs \(permission.title)", color: Theme.warn)
+                            Button("Allow") { permissions.request(permission) }.controlSize(.small)
+                        }
+                    }
                 }
                 .padding(.leading, 34)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -586,7 +590,7 @@ private struct ExtrasSection: View {
                             Image(systemName: extra.symbol).font(.system(size: 14)).frame(width: 24).foregroundStyle(on ? tint : Color.secondary)
                             Text(extra.title).foregroundStyle(on ? Color.primary : Color.secondary)
                             Spacer(minLength: 0)
-                            Toggle("", isOn: Binding(get: { on }, set: { v in withAnimation(.smooth) { set(extra.id, v) } })).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                            Toggle(extra.title, isOn: Binding(get: { on }, set: { v in withAnimation(.smooth) { set(extra.id, v) } })).labelsHidden().toggleStyle(.switch).controlSize(.mini)
                         }
                         .padding(.vertical, 5)
                         .padding(.horizontal, 8)

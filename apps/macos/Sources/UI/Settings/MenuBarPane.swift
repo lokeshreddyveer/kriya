@@ -40,7 +40,7 @@ struct MenuBarPane: View {
             Section {
                 ForEach(Array(prefs.sectionOrder.enumerated()), id: \.element) { index, id in
                     HStack {
-                        Toggle("", isOn: Binding(get: { !prefs.hiddenSections.contains(id) }, set: { on in
+                        Toggle(PopoverCatalog.sections.first { $0.id == id }?.title ?? id, isOn: Binding(get: { !prefs.hiddenSections.contains(id) }, set: { on in
                             if on { prefs.hiddenSections.remove(id) } else { prefs.hiddenSections.insert(id) }
                         })).labelsHidden()
                         Text(PopoverCatalog.sections.first { $0.id == id }?.title ?? id)

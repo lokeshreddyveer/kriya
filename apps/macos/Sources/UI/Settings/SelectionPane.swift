@@ -42,7 +42,7 @@ struct SelectionPane: View {
                     message: "Your actions are saved, but the bar appears only while the feature is on and allowed."
                 ) {
                     if !config.isEnabled(.selectionBar) { Button("Turn On") { services.setFeature(.selectionBar, enabled: true) }.controlSize(.small) }
-                    else if case .needsPermission(let missing) = services.state(.selectionBar), let first = missing.first { Button("Allow \(first.title)…") { permissions.request(first) }.controlSize(.small) }
+                    else if case .needsPermission(let missing) = services.state(.selectionBar) { AllowPermissionButtons(missing: missing) }
                 }
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             }
@@ -91,7 +91,7 @@ private struct SelectionActionsTab: View {
             Section {
                 ForEach(store.actions) { action in
                     HStack(spacing: 12) {
-                        Toggle("", isOn: Binding(get: { action.enabled }, set: { store.setEnabled(action.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        Toggle("Use this action", isOn: Binding(get: { action.enabled }, set: { store.setEnabled(action.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         Image(systemName: action.symbol.isEmpty ? "star" : action.symbol).frame(width: 22).foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(action.title).font(.headline)

@@ -27,7 +27,7 @@ struct KeyboardPane: View {
                     message: "Your shortcuts and snippets are saved, but they work only while the feature is on and allowed."
                 ) {
                     if !config.isEnabled(.keyboard) { Button("Turn On") { services.setFeature(.keyboard, enabled: true) }.controlSize(.small) }
-                    else if case .needsPermission(let missing) = services.state(.keyboard), let first = missing.first { Button("Allow \(first.title)…") { permissions.request(first) }.controlSize(.small) }
+                    else if case .needsPermission(let missing) = services.state(.keyboard) { AllowPermissionButtons(missing: missing) }
                 }
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             }
@@ -98,7 +98,7 @@ private struct ShortcutsListTab: View {
                 if store.shortcuts.isEmpty { Text("No shortcuts yet.").font(.callout).foregroundStyle(.secondary) }
                 ForEach(store.shortcuts) { shortcut in
                     HStack(spacing: 12) {
-                        Toggle("", isOn: Binding(get: { shortcut.enabled }, set: { store.setShortcutEnabled(shortcut.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        Toggle(shortcut.name, isOn: Binding(get: { shortcut.enabled }, set: { store.setShortcutEnabled(shortcut.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                         Text(KeyNames.describe(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers))
                             .font(.system(.body, design: .rounded).monospaced()).padding(.horizontal, 6).padding(.vertical, 2).background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
                         VStack(alignment: .leading, spacing: 2) {

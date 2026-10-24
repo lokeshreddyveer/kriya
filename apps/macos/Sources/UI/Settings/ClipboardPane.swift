@@ -641,7 +641,7 @@ struct ClipboardRulesSection: View {
         Section {
             ForEach($store.rules) { $rule in
                 HStack {
-                    Toggle("", isOn: $rule.enabled).labelsHidden()
+                    Toggle("Use this rule", isOn: $rule.enabled).labelsHidden()
                     VStack(alignment: .leading, spacing: 1) {
                         Text(rule.name)
                         Text(summary(rule)).font(.caption).foregroundStyle(.secondary).lineLimit(2)

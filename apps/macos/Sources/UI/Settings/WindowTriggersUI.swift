@@ -32,7 +32,11 @@ struct ModifierTapSection: View {
             HStack {
                 Picker("", selection: $modifier) { ForEach(ModifierTap.modifiers, id: \.id) { Text($0.title).tag($0.id) } }.labelsHidden().fixedSize()
                 Picker("", selection: $command) { ForEach(KeyboardCommands.all, id: \.command) { Text($0.title).tag($0.command) } }.labelsHidden()
-                Button("Add") { triggers.addTap(ModifierTap(modifier: modifier, command: command)) }.controlSize(.small)
+                Button(triggers.taps.contains { $0.modifier == modifier } ? "Replace" : "Add") {
+                    // Each key runs one command: a second one for the same key replaces the first instead of sitting beside it unused.
+                    for old in triggers.taps where old.modifier == modifier { triggers.removeTap(old.id) }
+                    triggers.addTap(ModifierTap(modifier: modifier, command: command))
+                }.controlSize(.small)
             }
         } header: { Text("Double-tap a modifier") } footer: {
             Text("Tap the key twice quickly, on its own: no other key, and not held. Each key can run one command. A tap that is part of a shortcut, like ⌘C, is never counted. Needs Input Monitoring.")
@@ -122,18 +126,19 @@ struct WindowAutomationSection: View {
         Section {
             Picker("Command", selection: $command) { ForEach(windowCommandChoices(store), id: \.command) { Text($0.title).tag($0.command) } }
             copyRow("Terminal", "kriya run \(command)")
-            copyRow("Web link", "kriya://run?command=\(command)&t=\(token)")
-            copyRow("AppleScript", "do shell script \"open 'kriya://run?command=\(command)&t=\(token)'\"")
-            copyRow("Shell", "open 'kriya://run?command=\(command)&t=\(token)'")
+            // The secret is in what is copied, not in what is shown.
+            copyRow("Web link", "kriya://run?command=\(command)&t=\(token)", shown: "kriya://run?command=\(command)&t=••••••••")
+            copyRow("AppleScript", "do shell script \"open 'kriya://run?command=\(command)&t=\(token)'\"", shown: "do shell script \"open 'kriya://run?command=\(command)&t=••••••••'\"")
+            copyRow("Shell", "open 'kriya://run?command=\(command)&t=\(token)'", shown: "open 'kriya://run?command=\(command)&t=••••••••'")
         } header: { Text("Control from outside") } footer: {
             Text("Every window command can be run from the Terminal (Settings › General › Command line and Shortcuts installs “kriya”), from a link, an AppleScript or the Shortcuts app (“Run a Kriya Command”). A command for the window under the pointer instead of the one in front is the same name with “window.pointer.” in front, such as window.pointer.left_half. The link carries a secret only your account can read; keep it to yourself.")
         }
     }
 
-    private func copyRow(_ title: String, _ text: String) -> some View {
+    private func copyRow(_ title: String, _ text: String, shown: String? = nil) -> some View {
         HStack {
             Text(title).frame(width: 88, alignment: .leading)
-            Text(text).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            Text(shown ?? text).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             Spacer()
             Button(copied == title ? "Copied" : "Copy") {
                 NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)

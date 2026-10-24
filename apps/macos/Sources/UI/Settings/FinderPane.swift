@@ -24,6 +24,7 @@ struct FinderPane: View {
                     message: "Your actions are saved, but Finder shows nothing until the feature is on."
                 ) {
                     if !config.isEnabled(.contextMenu) { Button("Turn On") { services.setFeature(.contextMenu, enabled: true) }.controlSize(.small) }
+                    else if case .needsPermission(let missing) = services.state(.contextMenu) { AllowPermissionButtons(missing: missing) }
                 }
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             }
@@ -85,7 +86,7 @@ private struct ActionsTab: View {
             Section {
                 ForEach(store.items) { item in
                     HStack(spacing: 12) {
-                        Toggle("", isOn: Binding(get: { item.enabled }, set: { store.setEnabled(item.id, $0) }))
+                        Toggle(item.title, isOn: Binding(get: { item.enabled }, set: { store.setEnabled(item.id, $0) }))
                             .labelsHidden().toggleStyle(.switch).controlSize(.small)
                         Image(systemName: item.kind.symbol).frame(width: 22).foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 2) {
@@ -156,7 +157,7 @@ private struct RecentOperationsSection: View {
                                 Image(systemName: "chevron.right").rotationEffect(.degrees(open == operation.id ? 90 : 0))
                             }.buttonStyle(.borderless).help("Details")
                         }
-                        Button { withAnimation(.smooth) { history.remove(operation.id) } } label: { Image(systemName: "xmark") }.accessibilityLabel("Close")
+                        Button { withAnimation(.smooth) { history.remove(operation.id) } } label: { Image(systemName: "xmark") }.accessibilityLabel("Remove this from the list")
                             .buttonStyle(.borderless).foregroundStyle(.tertiary).help("Remove from this list")
                     }
                     if open == operation.id {
@@ -264,11 +265,26 @@ private struct ItemEditor: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save() }.keyboardShortcut(.defaultAction)
+                if let problem { Text(problem).font(.callout).foregroundStyle(.secondary) }
+                Button("Save") { save() }.keyboardShortcut(.defaultAction).disabled(problem != nil)
             }
         }
         .padding(20).frame(width: 560)
         .onAppear(perform: load)
+    }
+
+    /// What is missing before this action can be saved, said in a sentence.
+    private var problem: String? {
+        if item.title.trimmingCharacters(in: .whitespaces).isEmpty { return "Give it a name for the menu." }
+        let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch item.kind {
+        case .runScript where blank: return "Write the script."
+        case .runShortcut where blank: return "Name the Shortcut."
+        case .runWorkflow where blank: return "Choose a workflow."
+        case .newFile where blank: return "Name the new file."
+        case .newFolder where blank: return "Name the new folder."
+        default: return nil
+        }
     }
 
     @ViewBuilder

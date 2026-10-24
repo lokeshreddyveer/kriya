@@ -8,6 +8,7 @@ struct TrafficPane: View {
 
     @State private var tab: Tab = .buttons
     @State private var confirmReset = false
+    @State private var confirmSuggested = false
 
     enum Tab: String, CaseIterable, Identifiable {
         case buttons = "Buttons", titleBar = "Title Bar", apps = "Apps", hover = "Hover", activity = "Activity"
@@ -21,7 +22,7 @@ struct TrafficPane: View {
                 Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
                     .paneTabBar(maxWidth: 360)
                 Menu {
-                    Button("Use Suggested Settings") { traffic.update { $0.bindings = suggestedTrafficBindings(); $0.hoverSets = suggestedTrafficHoverSets() } }
+                    Button("Use Suggested Settings…") { confirmSuggested = true }
                     Divider()
                     Button("Restore Normal Button Behavior") { traffic.restoreNative(everything: false) }
                     Button("Restore Everything…") { confirmReset = true }
@@ -52,6 +53,10 @@ struct TrafficPane: View {
                     .padding().transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .confirmationDialog("Use the suggested settings?", isPresented: $confirmSuggested) {
+            Button("Replace My Rules and Hover Menus") { traffic.update { $0.bindings = suggestedTrafficBindings(); $0.hoverSets = suggestedTrafficHoverSets() } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This replaces the button rules and hover menus you have now. App profiles and exclusions are kept.") }
         .confirmationDialog("Restore window buttons?", isPresented: $confirmReset) {
             Button("Reset Everything", role: .destructive) { traffic.restoreNative(everything: true) }
             Button("Cancel", role: .cancel) {}
@@ -76,8 +81,8 @@ struct TrafficPane: View {
                 ) {
                     if !config.isEnabled(.trafficLights) {
                         Button("Turn On") { services.setFeature(.trafficLights, enabled: true) }.controlSize(.small)
-                    } else if case .needsPermission(let missing) = state, let first = missing.first {
-                        Button("Allow \(first.title)…") { permissions.request(first) }.controlSize(.small)
+                    } else if case .needsPermission(let missing) = state {
+                        AllowPermissionButtons(missing: missing)
                     }
                 }
             }
@@ -302,7 +307,15 @@ private struct HoverTab: View {
                 if traffic.config.hoverEnabled, TrafficButton.all.allSatisfy({ traffic.config.hoverActions(for: $0).isEmpty }) {
                     Label("Hover is on, but no button has a menu yet, so nothing will appear.", systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
                 }
-                Button("Add Window Snapping Menu to the Green Button") { traffic.update { $0.hoverEnabled = true; $0.hoverSets = suggestedTrafficHoverSets() } }
+                Button("Add Window Snapping Menu to the Green Button") {
+                    // Only the buttons the suggestion covers change; a menu you made for another button stays.
+                    traffic.update { config in
+                        config.hoverEnabled = true
+                        let suggested = suggestedTrafficHoverSets()
+                        config.hoverSets.removeAll { set in suggested.contains { $0.button == set.button } }
+                        config.hoverSets += suggested
+                    }
+                }
                     .help("Halves, quarters, thirds, maximize, center and full screen")
             } header: { Text("How hover works") }
             Section {
@@ -404,8 +417,10 @@ private struct TitleBarTab: View {
                 LabeledContent("Middle-click") {
                     TrafficActionMenu(action: Binding(get: { traffic.config.titleMiddleClick }, set: { v in traffic.update { $0.titleMiddleClick = v } }), allowNothing: true)
                 }
+                if traffic.config.titleDoubleClick != .native || traffic.config.titleMiddleClick != .native { InputMonitoringNote() }
             } header: { Text("Title bar clicks") } footer: {
                 Text("Applies to the empty part of a window's title bar, not to its buttons, tabs or search fields. “Normal behavior” leaves what macOS does. Needs Input Monitoring.")
+                    .padding(.bottom, 2)
             }
 
             Section {

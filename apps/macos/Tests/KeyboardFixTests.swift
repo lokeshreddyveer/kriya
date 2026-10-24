@@ -253,3 +253,38 @@ private enum RemapRuleEditorProbe {
         return devices.first(where: { $0.name == saved })?.id ?? saved
     }
 }
+
+/// Checks that belong to the screen-by-screen audit, one group per screen.
+final class ScreenAuditTests: XCTestCase {
+    // Screen 8: Workspaces
+    func testAWorkspaceOpensOnlyWebPages() {
+        XCTAssertEqual(WorkspaceAddress.url(from: "https://example.com/a")?.absoluteString, "https://example.com/a")
+        XCTAssertEqual(WorkspaceAddress.url(from: "example.com/page")?.absoluteString, "https://example.com/page", "a bare address gets https")
+        XCTAssertEqual(WorkspaceAddress.url(from: "  http://localhost:3000 ")?.absoluteString, "http://localhost:3000")
+        for bad in ["file:///Applications/Calculator.app", "javascript:alert(1)", "ssh://host", "x-apple.systempreferences:", "https://", "two words.com", "", "tel:123"] {
+            XCTAssertNil(WorkspaceAddress.url(from: bad), bad)
+        }
+        let parsed = WorkspaceAddress.parse("example.com\nfile:///etc/passwd\n\n  https://swift.org  ")
+        XCTAssertEqual(parsed.valid, ["https://example.com", "https://swift.org"])
+        XCTAssertEqual(parsed.rejected, ["file:///etc/passwd"])
+    }
+
+    // Screen 5: Shortcut Map names every watcher
+    func testEveryWatcherOfTheEventTapHasAFriendlyName() {
+        for owner in ["keyboard.remap", "keyboard.shortcuts", "keyboard.expansion", "keyboard.expansion.mouse", "mouse", "drag.tools", "buttons", "pointer.menu.option",
+                      "clipboard.stack", "clipboard.merge", "actions.record", "actions.record.clicks", "sound.volumekeys"] {
+            XCTAssertNotEqual(InteractionMap.friendlyName(forSubscriber: owner), owner, "\(owner) shows in the Order tab")
+        }
+    }
+
+    // Screen 10: Displays & Corners
+    func testADisplayChangeIsPutBackUnlessKept() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let change = DisplayChangeGuard(label: "1920×1080", now: start)
+        XCTAssertEqual(change.secondsLeft(now: start), DisplayChangeGuard.seconds)
+        XCTAssertFalse(change.isExpired(now: start.addingTimeInterval(9.9)))
+        XCTAssertEqual(change.secondsLeft(now: start.addingTimeInterval(7.2)), 3)
+        XCTAssertTrue(change.isExpired(now: start.addingTimeInterval(10)), "silence means put it back")
+        XCTAssertEqual(change.secondsLeft(now: start.addingTimeInterval(30)), 0)
+    }
+}

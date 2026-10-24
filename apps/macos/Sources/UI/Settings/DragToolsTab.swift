@@ -128,12 +128,5 @@ struct DragToolsTab: View {
         .animation(.smooth(duration: 0.25), value: config)
     }
 
-    private var inputMonitoringNote: some View {
-        HStack {
-            Label("This needs Input Monitoring.", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
-            Spacer()
-            Button("Allow…") { permissions.request(.inputMonitoring) }.controlSize(.small)
-        }
-        .transition(.opacity)
-    }
+    private var inputMonitoringNote: some View { InputMonitoringNote() }
 }

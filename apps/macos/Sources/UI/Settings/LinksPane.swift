@@ -276,7 +276,7 @@ private struct RulesTab: View {
 
     private func row(_ rule: LinkRule) -> some View {
         HStack(spacing: 10) {
-            Toggle("", isOn: Binding(get: { rule.enabled }, set: { on in var copy = rule; copy.enabled = on; store.upsert(copy) }))
+            Toggle("Use this rule", isOn: Binding(get: { rule.enabled }, set: { on in var copy = rule; copy.enabled = on; store.upsert(copy) }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
             VStack(alignment: .leading, spacing: 2) {
                 Text(rule.name)

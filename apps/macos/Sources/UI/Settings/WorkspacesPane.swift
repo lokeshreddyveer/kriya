@@ -204,6 +204,8 @@ private struct WorkspaceEditor: View {
     private var problem: String? {
         if workspace.name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give the workspace a name." }
         if workspace.appIds.isEmpty && addresses.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Add an app or an address." }
+        let rejected = WorkspaceAddress.parse(addresses).rejected
+        if !rejected.isEmpty { return "These are not web addresses: \(rejected.prefix(2).joined(separator: ", "))\(rejected.count > 2 ? "…" : ""). Only http and https pages open." }
         return nil
     }
 
@@ -224,7 +226,7 @@ private struct WorkspaceEditor: View {
                 Section {
                     TextEditor(text: $addresses).font(.system(.body, design: .monospaced)).frame(height: 70)
                 } header: { Text("Addresses to open") } footer: {
-                    Text("One web address per line.")
+                    Text("One web address per line. Only web pages (http or https) open; an address without a scheme gets https.")
                 }
                 Section {
                     Toggle("Hide every other app", isOn: $workspace.hideOthers)
@@ -244,7 +246,7 @@ private struct WorkspaceEditor: View {
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
                 Button("Save") {
                     var saved = workspace
-                    saved.urls = addresses.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                    saved.urls = WorkspaceAddress.parse(addresses).valid
                     onSave(saved)
                 }
                 .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(problem != nil)

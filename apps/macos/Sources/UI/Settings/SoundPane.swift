@@ -394,7 +394,7 @@ private struct SoundRulesSection: View {
         if runner.rules.isEmpty { Text("No rules yet.").foregroundStyle(.secondary) }
         ForEach($runner.rules) { $rule in
             HStack {
-                Toggle("", isOn: $rule.enabled).labelsHidden()
+                Toggle("Use this rule", isOn: $rule.enabled).labelsHidden()
                 Text(rule.summary).lineLimit(2)
                 Spacer()
                 Button(role: .destructive) { runner.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
@@ -698,7 +698,7 @@ private struct PlacesSection: View {
         if let note = runner.note { Text(note).font(.caption).foregroundStyle(.secondary) }
         ForEach($runner.places) { $place in
             HStack {
-                Toggle("", isOn: $place.enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Toggle("Use this place", isOn: $place.enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(place.name)
                     Text("Use \(place.outputs.map { "“\($0)”" }.joined(separator: ", then ")) within \(Int(place.radius)) m, after \(Int(place.dwellSeconds ?? PlaceSwitcher.defaultDwell)) s").font(.caption).foregroundStyle(.secondary)

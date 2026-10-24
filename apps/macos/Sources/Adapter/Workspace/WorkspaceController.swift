@@ -242,7 +242,7 @@ final class WorkspaceController {
             opened.append(appID)
         }
         var urlsOpened = 0
-        for address in workspace.urls { if let url = URL(string: address) { NSWorkspace.shared.open(url); urlsOpened += 1 } }
+        for address in workspace.urls { if let url = WorkspaceAddress.url(from: address) { NSWorkspace.shared.open(url); urlsOpened += 1 } }
         toast.show("Opening \(workspace.name)")
         // Apps that were just started need a moment before their windows exist.
         let wait: Double = opened.isEmpty ? 0.3 : 2.5

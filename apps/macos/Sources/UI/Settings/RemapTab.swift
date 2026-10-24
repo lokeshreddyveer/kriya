@@ -41,7 +41,7 @@ struct RemapTab: View {
                 }
                 ForEach(config.rules) { rule in
                     HStack {
-                        Toggle("", isOn: Binding(get: { rule.enabled }, set: { v in var copy = rule; copy.enabled = v; remap.upsert(copy) })).labelsHidden()
+                        Toggle(rule.name.isEmpty ? "Remap rule" : rule.name, isOn: Binding(get: { rule.enabled }, set: { v in var copy = rule; copy.enabled = v; remap.upsert(copy) })).labelsHidden()
                         VStack(alignment: .leading, spacing: 2) {
                             Text(rule.name)
                             Text(RemapKeys.summary(rule)).font(.caption).foregroundStyle(.secondary)

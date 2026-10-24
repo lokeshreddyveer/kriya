@@ -140,3 +140,33 @@ extension Date {
         formatted(date: .abbreviated, time: .shortened)
     }
 }
+
+/// One button for each permission a feature is still waiting for, so none of them is left for the person to discover later.
+struct AllowPermissionButtons: View {
+    let missing: [Permission]
+    @EnvironmentObject private var permissions: PermissionManager
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(missing) { permission in
+                Button("Allow \(permission.title)…") { permissions.request(permission) }.controlSize(.small)
+            }
+        }
+    }
+}
+
+/// "This needs Input Monitoring", with the button to allow it, shown where a setting depends on watching the keyboard or mouse.
+struct InputMonitoringNote: View {
+    @EnvironmentObject private var permissions: PermissionManager
+
+    var body: some View {
+        if !permissions.isGranted(.inputMonitoring) {
+            HStack {
+                Label("This needs Input Monitoring.", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
+                Spacer()
+                Button("Allow…") { permissions.request(.inputMonitoring) }.controlSize(.small)
+            }
+            .transition(.opacity)
+        }
+    }
+}

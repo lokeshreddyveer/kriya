@@ -71,7 +71,7 @@ private struct WorkflowsTab: View {
         VStack(spacing: 0) {
             List(store.workflows, selection: $selected) { workflow in
                 HStack(spacing: 12) {
-                    Toggle("", isOn: Binding(get: { workflow.enabled }, set: { store.setEnabled(workflow.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    Toggle(workflow.name, isOn: Binding(get: { workflow.enabled }, set: { store.setEnabled(workflow.id, $0) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 8) {
                             Text(workflow.name).font(.headline)
@@ -485,7 +485,7 @@ struct WorkflowEditor: View {
             Text("Runs it for real, one step at a time. Before each step it waits and shows the variables and the text as they are. Tick a step to make it a breakpoint, then Continue to run up to it.").font(.caption).foregroundStyle(.secondary)
             ForEach(flatSteps(workflow.steps), id: \.step.id) { item in
                 HStack(spacing: 6) {
-                    Toggle("", isOn: Binding(get: { debugger.breakpoints.contains(item.step.id) }, set: { on in if on { debugger.breakpoints.insert(item.step.id) } else { debugger.breakpoints.remove(item.step.id) } }))
+                    Toggle("Breakpoint on this step", isOn: Binding(get: { debugger.breakpoints.contains(item.step.id) }, set: { on in if on { debugger.breakpoints.insert(item.step.id) } else { debugger.breakpoints.remove(item.step.id) } }))
                         .labelsHidden().toggleStyle(.checkbox).help("Breakpoint")
                     Image(systemName: "arrow.right").opacity(debugger.isWaiting && debugger.stepTitle.hasSuffix(workflowStepSummary(step: item.step)) ? 1 : 0).foregroundStyle(Theme.accent)
                     Text(workflowStepSummary(step: item.step)).font(.callout).lineLimit(1).padding(.leading, CGFloat(item.depth) * 14)
@@ -1072,7 +1072,7 @@ private struct MIDITriggersSection: View {
                 ForEach($runner.triggers) { $trigger in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Toggle("", isOn: $trigger.enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            Toggle(trigger.summary, isOn: $trigger.enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
                             Text(trigger.summary).font(.headline)
                             Spacer()
                             Button(role: .destructive) { runner.triggers.removeAll { $0.id == trigger.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete trigger")

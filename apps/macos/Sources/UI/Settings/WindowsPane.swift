@@ -76,8 +76,8 @@ struct WindowsPane: View {
         ) {
             if !config.isEnabled(.windowManagement) {
                 Button("Turn On") { services.setFeature(.windowManagement, enabled: true) }.controlSize(.small)
-            } else if case .needsPermission(let missing) = state, let first = missing.first {
-                Button("Allow \(first.title)…") { permissions.request(first) }.controlSize(.small)
+            } else if case .needsPermission(let missing) = state {
+                AllowPermissionButtons(missing: missing)
             }
         }
     }
@@ -156,7 +156,7 @@ private struct ShortcutsTab: View {
                     set: { new in store.setShortcut(command, keyCode: new?.keyCode, modifiers: new?.modifiers ?? 0) }
                 ))
                 .frame(width: 170, height: 26)
-                Button { store.setShortcut(command, keyCode: nil, modifiers: 0) } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Close")
+                Button { store.setShortcut(command, keyCode: nil, modifiers: 0) } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("Clear the shortcut for \(title)")
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
                     .opacity(store.shortcut(for: command) == nil ? 0 : 1)
                     .help("Clear")
@@ -171,6 +171,7 @@ private struct OptionsTab: View {
     @AppStorage(SwitcherStyle.key) private var switcherStyle = SwitcherStyle.cards.rawValue
     @EnvironmentObject private var store: WindowStore
     @EnvironmentObject private var permissions: PermissionManager
+    @EnvironmentObject private var drag: DragToolsStore
 
     @EnvironmentObject private var navigator: SettingsNavigator
 
@@ -202,6 +203,7 @@ private struct OptionsTab: View {
                         ForEach(KeyModifiers.choices, id: \.bits) { Text($0.bits == 0 ? "No key needed" : $0.title).tag($0.bits) }
                     }
                     Toggle("Tap the trackpad when a window snaps", isOn: Binding(get: { config.hapticOnSnap }, set: { v in store.updateConfig { $0.hapticOnSnap = v } }))
+                    InputMonitoringNote()
                 }
             } header: { Text("Drag to snap") } footer: {
                 Text("Edges: left and right make halves, the top maximizes, the bottom makes the bottom half. Corners make quarters. Dragging a snapped window away gives it back its old size.")
@@ -214,13 +216,15 @@ private struct OptionsTab: View {
                 Picker("Hold to resize a window", selection: Binding(get: { config.resizeModifier }, set: { v in store.updateConfig { $0.resizeModifier = v } })) {
                     ForEach(KeyModifiers.choices, id: \.bits) { Text($0.bits == 0 ? "Off" : $0.title).tag($0.bits) }
                 }
-                if (config.moveModifier != 0 || config.resizeModifier != 0), !permissions.isGranted(.inputMonitoring) {
-                    HStack {
-                        Label("This needs Input Monitoring.", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.warn)
-                        Spacer()
-                        Button("Allow…") { permissions.request(.inputMonitoring) }.controlSize(.small)
-                    }
-                    .transition(.opacity)
+                if config.moveModifier != 0 || config.resizeModifier != 0 { InputMonitoringNote() }
+                // The drag tools can also use a held key to move a window; the same keys cannot mean both.
+                if config.moveModifier != 0, config.moveModifier == drag.config.followModifier || config.moveModifier == config.resizeModifier {
+                    Label("These keys are already used by \(config.moveModifier == config.resizeModifier ? "“Hold to resize a window”" : "“Window follows the pointer” in Mouse & Trackpad › Drag"), so only one of them will work.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout).foregroundStyle(Theme.warn)
+                }
+                if config.resizeModifier != 0, config.resizeModifier == drag.config.followModifier {
+                    Label("These keys are already used by “Window follows the pointer” in Mouse & Trackpad › Drag, so only one of them will work.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout).foregroundStyle(Theme.warn)
                 }
             } header: { Text("Drag from anywhere in a window") } footer: {
                 Text("Hold the keys and drag anywhere in a window to move it, or to resize it from the nearest corner. The click does not reach the app. Choose keys other apps do not use for clicks.")
@@ -249,6 +253,7 @@ private struct OptionsTab: View {
                 if config.focusFollowsMouse {
                     SliderRow(title: "Rest for", value: Binding(get: { Double(config.focusDelayMs) }, set: { v in store.updateConfig { $0.focusDelayMs = UInt32(v) } }),
                               range: 150...2000, format: { "\(Int($0)) ms" }, help: "How long the pointer stays before the window comes forward.")
+                    InputMonitoringNote()
                 }
                 Picker("Switcher looks like", selection: $switcherStyle) {
                     Text("Window cards (like AltTab)").tag(SwitcherStyle.cards.rawValue)
@@ -302,6 +307,7 @@ private struct OptionsTab: View {
                     Text("Most recent saved layout").tag("")
                     ForEach(store.layouts.filter { !$0.isAuto && !$0.isGroup }) { Text($0.name).tag($0.id) }
                 }
+                if config.dropZoneModifier != 0 { InputMonitoringNote() }
             } header: { Text("Drop zones") } footer: {
                 Text("Drag a window and hold the keys: the places in a saved layout appear. Drop the window on one to put it there. Save a layout under Layouts first.")
             }
@@ -603,6 +609,7 @@ private struct LayoutsTab: View {
                     .foregroundStyle(bindings.isBound(layout: layout.id, to: layout.displayKey) ? Color.accentColor : .secondary)
             }
             .buttonStyle(.borderless).id(bindingTick)
+            .accessibilityLabel(bindings.isBound(layout: layout.id, to: layout.displayKey) ? "Stop bringing back \(layout.name) by itself" : "Bring back \(layout.name) by itself when its displays are connected")
             .help(bindings.isBound(layout: layout.id, to: layout.displayKey) ? "Comes back by itself whenever the displays it was made for are connected. Click to stop." : "Bring this layout back by itself whenever the displays it was made for are connected")
             Button("Edit") { designing = DesignerTarget(layout: layout) }.controlSize(.small)
             Button("History") { historyOf = layout }.controlSize(.small).help("Earlier versions of this layout")
@@ -891,7 +898,7 @@ private struct AppsTab: View {
                 ForEach(store.rules) { rule in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Toggle("", isOn: Binding(get: { rule.enabled }, set: { var r = rule; r.enabled = $0; store.saveRule(r) }))
+                            Toggle(AppChoice.name(for: rule.appId), isOn: Binding(get: { rule.enabled }, set: { var r = rule; r.enabled = $0; store.saveRule(r) }))
                                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
                             Text(AppChoice.name(for: rule.appId)).font(.headline)
                             Spacer()
@@ -969,6 +976,8 @@ private struct AppsTab: View {
 
     private func addRule() {
         guard let id = AppChoice.choose(prompt: "Add") else { return }
+        // One rule for an app: a second would never be the one that runs.
+        guard !store.rules.contains(where: { $0.appId == id }) else { store.lastError = "\(AppChoice.name(for: id)) already has a rule. Change that one instead."; return }
         store.saveRule(PlacementRule(id: UUID().uuidString, appId: id, enabled: true, layout: .maximize, customSizeId: nil, displayId: nil))
     }
 

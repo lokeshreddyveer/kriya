@@ -103,7 +103,7 @@ struct FolderRulesPane: View {
 
     private func row(_ rule: FolderRule) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Toggle("", isOn: Binding(get: { rule.enabled }, set: { on in message = store.setEnabled(rule.id, on) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            Toggle(rule.name, isOn: Binding(get: { rule.enabled }, set: { on in message = store.setEnabled(rule.id, on) })).labelsHidden().toggleStyle(.switch).controlSize(.small)
             VStack(alignment: .leading, spacing: 3) {
                 Text(rule.name).font(.headline)
                 Text(rule.summary).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

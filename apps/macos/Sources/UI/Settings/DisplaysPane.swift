@@ -10,6 +10,10 @@ struct DisplaysPane: View {
     @State private var tab: Tab = .displays
     @State private var naming = false
     @State private var newName = ""
+    /// A change waiting for the person to keep it, and how to put it back.
+    @State private var pending: (check: DisplayChangeGuard, undo: () -> Void)?
+    @State private var now = Date()
+    private let tick = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
     enum Tab: String, CaseIterable, Identifiable {
         case displays = "Displays", monitors = "Monitor Controls", profiles = "Profiles", corners = "Hot Corners"
@@ -36,7 +40,17 @@ struct DisplaysPane: View {
         }
         .animation(.smooth(duration: 0.22), value: tab)
         .tabHint($tab)
+        .animation(.smooth(duration: 0.25), value: pending?.check)
         .onAppear { reload() }
+        .onReceive(tick) { _ in
+            // Silence means put it back: a mode the display cannot show leaves a screen nobody can click on.
+            now = Date()
+            if let change = pending, change.check.isExpired() { change.undo(); pending = nil; reload() }
+        }
+        .onDisappear {
+            // Leaving the pane is not an answer: the old setup comes back.
+            if let change = pending { change.undo(); pending = nil }
+        }
         .alert("Save display profile", isPresented: $naming) {
             TextField("Name", text: $newName)
             Button("Save") { saveProfile() }
@@ -51,13 +65,45 @@ struct DisplaysPane: View {
 
     // MARK: Displays
 
+    /// The banner that asks whether to keep a change, with the seconds left.
+    @ViewBuilder private var keepBanner: some View {
+        if let change = pending {
+            Banner(symbol: "timer", tint: Theme.warn, title: "Keep \(change.check.label)?", message: "If you do nothing, the old setup comes back in \(change.check.secondsLeft(now: now)) seconds.") {
+                HStack {
+                    Button("Keep") { pending = nil }.controlSize(.small).keyboardShortcut(.defaultAction)
+                    Button("Put It Back") { change.undo(); pending = nil; reload() }.controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 20).padding(.top, 8).transition(.opacity)
+        }
+    }
+
+    /// Changes a display's mode, remembering the one it had so it can be put back.
+    private func change(_ entry: DisplayEntry, to mode: DisplayMode) {
+        guard let previous = entry.current, previous.id != mode.id else { return }
+        if pending == nil || pending?.check.isExpired() == true {
+            guard tools.set(mode, on: entry.id) else { return }
+            pending = (DisplayChangeGuard(label: "\(mode.title) on \(entry.name)"), { tools.set(previous, on: entry.id) })
+        } else if tools.set(mode, on: entry.id), let first = pending {
+            // Changed again before answering: both are undone together, back to the first setup.
+            pending = (DisplayChangeGuard(label: "\(mode.title) on \(entry.name)"), first.undo)
+        }
+    }
+
     private var displaysTab: some View {
+        VStack(spacing: 0) {
+            keepBanner
+            displaysForm
+        }
+    }
+
+    private var displaysForm: some View {
         Form {
             ForEach(displays) { entry in
                 Section {
                     Picker("Resolution", selection: Binding(
                         get: { entry.current?.id ?? "" },
-                        set: { id in if let mode = entry.modes.first(where: { $0.id == id }) { tools.set(mode, on: entry.id) } }
+                        set: { id in if let mode = entry.modes.first(where: { $0.id == id }) { change(entry, to: mode) } }
                     )) {
                         ForEach(entry.modes) { Text($0.title).tag($0.id) }
                     }
@@ -77,7 +123,7 @@ struct DisplaysPane: View {
                 } header: {
                     Text(entry.name + (entry.isMain ? " · main" : ""))
                 } footer: {
-                    if entry.isMain { Text("If a mode shows a black screen, wait a few seconds: macOS goes back to the old one by itself.") }
+                    if entry.isMain { Text("After you change a resolution you have ten seconds to keep it. If the screen goes black, do nothing: the old resolution comes back by itself.") }
                 }
             }
             if displays.isEmpty { Section { Text("No displays found.").foregroundStyle(.secondary) } }
@@ -89,6 +135,13 @@ struct DisplaysPane: View {
     // MARK: Profiles
 
     private var profilesTab: some View {
+        VStack(spacing: 0) {
+            keepBanner
+            profilesForm
+        }
+    }
+
+    private var profilesForm: some View {
         Form {
             Section {
                 Button("Save the Current Setup…") { newName = ""; naming = true }
@@ -105,7 +158,11 @@ struct DisplaysPane: View {
                             Text(profile.displays.map { "\($0.width)×\($0.height)" }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Apply") { tools.apply(profile) }.controlSize(.small)
+                        Button("Apply") {
+                            let before = DisplayProfile(id: "before", name: "before", displays: tools.snapshot())
+                            tools.apply(profile)
+                            pending = (DisplayChangeGuard(label: "“\(profile.name)”"), { tools.apply(before) })
+                        }.controlSize(.small)
                         Button(role: .destructive) { store.update { $0.displayProfiles.removeAll { $0.id == profile.id } } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
                     }
                 }

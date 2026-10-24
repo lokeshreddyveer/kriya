@@ -52,7 +52,7 @@ struct PointerMenuTab: View {
 
     private func row(_ item: PointerMenuItem) -> some View {
         HStack(spacing: 10) {
-            Toggle("", isOn: Binding(get: { item.enabled }, set: { on in var copy = item; copy.enabled = on; menu.upsert(copy) }))
+            Toggle("Show this item in the pointer menu", isOn: Binding(get: { item.enabled }, set: { on in var copy = item; copy.enabled = on; menu.upsert(copy) }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)

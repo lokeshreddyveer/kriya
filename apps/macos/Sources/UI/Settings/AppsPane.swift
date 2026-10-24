@@ -397,7 +397,7 @@ private struct LeftoverList: View {
     var body: some View {
         ForEach(items) { item in
             HStack {
-                Toggle("", isOn: Binding(get: { chosen.contains(item.id) }, set: { on in if on { chosen.insert(item.id) } else { chosen.remove(item.id) } })).labelsHidden()
+                Toggle("Remove this file", isOn: Binding(get: { chosen.contains(item.id) }, set: { on in if on { chosen.insert(item.id) } else { chosen.remove(item.id) } })).labelsHidden()
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.url.lastPathComponent).lineLimit(1)
                     Text(item.url.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -469,7 +469,7 @@ struct RemoveSheet: View {
                 Section(loaded ? "Files it left in your Library (\(items.count))" : "Looking for its files…") {
                     ForEach(items) { item in
                         HStack {
-                            Toggle("", isOn: Binding(get: { chosen.contains(item.id) }, set: { on in if on { chosen.insert(item.id) } else { chosen.remove(item.id) } }))
+                            Toggle("Remove this file", isOn: Binding(get: { chosen.contains(item.id) }, set: { on in if on { chosen.insert(item.id) } else { chosen.remove(item.id) } }))
                                 .labelsHidden().disabled(item.needsAdmin)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(item.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")).lineLimit(1).truncationMode(.middle)
