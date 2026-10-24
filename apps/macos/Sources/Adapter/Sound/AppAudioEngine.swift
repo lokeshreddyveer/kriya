@@ -43,6 +43,23 @@ final class AudioSession {
 
     var peak: Float { processor.peak }
 
+    /// What a running session was built for. A change to volume, equaliser, balance or effects needs none of this rebuilt; a different
+    /// set of processes or a different output does.
+    struct Signature: Equatable {
+        var processes: [AudioObjectID]
+        var outputs: [String]
+    }
+    private(set) var signature: Signature?
+
+    /// If this session is already running for exactly these processes and outputs, only the settings are changed (which is instant and
+    /// silent) and true is returned. Otherwise nothing is done and the caller starts it again.
+    func updateIfRunning(processes: [AudioObjectID], outputs: [String], settings: AppAudioSettings) -> Bool {
+        guard procID != nil, tapID != kAudioObjectUnknown, aggregateID != kAudioObjectUnknown,
+              signature == Signature(processes: processes.sorted(), outputs: outputs) else { return false }
+        apply(settings)
+        return true
+    }
+
     /// Starts tapping. `processes` is empty for the whole system. `outputs` are device UIDs; empty means the current output.
     /// Returns a plain-words reason if it could not start.
     @discardableResult
@@ -105,6 +122,7 @@ final class AudioSession {
         guard status == noErr, let procID else { stop(); return fail("The sound could not be redirected (\(status)).") }
         status = AudioDeviceStart(aggregate, procID)
         guard status == noErr else { stop(); return fail("The sound could not be started (\(status)).") }
+        signature = Signature(processes: processes.sorted(), outputs: uids)
         failure = nil
         return nil
     }
@@ -125,6 +143,7 @@ final class AudioSession {
     func setChain(_ chain: AudioUnitChain?) { processor.setChain(chain) }
 
     func stop() {
+        signature = nil
         if aggregateID != kAudioObjectUnknown, let procID {
             AudioDeviceStop(aggregateID, procID)
             AudioDeviceDestroyIOProcID(aggregateID, procID)
@@ -529,6 +548,16 @@ final class AppAudioEngine: ObservableObject {
         if key != Self.systemKey, targets.isEmpty { return }   // not running yet; refresh will start it
         let session = self.session(key) ?? AudioSession(key: key)
         sessions[key] = session
+        // Dragging a slider calls this for every movement. Rebuilding the tap and the aggregate device each time (tens of milliseconds,
+        // and the sound drops out while it happens) is what made the drag slow and crackly; when nothing but a setting changed, only
+        // the setting is changed.
+        let outputs = s.outputs.isEmpty ? [AudioControl.shared.defaultOutputUID()].compactMap { $0 } : s.outputs
+        if session.updateIfRunning(processes: targets, outputs: outputs, settings: s) {
+            problems[key] = nil
+            if let change = timed[key] { session.setTemporary(change.factor(at: Date())) }
+            syncChain(for: key)
+            return
+        }
         if let error = session.start(processes: targets, excluding: ownProcess(), outputs: s.outputs, settings: s) {
             problems[key] = error
             stopSession(key)
@@ -542,7 +571,23 @@ final class AppAudioEngine: ObservableObject {
     /// Looks at who is making sound, starts sessions for apps that have settings and have just appeared, and ends the ones whose
     /// app has gone.
     func refresh() {
-        let all = AudioProcessList.read()
+        // Asking Core Audio about every process that makes sound takes tens of milliseconds. It is done away from the main thread, so a
+        // slider being dragged is not held up by the check that runs every second and a half.
+        guard !refreshing else { return }
+        refreshing = true
+        readQueue.async { [weak self] in
+            let all = AudioProcessList.read()
+            DispatchQueue.main.async { guard let self else { return }; self.refreshing = false; self.refresh(with: all) }
+        }
+    }
+
+    private var refreshing = false
+    private let readQueue = DispatchQueue(label: "app.kriya.audio.processes", qos: .userInitiated)
+
+    /// The same, on this thread, for the places that need the answer straight away.
+    func refreshNow() { refresh(with: AudioProcessList.read()) }
+
+    private func refresh(with all: [AudioProcessList.Entry]) {
         var groups: [String: [AudioProcessList.Entry]] = [:]
         for entry in all { groups[AudioProcessList.groupKey(for: entry), default: []].append(entry) }
 

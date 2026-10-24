@@ -41,32 +41,72 @@ final class SoundMixerModel: ObservableObject {
         if viewers == 0 { timer?.invalidate(); timer = nil }
     }
 
-    func refresh() {
+    /// Everything `refresh` reads from Core Audio, gathered away from the main thread: listing devices and reading each one's settings
+    /// takes tens of milliseconds on some outputs (Bluetooth, HDMI), which on the main thread stalled a slider being dragged.
+    private struct Snapshot {
+        var outputs: [AudioDevice] = [], inputs: [AudioDevice] = []
+        var output: (id: AudioDeviceID, volume: Double?, muted: Bool, rates: [Double]?, rate: Double, balance: Double?)?
+        var effectsID: AudioDeviceID?
+        var input: (id: AudioDeviceID, volume: Double?, muted: Bool)?
+    }
+
+    private func gather() -> Snapshot {
+        var s = Snapshot()
         let devices = audio.devices()
-        outputs = devices.filter(\.isOutput)
-        inputs = devices.filter(\.isInput)
+        s.outputs = devices.filter(\.isOutput)
+        s.inputs = devices.filter(\.isInput)
         if let out = audio.defaultDevice(input: false) {
-            outputID = out
-            let v = audio.volume(of: out)
-            hasVolume = v != nil
-            volume = v ?? 0
-            muted = audio.isMuted(out) ?? false
-            let rates = audio.sampleRates(of: out)
-            sampleRates = rates
-            sampleRate = audio.sampleRate(of: out) ?? 0
-            let b = audio.balance(of: out)
-            hasBalance = b != nil
-            balance = b ?? 0.5
+            s.output = (out, audio.volume(of: out), audio.isMuted(out) ?? false, audio.sampleRates(of: out), audio.sampleRate(of: out) ?? 0, audio.balance(of: out))
         }
-        if let effects = audio.defaultSystemOutputDevice() { effectsID = effects }
-        if let input = audio.defaultDevice(input: true) {
-            inputID = input
-            let v = audio.volume(of: input, input: true)
-            hasInputVolume = v != nil
-            inputVolume = v ?? 0
-            micMuted = audio.isMuted(input, input: true) ?? false
+        s.effectsID = audio.defaultSystemOutputDevice()
+        if let input = audio.defaultDevice(input: true) { s.input = (input, audio.volume(of: input, input: true), audio.isMuted(input, input: true) ?? false) }
+        return s
+    }
+
+    /// While a slider is being dragged, what the device says is not copied back over what the slider shows, so the thumb does not jump.
+    private var adjustingUntil = Date.distantPast
+    private var adjusting: Bool { Date() < adjustingUntil }
+
+    private func apply(_ s: Snapshot) {
+        if s.outputs != outputs { outputs = s.outputs }
+        if s.inputs != inputs { inputs = s.inputs }
+        if let out = s.output {
+            if out.id != outputID { outputID = out.id }
+            if hasVolume != (out.volume != nil) { hasVolume = out.volume != nil }
+            if !adjusting {
+                if volume != (out.volume ?? 0) { volume = out.volume ?? 0 }
+                if muted != out.muted { muted = out.muted }
+            }
+            if sampleRates != out.rates { sampleRates = out.rates }
+            if sampleRate != out.rate { sampleRate = out.rate }
+            if hasBalance != (out.balance != nil) { hasBalance = out.balance != nil }
+            if balance != (out.balance ?? 0.5) { balance = out.balance ?? 0.5 }
+        }
+        if let effects = s.effectsID, effects != effectsID { effectsID = effects }
+        if let input = s.input {
+            if input.id != inputID { inputID = input.id }
+            if hasInputVolume != (input.volume != nil) { hasInputVolume = input.volume != nil }
+            if !adjusting, inputVolume != (input.volume ?? 0) { inputVolume = input.volume ?? 0 }
+            if micMuted != input.muted { micMuted = input.muted }
         }
     }
+
+    private let readQueue = DispatchQueue(label: "app.kriya.sound.read", qos: .userInitiated)
+    private var refreshing = false
+
+    /// Reads the devices in the background and shows the answer when it arrives. A read already under way is not started again.
+    func refresh() {
+        guard !refreshing else { return }
+        refreshing = true
+        readQueue.async { [weak self] in
+            guard let self else { return }
+            let snapshot = self.gather()
+            DispatchQueue.main.async { self.apply(snapshot); self.refreshing = false }
+        }
+    }
+
+    /// The same, now, on this thread: for a window that is drawn straight afterwards.
+    func refreshNow() { apply(gather()) }
 
     private var lastTick = Date.distantPast
 
@@ -77,11 +117,42 @@ final class SoundMixerModel: ObservableObject {
         NSSound(named: "Tink")?.play()
     }
 
+    // MARK: Volume writes
+    // A slider produces many values a second and a device can take a while to accept each. The slider shows its own value at once, the
+    // newest value is the only one that waits to be written, and the writing happens off the main thread.
+
+    private let writeQueue = DispatchQueue(label: "app.kriya.sound.write", qos: .userInteractive)
+    private let pendingLock = NSLock()
+    private var pendingOutput: (device: AudioDeviceID, level: Double)?
+    private var pendingInput: (device: AudioDeviceID, level: Double)?
+
+    private func write(output: Bool, device: AudioDeviceID, level: Double) {
+        adjustingUntil = Date().addingTimeInterval(0.6)
+        pendingLock.lock()
+        if output { pendingOutput = (device, level) } else { pendingInput = (device, level) }
+        pendingLock.unlock()
+        writeQueue.async { [weak self] in
+            guard let self else { return }
+            self.pendingLock.lock()
+            let job = output ? self.pendingOutput : self.pendingInput
+            if output { self.pendingOutput = nil } else { self.pendingInput = nil }
+            self.pendingLock.unlock()
+            guard let job else { return }   // a newer write already took it
+            let ok = self.audio.setVolume(job.level, of: job.device, input: !output)
+            if output, ok, self.mutedOnWrite { _ = self.audio.setMuted(false, device: job.device) }
+            if !ok { DispatchQueue.main.async { self.adjustingUntil = .distantPast; self.refresh() } }
+        }
+    }
+
+    /// Whether the output was muted when the person started moving the slider; moving it unmutes.
+    private var mutedOnWrite = false
+
     func setVolume(_ v: Double) {
-        guard audio.setVolume(v, of: outputID) else { return }
-        tick()
         volume = v
-        if muted { _ = audio.setMuted(false, device: outputID); muted = false }
+        mutedOnWrite = muted
+        if muted { muted = false }
+        tick()
+        write(output: true, device: outputID, level: v)
     }
 
     func toggleMute() { if audio.setMuted(!muted, device: outputID) { muted.toggle() } }
@@ -114,7 +185,10 @@ final class SoundMixerModel: ObservableObject {
         refresh()
     }
 
-    func setInputVolume(_ v: Double) { if audio.setVolume(v, of: inputID, input: true) { inputVolume = v } }
+    func setInputVolume(_ v: Double) {
+        inputVolume = v
+        write(output: false, device: inputID, level: v)
+    }
     func toggleMicMute() { if audio.setMuted(!micMuted, device: inputID, input: true) { micMuted.toggle() } }
     func setSampleRate(_ r: Double) { if audio.setSampleRate(r, of: outputID) { sampleRate = r } }
     func setBalance(_ b: Double) { if audio.setBalance(b, of: outputID) { balance = b } }

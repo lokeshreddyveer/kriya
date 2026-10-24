@@ -129,6 +129,44 @@ final class ScheduleTests: XCTestCase {
         XCTAssertTrue(HomebrewParsing.featuredTools.allSatisfy(HomebrewParsing.isValidToken))
     }
 
+    func testMacOSScreenshotKeysAreReadAndPlanned() {
+        let plist: [String: Any] = [
+            "28": ["enabled": 1, "value": ["parameters": [65535, 20, 1_179_648], "type": "standard"]],
+            "30": ["enabled": 0, "value": ["parameters": [65535, 21, 1_179_648], "type": "standard"]],
+            "31": ["enabled": true, "value": ["parameters": [65535, 40, 1_441_792], "type": "standard"]],   // moved to ⌃⌘⇧K
+            "junk": ["enabled": 1], "999": "not a dictionary",
+        ]
+        let states = SystemScreenshotKeys.parse(plist)
+        XCTAssertEqual(states[28], SystemScreenshotKeys.State(enabled: true, keyCode: 20, flags: 1_179_648))
+        XCTAssertEqual(states[30]?.enabled, false)
+        XCTAssertNil(states[184], "not written down: the system is using its default")
+        let cmdShift = KeyModifiers.command | KeyModifiers.shift
+        XCTAssertEqual(SystemScreenshotKeys.occupant(keyCode: 20, modifiers: cmdShift, states: states)?.id, 28)
+        XCTAssertNil(SystemScreenshotKeys.occupant(keyCode: 21, modifiers: cmdShift, states: states), "⌘⇧4 is turned off")
+        XCTAssertEqual(SystemScreenshotKeys.occupant(keyCode: 23, modifiers: cmdShift, states: states)?.id, 184, "unset means the default, which is on")
+        XCTAssertEqual(SystemScreenshotKeys.occupant(keyCode: 40, modifiers: KeyModifiers.control | cmdShift, states: states)?.id, 31, "keys the person changed it to")
+        XCTAssertNil(SystemScreenshotKeys.occupant(keyCode: 31, modifiers: cmdShift, states: states))
+        XCTAssertEqual(SystemScreenshotKeys.enabled(states: states, among: SystemScreenshotKeys.usual).map(\.id), [28, 184])
+        let plan = SystemScreenshotKeys.releasePlan(states: states, ids: [28, 30, 184, 12345])
+        XCTAssertEqual(plan.switchOff, [28, 184], "only what is on needs turning off")
+        XCTAssertEqual(plan.wasEnabled, [28: true, 30: false, 184: true], "an id that is not a screenshot shortcut is ignored")
+        XCTAssertTrue(SystemScreenshotKeys.parse(nil).isEmpty)
+    }
+
+    func testOnlyWhatKriyaTurnedOffIsGivenBack() {
+        let suite = UserDefaults(suiteName: "kriya-tests-\(UUID().uuidString)")!
+        let editor = SystemShortcutEditor(defaults: suite)
+        XCTAssertTrue(editor.released.isEmpty)
+        suite.set([30, 28], forKey: SystemShortcutEditor.releasedKey)
+        XCTAssertEqual(editor.released, [30, 28])
+        // (Writing to the system's real preferences is not done in tests.)
+    }
+
+    func testFunctionKeysNeedNoModifierButLettersDo() {
+        for key in [122, 120, 99, 118, 96, 105, 107, 113] { XCTAssertTrue(RecorderField.functionKeys.contains(UInt16(key)), "F-key \(key)") }
+        for letter in [0, 1, 8, 20, 21, 49, 36, 53] { XCTAssertFalse(RecorderField.functionKeys.contains(UInt16(letter)), "key \(letter)") }
+    }
+
     private func pump(_ seconds: TimeInterval) {
         let done = expectation(description: "wait")
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { done.fulfill() }

@@ -11,23 +11,34 @@ struct RecordedShortcut: Equatable {
 /// A box that records a key combination: click it, press the keys. Escape cancels, Delete clears.
 struct ShortcutRecorder: NSViewRepresentable {
     @Binding var shortcut: RecordedShortcut?
+    /// For a shortcut that works anywhere: a key alone (or with only ⇧) is refused with a hint instead of being dropped without a word.
+    /// Function keys are fine on their own.
+    var needsModifier = false
 
     func makeNSView(context: Context) -> RecorderField {
         let field = RecorderField()
         field.onChange = { shortcut = $0 }
+        field.needsModifier = needsModifier
         return field
     }
 
     func updateNSView(_ field: RecorderField, context: Context) {
         field.onChange = { shortcut = $0 }
         field.shortcut = shortcut
+        field.needsModifier = needsModifier
     }
 }
 
 final class RecorderField: NSView {
     var onChange: ((RecordedShortcut?) -> Void)?
     var shortcut: RecordedShortcut? { didSet { needsDisplay = true } }
+    var needsModifier = false
     private var recording = false { didSet { needsDisplay = true } }
+    /// Why the last key was not taken, shown in the field for a moment.
+    private var hint: String? { didSet { needsDisplay = true } }
+
+    /// F1–F20, which are fine as a shortcut on their own.
+    static let functionKeys: Set<UInt16> = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90]
 
     override var acceptsFirstResponder: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: 200, height: 28) }
@@ -71,6 +82,15 @@ final class RecorderField: NSView {
                 return
             }
         }
+        let hasPrimary = flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
+        if needsModifier, !hasPrimary, !Self.functionKeys.contains(event.keyCode) {
+            hint = "Hold ⌘, ⌃ or ⌥ with the key"
+            NSSound.beep()
+            let shown = hint
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in if self?.hint == shown { self?.hint = nil } }
+            return   // still recording
+        }
+        hint = nil
         let recorded = RecordedShortcut(keyCode: event.keyCode, modifiers: KeyModifiers.bits(from: flags))
         shortcut = recorded
         onChange?(recorded)
@@ -93,7 +113,10 @@ final class RecorderField: NSView {
 
         let text: String
         let color: NSColor
-        if recording {
+        if recording, let hint {
+            text = hint
+            color = .systemRed
+        } else if recording {
             text = "Press the keys…"
             color = .controlAccentColor
         } else if let shortcut {

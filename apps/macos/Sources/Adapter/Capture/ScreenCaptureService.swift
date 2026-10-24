@@ -60,6 +60,11 @@ final class ScreenCaptureService: ObservableObject {
             .store(in: &cancellables)
     }
 
+    /// Asks the system for the shortcuts again, so ones it refused earlier (because macOS held the keys) are tried anew.
+    func reregisterShortcuts() {
+        hotkeys?.update(settings.settings.shortcuts.map { ShortcutBinding(command: $0.command, keyCode: $0.keyCode, modifiers: $0.modifiers) })
+    }
+
     func stop() {
         CaptureOverlay.shared.removeIcon()
         hotkeys?.unregisterAll()

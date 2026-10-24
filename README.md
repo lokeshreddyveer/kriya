@@ -455,6 +455,12 @@ for facts about films, news or anything current. For that, turn on web research 
 **Settings › Screen Capture** (needs Screen Recording). Capture a region, a window or the whole screen with the system tool, with
 an optional delay, and copy or save the result.
 
+- **Shortcuts:** every capture command can have its own keys. macOS handles ⌘⇧3, ⌘⇧4 and ⌘⇧5 itself before any app sees them, so while
+  its screenshot shortcuts are on, pressing them here takes a macOS screenshot instead, and Kriya's own on those keys is refused. The
+  pane says so, and *Let Kriya use ⌘⇧3, ⌘⇧4 and ⌘⇧5* turns macOS's off (it remembers which, and *Give Them Back to macOS* turns
+  exactly those on again), then sets ⌘⇧3 for the whole screen, ⌘⇧4 for an area and ⌘⇧5 for recording. A shortcut a key alone
+  (without ⌘, ⌃ or ⌥) says why it was not taken; function keys work alone. A shortcut that macOS or another app refuses shows the
+  reason under it. If the keys still do the macOS thing after the change, sign out and back in once.
 - **Copy text from a region** with the Mac's own text recognition.
 - **Hide private text:** blur or block emails, phone numbers, card numbers, addresses, keys and words you list.
 - **Editor:** boxes, ovals, arrows, lines, freehand pen, highlights, numbered steps, notes, solid blocks, mosaic and **crop**; undo and redo.

@@ -10,6 +10,10 @@ struct CapturePane: View {
     @StateObject private var profiles = CaptureProfileStore()
     @State private var profileName = ""
     @AppStorage(OCRLanguages.defaultsKey) private var ocrLanguages = ""
+    @ObservedObject private var registry = ShortcutRegistry.shared
+    private let systemEditor = SystemShortcutEditor()
+    @State private var systemStates = SystemShortcutEditor().states()
+    @State private var keysNote: String?
 
     private var settings: CaptureSettings { store.settings }
 
@@ -135,13 +139,19 @@ struct CapturePane: View {
             }
 
             Section {
+                macOSKeysBanner
                 ForEach(CaptureSettings.commands, id: \.command) { entry in
                     LabeledContent(entry.title) {
-                        ShortcutRecorder(shortcut: Binding(
-                            get: { store.shortcut(for: entry.command).map { RecordedShortcut(keyCode: $0.keyCode, modifiers: $0.modifiers) } },
-                            set: { new in store.setShortcut(entry.command, keyCode: new?.keyCode, modifiers: new?.modifiers ?? 0) }
-                        ))
-                        .frame(width: 180, height: 26)
+                        VStack(alignment: .trailing, spacing: 3) {
+                            ShortcutRecorder(shortcut: Binding(
+                                get: { store.shortcut(for: entry.command).map { RecordedShortcut(keyCode: $0.keyCode, modifiers: $0.modifiers) } },
+                                set: { new in store.setShortcut(entry.command, keyCode: new?.keyCode, modifiers: new?.modifiers ?? 0) }
+                            ), needsModifier: true)
+                            .frame(width: 180, height: 26)
+                            if let problem = problem(for: entry.command) {
+                                Text(problem).font(.caption).foregroundStyle(Theme.warn).multilineTextAlignment(.trailing).frame(maxWidth: 300, alignment: .trailing).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
                 }
             } header: { Text("Shortcuts") } footer: {
@@ -150,6 +160,71 @@ struct CapturePane: View {
         }
         .formStyle(.grouped)
         .onAppear { screenAllowed = CGPreflightScreenCaptureAccess() }
+    }
+
+    // MARK: Shortcuts and macOS's own screenshot keys
+
+    /// Said when a saved shortcut was refused, with the reason: macOS's own screenshot keys are the usual one.
+    private func problem(for command: String) -> String? {
+        guard let saved = store.shortcut(for: command) else { return nil }
+        let entry = registry.entries.first { $0.owner == "Screen capture" && $0.command == command }
+        guard entry?.status == .refused else { return nil }
+        if let known = SystemScreenshotKeys.occupant(keyCode: saved.keyCode, modifiers: saved.modifiers, states: systemStates) {
+            return "macOS uses these keys for “\(known.name)”. Use “Let Kriya use ⌘⇧3, ⌘⇧4 and ⌘⇧5” above, or choose other keys."
+        }
+        return "These keys did not work: another app, or macOS itself, already uses them. Choose other keys."
+    }
+
+    private var macOSKeysBanner: some View {
+        let still = SystemScreenshotKeys.enabled(states: systemStates, among: SystemScreenshotKeys.usual)
+        let released = systemEditor.released
+        return VStack(alignment: .leading, spacing: 8) {
+            if !still.isEmpty {
+                Banner(symbol: "keyboard", tint: Theme.warn, title: "macOS is still using ⌘⇧3, ⌘⇧4 and ⌘⇧5", message: "macOS takes these keys before any app sees them, so pressing them here (to record them, or to capture) takes a macOS screenshot instead. Kriya can turn macOS's off and use them for its own capture. You can give them back here at any time.") {
+                    Button("Let Kriya use ⌘⇧3, ⌘⇧4 and ⌘⇧5…") { useUsualKeys() }.controlSize(.small)
+                }
+            }
+            if !released.isEmpty {
+                Banner(symbol: "checkmark.circle", tint: Theme.ok, title: "macOS's screenshot keys are off", message: "Kriya turned them off so it can use them. Turn them back on to go back to how macOS was.") {
+                    Button("Give Them Back to macOS") { giveBack() }.controlSize(.small)
+                }
+            }
+            if let note = keysNote { Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        }
+    }
+
+    private func useUsualKeys() {
+        let alert = NSAlert()
+        alert.messageText = "Let Kriya use ⌘⇧3, ⌘⇧4 and ⌘⇧5?"
+        alert.informativeText = "macOS's own screenshot shortcuts on those keys are turned off, and Kriya's are set: ⌘⇧3 captures the whole screen, ⌘⇧4 an area, ⌘⇧5 records the screen. You can change each below, and give the keys back to macOS here at any time. If the keys still do the macOS thing afterwards, sign out and back in once."
+        alert.addButton(withTitle: "Use These Keys")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard systemEditor.release(SystemScreenshotKeys.usual) else {
+            keysNote = "macOS did not let Kriya change its shortcuts. Turn them off yourself in System Settings › Keyboard › Keyboard Shortcuts › Screenshots."
+            return
+        }
+        let cmdShift = KeyModifiers.command | KeyModifiers.shift
+        store.setShortcut("capture.screen", keyCode: 20, modifiers: cmdShift)
+        store.setShortcut("capture.region", keyCode: 21, modifiers: cmdShift)
+        store.setShortcut("capture.rec.screen", keyCode: 23, modifiers: cmdShift)
+        keysNote = "Done. Kriya's capture now answers ⌘⇧3, ⌘⇧4 and ⌘⇧5."
+        reloadAfterSystemChange()
+    }
+
+    private func giveBack() {
+        keysNote = systemEditor.giveBack() ? "macOS's screenshot keys are on again. Kriya's shortcuts on the same keys will stop working until you choose other keys." : "macOS did not let Kriya change its shortcuts."
+        reloadAfterSystemChange()
+    }
+
+    /// The system takes a moment to apply a change; once it has, Kriya asks for its shortcuts again so ones refused earlier are tried anew.
+    private func reloadAfterSystemChange() {
+        systemStates = systemEditor.states()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            systemStates = systemEditor.states()
+            capture.reregisterShortcuts()
+        }
     }
 
     private func bind(_ path: WritableKeyPath<CaptureSettings, Bool>) -> Binding<Bool> {

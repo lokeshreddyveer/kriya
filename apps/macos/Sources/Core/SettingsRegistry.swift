@@ -66,7 +66,7 @@ enum SettingsRegistry {
         h("finderWindows.history.v1", "finder"), s("finderWindows.enabled", "finder"), s("dialogAppFolders.v1", "finder"), s("dialogAutoJump", "finder"),
         m("folderRules.paused", "finder"), m("finder.lastTidy", "finder"), m("finderRequestToken"),
         // Capture
-        s("captureSettings.v1", "capture"), s("captureProfiles.v1", "capture", .live), s("capture.ocrLanguages", "capture", .live), m("capture.previousArea.v1", "capture"),
+        s("captureSettings.v1", "capture"), s("captureProfiles.v1", "capture", .live), s("capture.ocrLanguages", "capture", .live), m("capture.previousArea.v1", "capture"), m("capture.systemKeysReleased", "capture"),
         // Clipboard
         s("clipboardRules.v1", "clipboard"), s("clipboardMergeCopies", "clipboard", .live),
         // MIDI triggers start workflows, so they are not restored from a file

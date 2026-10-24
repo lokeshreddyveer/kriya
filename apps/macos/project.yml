@@ -11,8 +11,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.8.3"
-    CURRENT_PROJECT_VERSION: "34"
+    MARKETING_VERSION: "0.8.4"
+    CURRENT_PROJECT_VERSION: "35"
     ENABLE_HARDENED_RUNTIME: YES
     GENERATE_INFOPLIST_FILE: NO
     # One binary for Apple Silicon and Intel.

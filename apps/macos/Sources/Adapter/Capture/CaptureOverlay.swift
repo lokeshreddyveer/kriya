@@ -371,7 +371,7 @@ struct CaptureOverlayView: View {
 
 /// The optional menu-bar icon for captures: bring back a closed card, open a recent capture, start a capture. It is one icon, not a
 /// window, and it can stay hidden, always show, or appear only while there is something to bring back.
-final class QuickAccessStatusItem: NSObject {
+final class QuickAccessStatusItem: NSObject, NSMenuDelegate {
     private var item: NSStatusItem?
     private weak var overlay: CaptureOverlay?
 
@@ -470,7 +470,15 @@ final class QuickAccessStatusItem: NSObject {
         let settings = menu.addItem(withTitle: "Capture Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
+        // Shown by the menu bar itself, the way every other menu-bar icon's menu is: attached to the item, opened by a click on it, and
+        // detached when it closes so the next click comes back here. Placing it by hand put it at the wrong spot on some displays.
+        menu.delegate = self
+        item?.menu = menu
+        button.performClick(nil)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        DispatchQueue.main.async { [weak self] in self?.item?.menu = nil }
     }
 
     /// A menu title with its shortcut set apart on the right in a lighter colour, after a tab.

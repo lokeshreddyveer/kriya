@@ -96,7 +96,7 @@ enum DesignShots {
     }
 
     private static func captureSoundPopover(env: AppEnvironment, to url: URL) {
-        env.soundMixer.refresh()
+        env.soundMixer.refreshNow()
         // Sample apps in a throwaway preference suite, so the picture shows favorites, a boost and a mute without touching real settings.
         let suite = UserDefaults(suiteName: "kriya-shot-\(UUID().uuidString)")!
         let engine = AppAudioEngine(defaults: suite)
