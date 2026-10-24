@@ -406,7 +406,7 @@ final class AppEnvironment {
         services.register(AuxiliaryService(id: "mcpServer", title: "MCP server", start: { MCPHTTPServer.shared.start() }, stop: { MCPHTTPServer.shared.stop() }, isActive: { MCPHTTPServer.shared.isActive }))
         services.register(AuxiliaryService(id: "locationAudio", title: "Sound by place", blockedWhenDenied: [.location], start: { LocationAudioRunner.shared.start() }, stop: { LocationAudioRunner.shared.stop() }, isActive: { LocationAudioRunner.shared.isActive }))
         services.register(AuxiliaryService(id: "soundDevices", title: "Sound device order", start: { DevicePriorityRunner.shared.start() }, stop: { DevicePriorityRunner.shared.stop() }, isActive: { DevicePriorityRunner.shared.isActive }))
-        AutoEQRunner.shared.engine = appAudio
+        AutoEQRunner.shared.target = appAudio
         services.register(AuxiliaryService(id: "autoEQ", title: "Headphone correction", start: { AutoEQRunner.shared.start() }, stop: { AutoEQRunner.shared.stop() }, isActive: { AutoEQRunner.shared.isActive }))
         services.register(AuxiliaryService(id: "focusSession", title: "Focus sessions", start: { [weak self] in self?.focusSession.start() }, stop: { [weak self] in self?.focusSession.stop() }))
         worldClock.meetings = launcherTools.meetings
@@ -430,7 +430,7 @@ final class AppEnvironment {
             self.pointerMenu.setOptionRightClick(config.optionRightClick && self.permissions.isGranted(.inputMonitoring) && !self.crashGuard.isSafeMode, events: self.events)
         }
         services.register(AuxiliaryService(id: "keyboardDevices", title: "Keyboard device watcher", start: { [weak keyboardDevices] in keyboardDevices?.start() }, stop: { [weak keyboardDevices] in keyboardDevices?.stop() }))
-        keyboardCancellable = keyboardDevices.$names.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+        keyboardCancellable = keyboardDevices.$devices.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
             guard let self else { return }
             self.remap.apply(allowed: self.permissions.isGranted(.inputMonitoring) && !self.crashGuard.isSafeMode)
         }

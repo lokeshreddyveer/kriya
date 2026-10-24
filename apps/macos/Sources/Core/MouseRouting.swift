@@ -112,8 +112,8 @@ struct HeldKey: Hashable {
 }
 
 /// The buttons being held, by device. A release is matched to its own device's press; if the device was named differently on the way
-/// up (the guess about which device an event came from can change between a press and its release), it is matched to any press of that
-/// button, so a press is never left waiting for a release that already happened.
+/// up (the guess about which device an event came from can change between a press and its release), the oldest press of that button is
+/// ended, so nothing is left waiting for a release that already happened. That is cleanup, not proof of which device let go.
 struct DeviceButtonSet {
     private var held: [HeldKey: Int] = [:]
     private var counter = 0

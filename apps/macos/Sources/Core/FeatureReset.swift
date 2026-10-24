@@ -31,6 +31,8 @@ enum FeatureReset {
                        keys: SettingsRegistry.keys(inArea: "windowextras")),
         ResettableArea(id: "pointer", title: "Pointer positions", detail: "Which display each saved pointer position was made for. The positions themselves are kept with the pointer effects settings.",
                        keys: SettingsRegistry.keys(inArea: "pointer")),
+        ResettableArea(id: "keyboard", title: "Keyboard extras", detail: "The apps where text expansion may run when Kriya cannot check the field, and the names remembered for keyboards. Shortcuts and snippets are kept.",
+                       keys: SettingsRegistry.keys(inArea: "keyboard")),
         ResettableArea(id: "usage", title: "Action usage", detail: "Which selection-bar and saved actions were used, by name only.", keys: SettingsRegistry.keys(inArea: "usage")),
         ResettableArea(id: "notes", title: "Notes settings", detail: "Which notes are pinned. The notes themselves are files and are left alone.", keys: SettingsRegistry.keys(inArea: "notes")),
         ResettableArea(id: "shelfreminders", title: "File Shelf reminders", detail: "How early shelf items warn you before expiring, and which warnings were already shown.", keys: SettingsRegistry.keys(inArea: "shelfreminders")),

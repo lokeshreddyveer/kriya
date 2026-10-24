@@ -38,7 +38,7 @@ final class RemapService {
     func apply(allowed: Bool) {
         var config = store.current
         // A rule for one keyboard counts only while that keyboard is connected.
-        config.rules = config.rules.filter { rule in rule.keyboard.map { keyboards.names.contains($0) } ?? true }
+        config.rules = config.rules.filter { KeyboardRuleMatch.applies(rule: $0.keyboard, connected: keyboards.devices) }
         engine.setConfig(config: config)
         if config.enabled, !config.rules.isEmpty, allowed {
             if token == nil {
@@ -66,6 +66,11 @@ final class RemapService {
     // MARK: Events (on the tap's thread)
 
     private func handle(_ type: CGEventType, _ event: CGEvent) -> EventDisposition {
+        // Paused: every key goes through as it is, and anything half done (a held key, a chord) is dropped.
+        if KeyboardPause.shared.remapsPaused {
+            if engine.isBusy() { engine.reset() }
+            return .passThrough
+        }
         var code = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
         let down: Bool
         if type == Self.systemDefined {

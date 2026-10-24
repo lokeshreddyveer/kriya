@@ -37,7 +37,9 @@ final class DragTools {
     private var gliding = false
     // Double clicks and a held button turning the wheel.
     private var lastDown: [UInt32: UInt64] = [:]
-    private var swallowUp: Set<UInt32> = []
+    /// Buttons whose release is to be taken because their press was, with when they were pressed so a lost release does not linger.
+    private var swallowUp: [UInt32: UInt64] = [:]
+    private var wasActive = true
     private var wheelButton: UInt32?
     private var wheelScrolled = false
     private var wheelDown = CGPoint.zero
@@ -84,40 +86,50 @@ final class DragTools {
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.reset() }
     }
 
-    /// Forgets any press, drag, glide or auto-scroll in progress, so nothing waits for a release that was lost.
-    func reset() {
-        autoScroll.stop(.disabled)
+    /// Forgets any press, drag, glide or auto-scroll in progress, so nothing waits for a release that was lost. After waking from
+    /// sleep nothing is replayed: the press is long gone.
+    func reset() { clearInteractionState(repostPending: false, includingSwallowed: true) }
+
+    /// True while a press, drag, glide, window-follow or held button is being handled.
+    var hasInteractionInProgress: Bool {
         lock.lock()
+        defer { lock.unlock() }
+        return phase != .idle || wheelButton != nil || following || gliding || !swallowUp.isEmpty
+    }
+
+    /// The one way to put every piece of an interaction back to rest, used when the tools are stopped, woken, or no longer allowed. A
+    /// press that was held back (to see if it became a drag, or a turn of the wheel) is sent on as the click it was, when asked, so a
+    /// click is never lost. Releases already promised to be taken are kept unless told otherwise, so the matching release of a press
+    /// that was taken is not left to reach the app alone.
+    private func clearInteractionState(repostPending: Bool, includingSwallowed: Bool) {
+        lock.lock()
+        var held: (button: UInt32, at: CGPoint)?
+        if let wheel = wheelButton, !wheelScrolled { held = (wheel, wheelDown) } else if phase == .pending { held = (button, downLocation) }
         phase = .idle
         following = false
         gliding = false
         wheelButton = nil
         wheelScrolled = false
-        swallowUp.removeAll()
         lastDown.removeAll()
+        if includingSwallowed { swallowUp.removeAll() }
         lock.unlock()
+        autoScroll.stop(.disabled)
         work.async { [self] in
             stopGlide()
             moves.removeAll()
             window = nil
         }
+        if repostPending, let held { work.async { Self.repost(button: held.button, at: held.at, flags: []) } }
     }
 
+    private static func nowMs() -> UInt64 { DispatchTime.now().uptimeNanoseconds / 1_000_000 }
+
     func stop() {
-        autoScroll.stop(.disabled)
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         wakeObserver = nil
         if let token { events.unsubscribe(token) }
         token = nil
-        lock.lock()
-        phase = .idle
-        following = false
-        gliding = false
-        lock.unlock()
-        work.async { [self] in
-            stopGlide()
-            window = nil
-        }
+        clearInteractionState(repostPending: true, includingSwallowed: true)
     }
 
     // MARK: Events (on the tap's thread)
@@ -127,7 +139,12 @@ final class DragTools {
         // Mouse & Trackpad off, or the app in front left alone: nothing new starts, and anything running stops. A press that was already
         // taken still finishes below, so no release is left waiting.
         if !isActive() {
-            if autoScroll.isActive { autoScroll.stop(.disabled) }
+            lock.lock()
+            let justBecameInactive = wasActive
+            wasActive = false
+            lock.unlock()
+            // The moment the tools stop being allowed, everything in progress is put to rest, in the same way as when they are stopped.
+            if justBecameInactive { clearInteractionState(repostPending: true, includingSwallowed: false) }
             switch type {
             case .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown, .mouseMoved: return .passThrough
             case .flagsChanged:
@@ -140,6 +157,9 @@ final class DragTools {
             default: break
             }
         }
+        lock.lock()
+        wasActive = true
+        lock.unlock()
         switch type {
         case .flagsChanged:
             handleFlags(event, config)
@@ -174,6 +194,8 @@ final class DragTools {
 
     private func buttonDown(_ type: CGEventType, _ event: CGEvent, _ config: DragToolsConfig) -> EventDisposition {
         lock.lock()
+        let cutoff = Self.nowMs() &- 10_000
+        swallowUp = swallowUp.filter { $0.value >= cutoff }
         let wasGliding = gliding
         lock.unlock()
         if wasGliding { work.async { [self] in stopGlide() } }
@@ -185,7 +207,7 @@ final class DragTools {
         // button (with its keys) starts it. Where drag-to-scroll uses the same button and keys, drag-to-scroll wins.
         if autoScroll.click() {
             lock.lock()
-            swallowUp.insert(number)
+            swallowUp[number] = Self.nowMs()
             lock.unlock()
             return .drop
         }
@@ -193,7 +215,7 @@ final class DragTools {
             let start = event.location
             autoScroll.start(at: start)
             lock.lock()
-            swallowUp.insert(number)
+            swallowUp[number] = Self.nowMs()
             lock.unlock()
             autoMarker.show(at: start)
             InteractionTrace.shared.note("Drag tools", "Auto-scroll started")
@@ -222,7 +244,7 @@ final class DragTools {
             let previous = lastDown[number]
             let isSecond = previous.map { now &- $0 <= UInt64(config.doubleClickMs) } ?? false
             lastDown[number] = isSecond ? nil : now
-            if isSecond { swallowUp.insert(number) }
+            if isSecond { swallowUp[number] = Self.nowMs() }
             lock.unlock()
             if isSecond {
                 let id = binding.actionId
@@ -288,7 +310,7 @@ final class DragTools {
     private func buttonUp(_ event: CGEvent, _ config: DragToolsConfig) -> EventDisposition {
         let number = buttonNumber(event)
         lock.lock()
-        if swallowUp.remove(number) != nil {
+        if swallowUp.removeValue(forKey: number) != nil {
             lock.unlock()
             return .drop
         }

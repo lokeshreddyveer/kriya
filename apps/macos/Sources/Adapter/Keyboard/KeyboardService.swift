@@ -36,6 +36,7 @@ final class ShortcutEngine {
     }
 
     private func handle(_ event: CGEvent) -> EventDisposition {
+        if KeyboardPause.shared.shortcutsPaused { return .passThrough }
         let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
         let modifiers = KeyModifiers.bits(from: event.flags) & ~KeyModifiers.function
         guard let shortcut = store.shortcut(keyCode: keyCode, modifiers: modifiers, app: front.bundleID) else { return .passThrough }
@@ -99,6 +100,7 @@ final class ExpansionEngine {
     }
 
     private func key(_ event: CGEvent) {
+        if KeyboardPause.shared.expansionPaused { matcher.reset(); return }
         let flags = event.flags
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         // Shortcuts and navigation are not typing.
@@ -122,24 +124,40 @@ final class ExpansionEngine {
         }
     }
 
-    /// No expansion where typing may be a secret: protected input, password fields, excluded apps.
+    /// No expansion where typing may be a secret: protected input, password fields, excluded apps, and any field Kriya cannot look at
+    /// (unless the person trusted that app). When it says no because the field could not be checked, the app is noted so the pane can
+    /// offer to allow it.
     private func isSafe() -> Bool {
-        if IsSecureEventInputEnabled() { return false }
-        if store.currentConfig.expansionExcludedAppIds.contains(front.bundleID ?? "") { return false }
+        let appID = front.bundleID
+        let verdict = ExpansionSafety.verdict(
+            secureInput: IsSecureEventInputEnabled(),
+            appExcluded: store.currentConfig.expansionExcludedAppIds.contains(appID ?? ""),
+            field: Self.inspectFocusedField(),
+            appTrusted: ExpansionTrust.shared.isTrusted(appID))
+        if case .deny(.cannotInspect) = verdict { ExpansionTrust.shared.noteSkipped(appID) }
+        return verdict == .allow
+    }
+
+    /// Looks at the field that has the keyboard focus. Anything that stops it from being looked at is `unavailable`, never "fine".
+    static func inspectFocusedField() -> FieldCheck {
+        guard AXIsProcessTrusted() else { return .unavailable }
         let system = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(system, 0.1)
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let raw = focused, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return true }
+              let raw = focused, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return .unavailable }
         let element = unsafeBitCast(raw, to: AXUIElement.self)
         AXUIElementSetMessagingTimeout(element, 0.1)
         func string(_ attribute: String) -> String? {
             var out: CFTypeRef?
             return AXUIElementCopyAttributeValue(element, attribute as CFString, &out) == .success ? out as? String : nil
         }
-        if string(kAXRoleAttribute) == "AXSecureTextField" || string(kAXSubroleAttribute) == "AXSecureTextField" { return false }
+        let role = string(kAXRoleAttribute)
+        // A field that does not even say what it is cannot be told from a password box.
+        guard role != nil else { return .unavailable }
+        if role == "AXSecureTextField" || string(kAXSubroleAttribute) == "AXSecureTextField" { return .secureField }
         let hints = [string(kAXDescriptionAttribute), string(kAXTitleAttribute), string(kAXPlaceholderValueAttribute), string(kAXHelpAttribute)].compactMap { $0?.lowercased() }
-        return !hints.contains { $0.contains("password") || $0.contains("passcode") || $0.contains("passphrase") }
+        return hints.contains { $0.contains("password") || $0.contains("passcode") || $0.contains("passphrase") } ? .describedAsPassword : .ordinary
     }
 }
 
@@ -152,6 +170,8 @@ final class KeyboardService: ObservableObject {
     let palette: CommandPalette
 
     @Published private(set) var isRunning = false
+    /// How the shared event tap is doing (events handled, how long they took), for the pane's health line.
+    var eventStats: () -> EventMonitor.Stats? = { nil }
 
     private let toast = Toast()
     private var shortcuts: ShortcutEngine?
@@ -210,6 +230,9 @@ final class KeyboardService: ObservableObject {
         context.executor.registerCommand("selection.manual") { selection.showManually() }
         context.executor.registerCommand("selection.paste") { selection.showPasteBar() }
         context.executor.registerCommand("finder.launcher") { finder.launcher.show() }
+        context.executor.registerCommand("keyboard.pause") { KeyboardPause.shared.toggleAll() }
+        context.executor.registerCommand("keyboard.resume") { KeyboardPause.shared.resumeAll() }
+        eventStats = { [weak events = context.events] in events?.currentStats() }
         palette.configure(context: context, keyboard: self)
         Log.info("Keyboard", "Keyboard shortcuts and text expansion started")
     }
@@ -225,7 +248,7 @@ final class KeyboardService: ObservableObject {
         hotkeys?.unregisterAll()
         hotkeys = nil
         front.stop()
-        for command in ["palette.open", "clipboard.quick", "clipboard.plain", "clipboard.strip", "clipboard.pause", "selection.manual", "selection.paste", "finder.launcher"] {
+        for command in ["palette.open", "clipboard.quick", "clipboard.plain", "clipboard.strip", "clipboard.pause", "selection.manual", "selection.paste", "finder.launcher", "keyboard.pause", "keyboard.resume"] {
             context?.executor.unregisterCommand(command)
         }
         palette.close()

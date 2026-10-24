@@ -97,6 +97,13 @@ private struct RemapRuleEditor: View {
     @State private var recordedFrom: RecordedShortcut?
     @State private var recordedTogether: RecordedShortcut?
 
+    /// A rule saved with a keyboard's name (before keyboards had their own identity) is shown as that keyboard when it is connected.
+    static func selectedKeyboard(_ saved: String?, _ devices: [KeyboardDevice]) -> String {
+        guard let saved, !saved.isEmpty else { return "" }
+        if devices.contains(where: { $0.id == saved }) { return saved }
+        return devices.first(where: { $0.name == saved })?.id ?? saved
+    }
+
     init(rule: RemapRule, onSave: @escaping (RemapRule) -> Void, onCancel: @escaping () -> Void) {
         _rule = State(initialValue: rule)
         self.onSave = onSave
@@ -113,9 +120,19 @@ private struct RemapRuleEditor: View {
                         ForEach(RemapKeys.common, id: \.code) { Text($0.title).tag($0.code) }
                         if !RemapKeys.common.contains(where: { $0.code == rule.keyCode }) { Text(RemapKeys.name(rule.keyCode)).tag(rule.keyCode) }
                     }
-                    Picker("Only on keyboard", selection: Binding(get: { rule.keyboard ?? "" }, set: { rule.keyboard = $0.isEmpty ? nil : $0 })) {
+                    Picker("Only on keyboard", selection: Binding(get: { Self.selectedKeyboard(rule.keyboard, keyboards.devices) }, set: { rule.keyboard = $0.isEmpty ? nil : $0 })) {
                         Text("Any keyboard").tag("")
-                        ForEach(Array(Set(keyboards.names + (rule.keyboard.map { [$0] } ?? []))).sorted(), id: \.self) { Text($0).tag($0) }
+                        ForEach(keyboards.devices) { Text($0.name).tag($0.id) }
+                        // A keyboard this rule was made for that is not connected now, kept so saving does not quietly change the rule.
+                        if let saved = rule.keyboard, !saved.isEmpty, !keyboards.devices.contains(where: { $0.id == Self.selectedKeyboard(saved, keyboards.devices) }) {
+                            Text("\(KeyboardRuleMatch.title(for: saved, connected: keyboards.devices, remembered: keyboards.remembered)) (not connected)").tag(saved)
+                        }
+                    }
+                    if rule.keyboard != nil {
+                        Text("macOS does not say which keyboard a key press came from, so a rule for one keyboard is in force while that keyboard is connected, and then applies to typing on any keyboard.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !KeyboardRuleMatch.lookAlikes(keyboards.devices).isEmpty {
+                        Text("Two keyboards of one model that report no serial number look the same to Kriya, so a rule for one covers both.").font(.caption).foregroundStyle(.secondary)
                     }
                     LabeledContent("Or press another key") {
                         ShortcutRecorder(shortcut: Binding(get: { recordedFrom }, set: { v in

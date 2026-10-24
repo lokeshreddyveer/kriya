@@ -58,8 +58,9 @@ final class HoldTracker<Payload> {
         return entry.value.payload
     }
 
-    /// A release belongs to its own device's press. If the device is named differently on the way up, it belongs to the oldest press of
-    /// that button, so a press is never left running its hold rule after the button was let go.
+    /// A release belongs to its own device's press. If the device is named differently on the way up, the oldest press of that button
+    /// is ended instead: that is safe cleanup, so no press is left running its hold rule after the button was let go, but with two
+    /// devices it cannot promise to be the physically right device's press.
     func release(device: String = "", button: UInt32) -> Release {
         lock.lock()
         defer { lock.unlock() }

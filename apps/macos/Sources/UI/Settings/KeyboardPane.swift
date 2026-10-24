@@ -11,6 +11,7 @@ struct KeyboardPane: View {
 
     @State private var tab: Tab = .shortcuts
     @State private var confirmReset = false
+    @ObservedObject private var pause = KeyboardPause.shared
 
     enum Tab: String, CaseIterable, Identifiable {
         case shortcuts = "Shortcuts", keys = "Keys", snippets = "Snippets", expansion = "Expansion", launcher = "Launcher"
@@ -30,9 +31,24 @@ struct KeyboardPane: View {
                 }
                 .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
             }
+            if pause.published.isAnyPaused {
+                Banner(symbol: "pause.circle.fill", tint: Theme.warn, title: pause.published.summary, message: "Those keyboard behaviours are switched off until you resume them or Kriya restarts. Everything else keeps working.") {
+                    Button("Resume Everything") { pause.resumeAll() }.controlSize(.small)
+                }
+                .padding(.horizontal, 20).padding(.top, 10).transition(.opacity)
+            }
             HStack {
                 Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
                     .paneTabBar(maxWidth: 460)
+                Menu {
+                    Toggle("Pause Remapping", isOn: Binding(get: { pause.published.remaps }, set: { v in pause.change { $0.remaps = v } }))
+                    Toggle("Pause Text Expansion", isOn: Binding(get: { pause.published.expansion }, set: { v in pause.change { $0.expansion = v } }))
+                    Toggle("Pause Shortcuts", isOn: Binding(get: { pause.published.shortcuts }, set: { v in pause.change { $0.shortcuts = v } }))
+                    Divider()
+                    Button(pause.published.isAllPaused ? "Resume Everything" : "Pause Everything") { pause.toggleAll() }
+                } label: { Label(pause.published.isAnyPaused ? "Paused" : "Pause", systemImage: pause.published.isAnyPaused ? "pause.circle.fill" : "pause.circle") }
+                    .menuStyle(.button).menuIndicator(.hidden).fixedSize()
+                    .help("Switch remapping, text expansion or shortcuts off for the moment, without losing any of them. Also available as the commands “Pause the keyboard” and “Resume the keyboard”.")
                 Menu {
                     Button("Restore Default Settings") { store.restoreDefaults(everything: false) }
                     Button("Remove All Shortcuts and Snippets…") { confirmReset = true }
@@ -471,10 +487,22 @@ private struct SnippetEditorSheet: View {
 
 private struct ExpansionTab: View {
     @EnvironmentObject private var store: KeyboardStore
+    @ObservedObject private var trust = ExpansionTrust.shared
     private var config: KeyboardConfig { store.config }
 
     var body: some View {
         Form {
+            if let skipped = trust.lastSkipped {
+                Section {
+                    HStack(alignment: .top) {
+                        Label("Text was not expanded in \(AppChoice.name(for: skipped)): Kriya cannot tell what kind of field it was typing in.", systemImage: "exclamationmark.shield.fill")
+                            .foregroundStyle(Theme.warn)
+                        Spacer()
+                        Button("Allow in \(AppChoice.name(for: skipped))") { trust.setTrusted(skipped, true) }.controlSize(.small)
+                        Button("Dismiss") { trust.clearSkipped() }.controlSize(.small)
+                    }
+                } footer: { Text("Kriya looks at the field you type in so it never expands in a password box. Some apps do not let it look. Allow an app only if you never type passwords in it.") }
+            }
             Section {
                 Picker("New abbreviations expand", selection: Binding(get: { config.expansionDefaultExpandOn }, set: { v in store.updateConfig { $0.expansionDefaultExpandOn = v } })) {
                     ForEach([ExpandOn.delimiter, .immediately], id: \.self) { Text($0.title).tag($0) }
@@ -495,6 +523,20 @@ private struct ExpansionTab: View {
                 Button { if let id = AppChoice.choose(prompt: "Exclude"), !config.expansionExcludedAppIds.contains(id) { store.updateConfig { $0.expansionExcludedAppIds.append(id) } } } label: { Label("Exclude an App", systemImage: "plus") }.controlSize(.small)
             } header: { Text("Never expand in these apps") } footer: {
                 Text("Kriya never expands in password fields, while macOS protects keyboard input (such as when a password box has focus), or in fields described as a password. Password managers start on this list. Kriya keeps only the last few characters you typed, in memory, and forgets them on a click, an arrow key, a shortcut or a change of app.")
+            }
+
+            Section {
+                if trust.trusted.isEmpty { Text("None. Where Kriya cannot check the field, nothing is expanded.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(trust.trusted, id: \.self) { id in
+                    HStack {
+                        Text(AppChoice.name(for: id))
+                        Spacer()
+                        Button(role: .destructive) { trust.setTrusted(id, false) } label: { Image(systemName: "trash") }.accessibilityLabel("Delete").buttonStyle(.borderless)
+                    }
+                }
+                Button { if let id = AppChoice.choose(prompt: "Allow"), !trust.trusted.contains(id) { trust.setTrusted(id, true) } } label: { Label("Allow an App", systemImage: "plus") }.controlSize(.small)
+            } header: { Text("Expand even where Kriya cannot check the field") } footer: {
+                Text("A field Kriya cannot look at might be a password box, so by default nothing is expanded there. Apps on this list are the exception. Accessibility must be allowed for Kriya to look at fields at all.")
             }
         }
         .formStyle(.grouped)
@@ -527,11 +569,50 @@ private struct LauncherTab: View {
                 row("Space", "Switch a switch or press a button")
                 row("Launcher", "Open any pane by name")
             }
+            Section {
+                KeyboardEventsSection()
+            } header: { Text("How the keyboard is doing") } footer: {
+                Text("Every key and click goes through one watcher that Kriya's features share. These numbers say how many it has handled and how long the slowest took; a handler that takes too long delays typing. Kriya cannot see keys that macOS protects, such as in password boxes, and says so here.")
+            }
         }
         .formStyle(.grouped)
     }
 
     private func row(_ keys: String, _ text: String) -> some View {
         LabeledContent { Text(text).foregroundStyle(.secondary).multilineTextAlignment(.trailing) } label: { Text(keys).font(.system(.body, design: .rounded).monospaced()) }
+    }
+}
+
+/// Event counts and timing from the shared watcher, and whether macOS is protecting keyboard input right now.
+private struct KeyboardEventsSection: View {
+    @EnvironmentObject private var keyboard: KeyboardService
+    @State private var stats: EventMonitor.Stats?
+    @State private var secure = SecureInputStatus(enabled: false, pid: nil, appName: nil)
+    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Group {
+            if let stats {
+                LabeledContent("Events handled", value: "\(stats.eventsHandled)")
+                LabeledContent("Typical time per event", value: "\(stats.averageMicroseconds) µs")
+                LabeledContent("Slowest 5%", value: "\(stats.p95Microseconds) µs")
+                LabeledContent("Slowest ever", value: "\(stats.worstHandlerMicroseconds) µs")
+                LabeledContent("Took too long", value: "\(stats.slowHandlers)")
+                LabeledContent("Watcher restarted", value: "\(stats.tapRecoveries)")
+            } else {
+                Text("The keyboard feature is not running, so there is nothing to measure.").font(.callout).foregroundStyle(.secondary)
+            }
+            if secure.enabled {
+                Label(secure.appName.map { "macOS is protecting keyboard input for \($0), so remapping and expansion cannot see keys." } ?? "macOS is protecting keyboard input, so remapping and expansion cannot see keys.", systemImage: "lock.fill")
+                    .font(.callout).foregroundStyle(Theme.warn)
+            }
+        }
+        .onAppear(perform: refresh)
+        .onReceive(tick) { _ in refresh() }
+    }
+
+    private func refresh() {
+        stats = keyboard.isRunning ? keyboard.eventStats() : nil
+        secure = SecureInput.current()
     }
 }
