@@ -324,6 +324,9 @@ enum InteractionMap {
         case "pointer.menu.option": return "Pointer menu"
         case "clipboard.stack": return "Paste stack"
         case "window.drag", "window.modifier.drag": return "Window dragging"
+        case "actions.record", "actions.record.clicks": return "Recording an action"
+        case "clipboard.merge": return "Clipboard merge"
+        case "sound.volumekeys": return "Volume keys"
         default: return owner
         }
     }

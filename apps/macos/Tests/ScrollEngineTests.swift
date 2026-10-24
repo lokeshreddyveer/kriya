@@ -14,9 +14,12 @@ final class ScrollEngineTests: XCTestCase {
             for x in 0..<w {
                 let n = vertical ? lines[y] : lines[x]
                 let i = (y * w + x) * 4
-                data[i] = UInt8(truncatingIfNeeded: n &* 37 &+ 11)
-                data[i + 1] = UInt8(truncatingIfNeeded: (n >> 4) &* 91 &+ n &* 5)
-                data[i + 2] = UInt8(truncatingIfNeeded: n &* 53 &+ (n >> 8) &* 17)
+                // A colour for each line that does not repeat in a pattern, as a real page does not.
+                var hash = UInt32(truncatingIfNeeded: n) &* 2_654_435_761
+                hash ^= hash >> 15; hash = hash &* 2_246_822_519; hash ^= hash >> 13
+                data[i] = UInt8(truncatingIfNeeded: hash)
+                data[i + 1] = UInt8(truncatingIfNeeded: hash >> 8)
+                data[i + 2] = UInt8(truncatingIfNeeded: hash >> 16)
                 data[i + 3] = 255
             }
         }
@@ -123,14 +126,13 @@ final class ScrollEngineTests: XCTestCase {
         try assert(result, equals: expectedLines(page))
     }
 
-    func testAPageThatIgnoresTheWheelIsMovedWithPageDown() async throws {
+    func testAPageThatIgnoresTheWheelIsMovedWithPageDownAndTakenWhole() async throws {
         let page = FakePage(content: 900, viewport: 300)
         page.wheelWorks = false
-        let e = engine(page)
-        // With the wheel dead only Page Down moves it, and that is tried once the first scroll does nothing.
-        let result = await e.run()
-        XCTAssertGreaterThan(result.frames.count, 1, "Page Down was tried")
-        XCTAssertLessThanOrEqual(result.frames.count, 3, "but a page that only moves while Page Down is pressed once ends quickly")
+        let result = await engine(page).run()
+        XCTAssertGreaterThan(result.frames.count, 3, "Page Down was tried when the wheel did nothing, and kept being used")
+        XCTAssertEqual(result.strategy, .pageKey)
+        try assert(result, equals: expectedLines(page))
     }
 
     func testAPageThatMovesFurtherThanAskedIsTakenInSmallerSteps() async throws {
@@ -258,9 +260,11 @@ final class ScrollEngineTests: XCTestCase {
                 var data = [UInt8](repeating: 255, count: viewW * viewH * 4)
                 for j in 0..<viewH {
                     for i in 0..<viewW {
-                        let n = cell(y + j, x + i)
+                        // Each cell gets a colour of its own that does not repeat in a pattern, like a picture would.
+                        var hash = UInt32(truncatingIfNeeded: cell(y + j, x + i)) &* 2_654_435_761
+                        hash ^= hash >> 15; hash = hash &* 2_246_822_519; hash ^= hash >> 13
                         let k = (j * viewW + i) * 4
-                        data[k] = UInt8(truncatingIfNeeded: n &* 37); data[k + 1] = UInt8(truncatingIfNeeded: (n >> 3) &* 91 &+ n); data[k + 2] = UInt8(truncatingIfNeeded: n &* 53 &+ (n >> 9)); data[k + 3] = 255
+                        data[k] = UInt8(truncatingIfNeeded: hash); data[k + 1] = UInt8(truncatingIfNeeded: hash >> 8); data[k + 2] = UInt8(truncatingIfNeeded: hash >> 16); data[k + 3] = 255
                     }
                 }
                 return CGImage(width: viewW, height: viewH, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: viewW * 4, space: CGColorSpaceCreateDeviceRGB(),

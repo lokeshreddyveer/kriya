@@ -77,7 +77,8 @@ private struct FeatureRow: View {
                 note(state)
             }
             Spacer(minLength: 12)
-            Toggle("", isOn: binding).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            Toggle(feature.title, isOn: binding).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                .accessibilityLabel(feature.title)
             Button { navigator.pane = feature.pane } label: {
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                     .frame(width: 18, height: 24)
@@ -85,6 +86,7 @@ private struct FeatureRow: View {
             }
             .buttonStyle(.plain)
             .help("Open \(feature.title) settings")
+            .accessibilityLabel("Open \(feature.title) settings")
         }
         .padding(.vertical, 3)
         .smoothly(state)
@@ -98,17 +100,24 @@ private struct FeatureRow: View {
         case .safeMode:
             StateBadge(text: "Held off by safe mode", color: Theme.warn)
         case .needsPermission(let missing):
-            HStack(spacing: 8) {
-                StateBadge(text: "Needs \(missing.first?.title ?? "permission")", color: Theme.warn)
-                if let first = missing.first {
-                    Button("Allow") { permissions.request(first) }.controlSize(.small)
+            // Every permission that is missing, each with its own button, not only the first.
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(missing) { permission in
+                    HStack(spacing: 8) {
+                        StateBadge(text: "Needs \(permission.title)", color: Theme.warn)
+                        Button("Allow \(permission.title)") { permissions.request(permission) }.controlSize(.small)
+                    }
                 }
             }
             .padding(.top, 2)
-        case .failed:
-            HStack(spacing: 8) {
-                StateBadge(text: "Could not start", color: Theme.danger)
-                Button("Retry") { services.retry(feature) }.controlSize(.small)
+        case .failed(let reason):
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    StateBadge(text: "Could not start", color: Theme.danger)
+                    Button("Retry") { services.retry(feature) }.controlSize(.small)
+                }
+                // Why, in the words it gave, so there is something to act on.
+                if !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true).lineLimit(3) }
             }
             .padding(.top, 2)
         }

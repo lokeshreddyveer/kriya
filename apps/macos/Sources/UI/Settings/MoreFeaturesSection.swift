@@ -36,6 +36,7 @@ struct MoreFeaturesSection: View {
 
     var body: some View {
         let board = FeatureSwitchboard.shared
+        let _ = tick
         Section {
             ForEach(FeatureRegistry.extras) { feature in
                 row(feature, board: board)
@@ -44,7 +45,8 @@ struct MoreFeaturesSection: View {
         } header: { Text("More features") } footer: {
             Text("Each has its own switch where it can be switched, and its own place in Kriya's settings. “Reset” clears only that part's saved settings and restarts Kriya; the part's last settings are kept for a day so the reset can be undone in Diagnostics.")
         }
-        .id(tick)
+        // The statuses are read fresh every couple of seconds. Reading `tick` is what asks for that; the rows keep their identity, so an
+        // open menu or a dialog is not torn down each time.
         .onReceive(timer) { _ in tick &+= 1 }
         .confirmationDialog("Reset \(confirming?.title ?? "")?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), titleVisibility: .visible) {
             Button("Reset and Restart", role: .destructive) { if let area = confirming { message = FeatureResetService.reset(area, onRollback: { message = $0 }) }; confirming = nil }
@@ -81,7 +83,8 @@ struct MoreFeaturesSection: View {
             Spacer(minLength: 8)
             if board.isSwitchable(feature.id) {
                 Toggle("", isOn: Binding(get: { board.isOn(feature.id) }, set: { board.set(feature.id, $0); tick &+= 1 })).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    .accessibilityLabel("Turn \(feature.title) on")
+                    .accessibilityLabel(feature.title)
+                    .accessibilityValue(on ? "on" : "off")
             }
             Menu {
                 Button("Open Settings") { go(feature) }

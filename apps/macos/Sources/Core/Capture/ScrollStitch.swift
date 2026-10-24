@@ -59,6 +59,22 @@ enum ScrollStitch {
         var gaps: [Int]
         /// Pictures where the page had not moved.
         var repeats: [Int]
+        /// Positions in `strips` where a new section starts because the picture there did not join the one before. The finished picture
+        /// has a visible line there, so nothing is lost and nothing is passed off as joined.
+        var breaks: [Int] = []
+        /// How each joined picture was joined, and how sure that was.
+        var joins: [Join] = []
+
+        struct Join: Equatable {
+            var frame: Int
+            var overlap: Int
+            var confidence: Double
+            var ambiguous: Bool
+        }
+
+        /// Joins that were a close call: low confidence, or more than one fit.
+        static let uncertainBelow = 0.8
+        var uncertain: [Join] { joins.filter { $0.ambiguous || $0.confidence < Self.uncertainBelow } }
 
         var length: Int { strips.reduce(0) { $0 + $1.rows.count } }
         var isClean: Bool { gaps.isEmpty }

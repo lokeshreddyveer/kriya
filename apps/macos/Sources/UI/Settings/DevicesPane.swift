@@ -74,7 +74,7 @@ struct DevicesPane: View {
             Section {
                 InputTester { event in
                     // Which device it came from is macOS's best guess from the last device that moved.
-                    let line = InputTesterFormat.attributed(event, device: devices.activeDeviceName())
+                    let line = InputTesterFormat.attributed(event, device: devices.activeDeviceLabel())
                     withAnimation(.smooth(duration: 0.12)) { events = Array(([line] + events).prefix(8)) }
                 }
                 .frame(height: 96)
@@ -86,7 +86,7 @@ struct DevicesPane: View {
                 }
                 if !events.isEmpty { Button("Clear") { events.removeAll() }.controlSize(.small) }
             } header: { Text("Test a device") } footer: {
-                Text("Shows what the mouse, trackpad or keyboard sends, as macOS reports it, while the pointer is over the square, with the device it seems to come from (macOS does not say, so this is the device that last moved). It sees nothing outside it, and nothing is kept. To see which part of Kriya acted on a button anywhere else, start a trace in Diagnostics › Trace.")
+                Text("Shows what the mouse, trackpad or keyboard sends, as macOS reports it, while the pointer is over the square, with the device it seems to come from (macOS does not say, so this is the device that last moved, or “not sure” if two moved together). It sees nothing outside it, and nothing is kept. To see which part of Kriya acted on a button anywhere else, start a trace in Diagnostics › Trace.")
             }
         }
         .onReceive(ticker) { _ in
@@ -152,6 +152,7 @@ private struct DeviceRow: View {
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel(expanded ? "Hide details for \(device.displayName)" : "Show details for \(device.displayName)")
             }
 
             if expanded {
@@ -180,6 +181,8 @@ private struct DeviceRow: View {
         }
         .padding(.vertical, 4)
         .onAppear { nickname = device.record.nickname ?? "" }
+        // A name typed and not confirmed is kept when the pane is left, not lost.
+        .onDisappear { commitNickname() }
         .onChange(of: expanded) { _, isOpen in if !isOpen { commitNickname() } }
     }
 

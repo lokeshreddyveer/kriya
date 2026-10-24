@@ -54,8 +54,17 @@ struct CaptureModesSection: View {
                     ForEach(ScrollMode.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                if modes.scrollMode == .automatic {
+                    LabeledContent("Each scroll goes") {
+                        HStack {
+                            Slider(value: bind(\.scrollStep), in: 0.3...0.9, step: 0.05).frame(width: 160)
+                            Text("\(Int(modes.scrollStep * 100))% of the area").font(.caption).foregroundStyle(.secondary).frame(width: 110, alignment: .leading)
+                        }
+                    }
+                }
+                Toggle("Take a PDF that is open in a viewer whole, from its file", isOn: bind(\.scrollUsesDocument))
             } header: { Text("Scrolling capture") } footer: {
-                Text("Choose the area that scrolls. “Kriya scrolls” moves the page for you (it needs Accessibility; keep the mouse still), halves its steps if two pictures do not join, tries the other way and Page Down if the wheel does nothing, and keeps a toolbar or footer that does not scroll only once. “I scroll” watches the area and keeps each picture the page settles on. A panel outside the area shows the count and length, and has Pause, Stop and Cancel; asking for a scrolling capture again also stops it. Very long pages are warned about. “Down and across” needs Kriya to scroll. Pages that load more as you reach the bottom may need a pause: use “I scroll” for those.")
+                Text("Choose the area that scrolls. “Kriya scrolls” moves the page for you, as fast as the page settles: in a browser it asks the browser to scroll (turn on “Allow JavaScript from Apple Events” for this), in apps with a scroll bar it moves the bar, and otherwise it turns the mouse wheel, then tries Page Down and the arrow keys. Keep the mouse still. It joins pictures even when a few pixels change between them (a blinking cursor, an animation), says how sure each join was, and never drops a picture it cannot join: that one starts a new section below a red line. “I scroll” shows the latest picture and lets you capture a position, undo the last one, or keep a picture that does not overlap as a section of its own. A PDF open in a viewer is taken whole from its file. Where scrolling reaches the end, Kriya waits a moment in case more is still loading. Needs Accessibility to press keys.")
             }
 
             Section {

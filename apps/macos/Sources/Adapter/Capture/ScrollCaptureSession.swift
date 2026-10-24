@@ -1,13 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// The real screen for a scrolling capture: pictures of the chosen area from ScreenCaptureKit, and scrolling done with wheel events
-/// at its centre. The pointer is moved there for the scrolling and put back afterwards.
+/// The real screen for a scrolling capture: pictures of the chosen area from ScreenCaptureKit, and several ways to move what is in it,
+/// tried best first: the browser's own scripting, the scroll bar of the scroll area under the pointer, the mouse wheel, Page Down and
+/// the arrow keys. The pointer is moved to the middle of the area for the scrolling and put back afterwards.
 final class ScreenScrollWorld: ScrollWorld {
     let rect: CGRect
     let options: ScreenGrabber.Options
     let scale: CGFloat
     private var saved: CGPoint?
+    private var browser: BrowserScroller?
+    private var accessibility: AccessibilityScroller?
+    private(set) var strategies: [ScrollStrategy] = [.wheel, .pageKey, .arrowKeys]
+    private(set) var advice: String?
 
     init(rect: CGRect, options: ScreenGrabber.Options) {
         self.rect = rect
@@ -16,7 +21,7 @@ final class ScreenScrollWorld: ScrollWorld {
         scale = ScreenGrabber.scale(of: id)
     }
 
-    private var centre: CGPoint { CGPoint(x: rect.midX, y: rect.midY) }
+    var centre: CGPoint { CGPoint(x: rect.midX, y: rect.midY) }
 
     func prepare() {
         saved = CGEvent(source: nil)?.location
@@ -24,6 +29,31 @@ final class ScreenScrollWorld: ScrollWorld {
     }
 
     func restore() { if let saved { CGWarpMouseCursorPosition(saved) } }
+
+    /// Looks at what is under the area and decides which ways of scrolling are worth trying. Done once, before the first scroll.
+    func prepareStrategies() async {
+        let hit = ScrollTarget.at(centre)
+        var best: [ScrollStrategy] = []
+        if let kind = BrowserKind.detect(bundleID: hit?.bundleID) {
+            let scroller = BrowserScroller(kind: kind)
+            if await scroller.works() {
+                browser = scroller
+                best.append(.browser)
+            } else {
+                advice = "To scroll this browser exactly, turn on “Allow JavaScript from Apple Events” (Safari: Develop menu; Chrome: View › Developer) and allow Kriya to control it. The mouse wheel is used instead."
+            }
+        }
+        if browser == nil, let scroller = AccessibilityScroller(at: centre) {
+            // Only when this scroll area is most of what was selected: a small box inside a page is not the page.
+            if scroller.areaFrame.height >= rect.height * 0.7 || scroller.areaFrame.width >= rect.width * 0.7 {
+                accessibility = scroller
+                best.append(.accessibility)
+            } else {
+                advice = "The box under the pointer scrolls only part of what you selected. Select just that box, or point at the part that scrolls."
+            }
+        }
+        strategies = best + [.wheel, .pageKey, .arrowKeys]
+    }
 
     func grab() async throws -> CGImage { try await ScreenGrabber.areaImage(rect, options: options) }
 
@@ -44,44 +74,79 @@ final class ScreenScrollWorld: ScrollWorld {
         }
     }
 
-    func pageForward() async -> Bool {
+    func pageForward() async -> Bool { press(121, times: 1) }
+
+    private func press(_ key: CGKeyCode, times: Int) -> Bool {
         guard AXIsProcessTrusted() else { return false }
-        for down in [true, false] {
-            if let event = CGEvent(keyboardEventSource: nil, virtualKey: 121, keyDown: down) {      // Page Down
-                event.setIntegerValueField(.eventSourceUserData, value: EventMonitor.syntheticMarker)
-                event.post(tap: .cghidEventTap)
+        for _ in 0..<times {
+            for down in [true, false] {
+                if let event = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: down) {
+                    event.setIntegerValueField(.eventSourceUserData, value: EventMonitor.syntheticMarker)
+                    event.post(tap: .cghidEventTap)
+                }
             }
         }
         return true
     }
+
+    func scroll(by points: Int, axis: CaptureScrollAxis, using strategy: ScrollStrategy) async -> Bool {
+        switch strategy {
+        case .wheel: await scroll(by: points, axis: axis); return true
+        case .pageKey: return axis == .horizontal ? false : (points >= 0 ? await pageForward() : press(116, times: 1))     // Page Up for the other way
+        case .arrowKeys: return axis == .horizontal ? false : press(points >= 0 ? 125 : 126, times: max(abs(points) / 40, 1))
+        case .browser: return await browser?.scroll(by: points, axis: axis) ?? false
+        case .accessibility: return accessibility?.scroll(by: points, axis: axis) ?? false
+        }
+    }
+
+    func position(axis: CaptureScrollAxis) async -> ScrollPosition? {
+        if let browser { return await browser.position(axis: axis) }
+        return accessibility?.position(axis: axis)
+    }
 }
 
-/// A scrolling capture from start to finish: it shows a small panel (outside the area, hidden from the picture) with the count and
-/// length so far and Pause, Stop and Cancel, runs the engine, and hands back the joined picture.
+/// A scrolling capture from start to finish: it shows a panel (outside the area, hidden from the picture) with the latest picture, how
+/// far along it is, and the controls, runs the engine, and hands back the joined picture. When the area shows a PDF from a file, the
+/// whole document is drawn from the file instead of scrolled.
 @MainActor
 final class ScrollCaptureSession: ObservableObject {
     @Published private(set) var frames = 1
     @Published private(set) var length = 0
     @Published private(set) var paused = false
     @Published private(set) var note: String?
+    @Published private(set) var progress: Double?
+    @Published private(set) var preview: NSImage?
+    @Published private(set) var needsOverlap = false
 
     let mode: ScrollMode
     let axis: CaptureScrollAxis
     private let engine: ScrollEngine
     private let world: ScreenScrollWorld
+    private let useDocument: Bool
+    private let rect: CGRect
     private var panel: NSPanel?
     private var monitors: [Any] = []
     private var finished = false
 
-    init(rect: CGRect, axis: CaptureScrollAxis, mode: ScrollMode, options: ScreenGrabber.Options) {
+    init(rect: CGRect, axis: CaptureScrollAxis, mode: ScrollMode, options: ScreenGrabber.Options, stepFraction: Double = 0.7, useDocument: Bool = true) {
         self.axis = axis
         self.mode = mode
+        self.rect = rect
+        self.useDocument = useDocument
         world = ScreenScrollWorld(rect: rect, options: options)
         engine = ScrollEngine(world: world, axis: axis, mode: mode)
+        engine.stepFraction = stepFraction
         engine.onProgress = { [weak self] frames, length in DispatchQueue.main.async { self?.frames = frames; self?.length = length } }
         engine.onLong = { [weak self] length in
             DispatchQueue.main.async { self?.note = "This is getting very long (\(length) px). Stop when you have enough." }
         }
+        engine.onPosition = { [weak self] fraction in DispatchQueue.main.async { self?.progress = fraction } }
+        engine.onFrame = { [weak self] image in
+            let thumbnail = Self.thumbnail(of: image)
+            DispatchQueue.main.async { self?.preview = thumbnail }
+        }
+        engine.onNeedsOverlap = { [weak self] needed in DispatchQueue.main.async { self?.needsOverlap = needed } }
+        engine.onNote = { [weak self] text in DispatchQueue.main.async { self?.note = text } }
         showPanel(near: rect)
     }
 
@@ -91,6 +156,16 @@ final class ScrollCaptureSession: ObservableObject {
     func resume() { engine.resume(); paused = false }
     func stop() { engine.stop() }
     func cancel() { engine.cancel() }
+    func captureNow() { engine.captureNow() }
+    func undoLast() { engine.undoLast() }
+    func keepSeparately() { engine.keepUnjoined() }
+
+    /// A small picture of the latest frame for the panel.
+    nonisolated private static func thumbnail(of image: CGImage) -> NSImage {
+        let width = 360.0
+        let height = min(max(width * Double(image.height) / Double(max(image.width, 1)), 40), 150)
+        return NSImage(cgImage: image, size: NSSize(width: width, height: height))
+    }
 
     /// Runs the capture. The joined picture, or nil if it was cancelled or nothing was taken, and a sentence about how it went.
     func run() async -> (image: CGImage?, summary: String) {
@@ -98,24 +173,51 @@ final class ScrollCaptureSession: ObservableObject {
         monitors = [NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 { Task { @MainActor in self?.cancel() } }
         }].compactMap { $0 }
+        defer {
+            world.restore()
+            monitors.forEach { NSEvent.removeMonitor($0) }
+            monitors = []
+            finished = true
+            panel?.orderOut(nil)
+            panel = nil
+        }
+
+        // A PDF in a viewer: draw it from the file. Nothing to scroll, nothing to miss.
+        if useDocument, axis != .horizontal, let hit = ScrollTarget.at(world.centre), let url = PDFRender.file(for: hit, area: rect) {
+            note = "Drawing the whole PDF from its file…"
+            let drawn = await Task.detached(priority: .userInitiated) { PDFRender.render(url: url) }.value
+            if let drawn {
+                var summary = "Took all \(drawn.pages) page\(drawn.pages == 1 ? "" : "s") of the PDF straight from its file, not by scrolling."
+                if drawn.truncated { summary += " It is cut at the longest length Kriya joins." }
+                return (drawn.image, summary)
+            }
+        }
+
+        await world.prepareStrategies()
+        if let advice = world.advice { note = advice }
         let result = await engine.run()
-        world.restore()
-        monitors.forEach { NSEvent.removeMonitor($0) }
-        monitors = []
-        finished = true
-        panel?.orderOut(nil)
-        panel = nil
         if result.cancelled { return (nil, "Scrolling capture cancelled.") }
         guard let image = ScrollImage.assemble(frames: result.frames, plan: result.plan, axis: result.axis) else { return (nil, "Nothing was captured.") }
-        var summary = "\(result.frames.count) picture\(result.frames.count == 1 ? "" : "s") joined. \(result.reason)"
-        if !result.plan.gaps.isEmpty { summary += " \(result.plan.gaps.count) did not join and were left out." }
-        return (image, summary)
+        return (image, Self.summary(of: result))
+    }
+
+    /// What to tell the person about how it went: the count, why it ended, and anything that was not clean. Nothing is left out quietly.
+    nonisolated static func summary(of result: ScrollEngine.Result) -> String {
+        var parts = ["\(result.frames.count) picture\(result.frames.count == 1 ? "" : "s") joined. \(result.reason)"]
+        let gaps = result.plan.gaps.count
+        if gaps > 0 {
+            parts.append("\(gaps) picture\(gaps == 1 ? "" : "s") did not join the one before, so \(gaps == 1 ? "it starts" : "they start") a new section below a red line: nothing was left out.")
+        }
+        let uncertain = result.plan.uncertain.count
+        if uncertain > 0 { parts.append("\(uncertain) join\(uncertain == 1 ? " was" : "s were") a close call; look at the picture around \(uncertain == 1 ? "it" : "them").") }
+        parts += result.warnings
+        return parts.joined(separator: " ")
     }
 
     // MARK: The panel
 
     private func showPanel(near rect: CGRect) {
-        let size = NSSize(width: 360, height: 128)
+        let size = NSSize(width: 400, height: mode == .manual ? 330 : 270)
         let host = NSHostingView(rootView: HUD(session: self))
         host.frame = NSRect(origin: .zero, size: size)
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -154,19 +256,46 @@ final class ScrollCaptureSession: ObservableObject {
                     Text("\(session.frames) picture\(session.frames == 1 ? "" : "s") · \(session.length) px")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
                 }
+                if let progress = session.progress {
+                    ProgressView(value: progress).controlSize(.small)
+                }
+                if let preview = session.preview {
+                    ZStack(alignment: .bottom) {
+                        Image(nsImage: preview).resizable().scaledToFill().frame(width: 372, height: 84, alignment: .bottom).clipped()
+                        if session.mode == .manual {
+                            // Where the next picture has to overlap: the bottom third of this one must still be in view.
+                            Text("Keep this strip in view as you scroll")
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(.white).padding(.vertical, 3).frame(maxWidth: .infinity)
+                                .background(Color.accentColor.opacity(0.75))
+                        }
+                    }
+                    .frame(width: 372, height: 84).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.quaternary))
+                }
+                if session.needsOverlap {
+                    Text("This position does not overlap the last picture. Scroll back up a little, or keep it as a separate section.")
+                        .font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
                 if let note = session.note { Text(note).font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
                 HStack(spacing: 8) {
                     if session.mode == .automatic {
                         Button(session.paused ? "Resume" : "Pause") { session.paused ? session.resume() : session.pause() }
+                    } else {
+                        Button("Capture This Position") { session.captureNow() }
+                        Button("Undo Last") { session.undoLast() }.disabled(session.frames <= 1)
+                        if session.needsOverlap { Button("Keep Separately") { session.keepSeparately() } }
                     }
-                    Button("Stop and Save") { session.stop() }.keyboardShortcut(.defaultAction)
+                    Spacer()
+                }
+                HStack(spacing: 8) {
+                    Button(session.mode == .manual ? "Finish and Save" : "Stop and Save") { session.stop() }.keyboardShortcut(.defaultAction)
                     Button("Cancel") { session.cancel() }
                     Spacer()
                     Text("⎋ cancels").font(.system(size: 10)).foregroundStyle(.secondary)
                 }
-                .controlSize(.small)
             }
-            .padding(14).frame(width: 360, height: 128, alignment: .topLeading)
+            .controlSize(.small)
+            .padding(14).frame(width: 400, alignment: .topLeading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }

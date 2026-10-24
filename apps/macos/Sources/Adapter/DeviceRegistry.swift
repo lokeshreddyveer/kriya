@@ -160,6 +160,15 @@ final class DeviceRegistry: ObservableObject {
         activeDeviceID().flatMap(displayName(forID:))
     }
 
+    /// The same, but saying so when two devices were just used together and it cannot tell which one this is.
+    func activeDeviceLabel() -> String? {
+        switch activeAttribution() {
+        case .device(let id): return displayName(forID: id)
+        case .ambiguous: return "not sure which device"
+        case .none: return activeDeviceName()
+        }
+    }
+
     // MARK: Registry state
 
     private func loadRecords() {

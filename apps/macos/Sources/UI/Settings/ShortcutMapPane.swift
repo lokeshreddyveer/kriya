@@ -155,7 +155,7 @@ private struct EverythingTab: View {
                                 Text("In \(entry.apps.count) app\(entry.apps.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                             }
                             Button { navigator.pane = entry.pane } label: { Image(systemName: "arrow.up.forward.square") }
-                                .buttonStyle(.borderless).help("Open its settings")
+                                .buttonStyle(.borderless).help("Open its settings").accessibilityLabel("Open the settings for \(entry.title)")
                         }
                     }
                 } header: { Label(kind.title, systemImage: kind.symbol) }
@@ -221,7 +221,7 @@ private struct OrderTab: View {
                     }
                 }
             } header: { Text("Who sees an event, in order") } footer: {
-                Text("Every key press and mouse action is offered to these in turn, first to last. The first one that acts on it keeps it, and the ones after do not get it. Letting go of a button or key, and changes to modifier keys, still reach everyone, so nothing is left held down. The order is the order features started: it can change when you turn features on and off.")
+                Text("Every key press and mouse action is offered to these in turn, first to last. The first one that acts on it keeps it, and the ones after do not get it. Letting go of a button or key, and changes to modifier keys, still reach everyone, so nothing is left held down. The drag tools always come first and the mouse rules second, so a button used by both is taken by the drag tool; the rest are in the order they started, which can change when you turn features on and off.")
             }
         }
         .formStyle(.grouped)
@@ -258,6 +258,10 @@ private struct KeysTab: View {
         case "Selection bar": return .selection
         case "Right-click menu": return .finder
         case "Automation": return .automation
+        case "Pointer effects": return .pointer
+        case "Screen capture": return .capture
+        case "Launcher results", "Command launcher": return .launcher
+        case "Hot corners": return .displays
         default: return nil
         }
     }

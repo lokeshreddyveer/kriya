@@ -196,6 +196,10 @@ struct CaptureModeSettings: Codable, Equatable {
     var showRecordingTimer = true
     var scrollAxis: CaptureScrollAxis = .vertical
     var scrollMode: ScrollMode = .automatic
+    /// How far each scroll goes, as a share of the area (0.3 to 0.9). Smaller steps overlap more and join more surely.
+    var scrollStep = 0.7
+    /// Draw a PDF open in a viewer from its file, whole, instead of scrolling it.
+    var scrollUsesDocument = true
 
     init() {}
 
@@ -213,6 +217,8 @@ struct CaptureModeSettings: Codable, Equatable {
         showRecordingTimer = try c.decodeIfPresent(Bool.self, forKey: .showRecordingTimer) ?? true
         scrollAxis = try c.decodeIfPresent(CaptureScrollAxis.self, forKey: .scrollAxis) ?? .vertical
         scrollMode = try c.decodeIfPresent(ScrollMode.self, forKey: .scrollMode) ?? .automatic
+        scrollStep = min(max(try c.decodeIfPresent(Double.self, forKey: .scrollStep) ?? 0.7, 0.3), 0.9)
+        scrollUsesDocument = try c.decodeIfPresent(Bool.self, forKey: .scrollUsesDocument) ?? true
     }
 
     var shape: SelectionGeometry.Shape { SelectionGeometry.shapes.first { $0.id == shapeID } ?? SelectionGeometry.shapes[0] }

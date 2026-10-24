@@ -258,7 +258,7 @@ extension ScreenCaptureService {
                 toast.show("Accessibility is off, so Kriya cannot scroll for you. Scroll the page yourself; Kriya takes the pictures.")
             }
             let options = ScreenGrabber.Options(includeCursor: false, hideDesktopIcons: false, excludeKriya: true, cropNotch: false)
-            let session = ScrollCaptureSession(rect: target.rect, axis: modes.scrollAxis, mode: mode, options: options)
+            let session = ScrollCaptureSession(rect: target.rect, axis: modes.scrollAxis, mode: mode, options: options, stepFraction: modes.scrollStep, useDocument: modes.scrollUsesDocument)
             scrollSession = session
             let (image, summary) = await session.run()
             scrollSession = nil
