@@ -36,7 +36,7 @@ extension Applies {
 }
 
 extension PathStyle {
-    static var all: [PathStyle] { [.full, .name, .nameWithoutExtension, .parent, .shellEscaped] }
+    static var all: [PathStyle] { [.full, .name, .nameWithoutExtension, .parent, .shellEscaped, .fileUrl, .hfs, .markdownLink, .htmlLink, .jsonArray, .csvList] }
 
     var title: String {
         switch self {
@@ -45,6 +45,12 @@ extension PathStyle {
         case .nameWithoutExtension: return "Name without extension"
         case .parent: return "Parent folder path"
         case .shellEscaped: return "Shell-escaped path"
+        case .fileUrl: return "file:// URL"
+        case .hfs: return "HFS path"
+        case .markdownLink: return "Markdown link"
+        case .htmlLink: return "HTML link"
+        case .jsonArray: return "JSON array"
+        case .csvList: return "CSV list"
         }
     }
 }
@@ -84,6 +90,11 @@ extension FinderActionKind {
         case .editTags: return "Add Finder tags to the items"
         case .editComment: return "Write a Finder comment on the items"
         case .share: return "Open the share menu for the items"
+        case .copyPathAs: return "A submenu of path formats: URL, Markdown link, JSON and more"
+        case .openInIde: return "A submenu of the code editors and terminals on this Mac"
+        case .toFolderSet(let copy): return copy ? "A submenu of your saved folder sets to copy into" : "A submenu of your saved folder sets to move into"
+        case .quickTag: return "A submenu of one-click tag and comment presets"
+        case .inspect: return "A submenu of read-only looks: permissions, signature, quarantine, size"
         }
     }
 
@@ -116,6 +127,11 @@ extension FinderActionKind {
         case .editTags: return "tag"
         case .editComment: return "text.bubble"
         case .share: return "square.and.arrow.up"
+        case .copyPathAs: return "link"
+        case .openInIde: return "chevron.left.forwardslash.chevron.right"
+        case .toFolderSet: return "folder.badge.plus"
+        case .quickTag: return "tag"
+        case .inspect: return "info.circle"
         }
     }
 }
@@ -128,6 +144,9 @@ final class FinderStore: ObservableObject {
     @Published private(set) var fileTemplates: [FileTemplate] = []
     @Published private(set) var folderTemplates: [FolderTemplate] = []
     @Published var lastError: String?
+    /// Saved destination groups, one-click tag presets and where each action shows. Kept in preferences, written to the menu file.
+    @Published var tagPresets: [FinderTagPreset] { didSet { save(tagPresets, "finderTagPresets.v1"); publish() } }
+    @Published var profiles: [FinderMenuFile.Profile] { didSet { save(profiles, "finderProfiles.v1"); publish() } }
 
     private let core: KriyaCore
     let menuFile: URL
@@ -138,7 +157,26 @@ final class FinderStore: ObservableObject {
         self.core = core
         self.menuFile = menuFile
         self.defaults = defaults
+        func load<T: Decodable>(_ key: String, _ fallback: T) -> T { defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) } ?? fallback }
+        tagPresets = load("finderTagPresets.v1", FinderPresets.defaultTagPresets)
+        profiles = load("finderProfiles.v1", [FinderMenuFile.Profile]())
         reload()
+        // The folder sets are the same ones the Finder windows and the launcher use; a change shows in Finder's menu at once.
+        FolderSetStore.shared.$sets.dropFirst().sink { [weak self] _ in self?.publish() }.store(in: &bag)
+    }
+
+    private var bag = Set<AnyCancellable>()
+
+    private func save<T: Encodable>(_ value: T, _ key: String) {
+        if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: key) }
+    }
+
+    /// Adds the starter file types (JSON, CSV, Python, Swift…) that are not in the template list yet. Returns how many were added.
+    @discardableResult
+    func addStarterTemplates() -> Int {
+        let fresh = FinderPresets.missingStarters(existing: fileTemplates.map(\.id))
+        for template in fresh { saveTemplate(template) }
+        return fresh.count
     }
 
     func reload() {
@@ -278,7 +316,15 @@ final class FinderStore: ObservableObject {
             templates: fileTemplates.map { FinderMenuFile.Named(id: $0.id, title: $0.name) },
             folderTemplates: folderTemplates.map { FinderMenuFile.Named(id: $0.id, title: $0.name) },
             favoriteApps: apps,
-            conversions: Converter.menuMap()
+            conversions: Converter.menuMap(),
+            extras: FinderMenuFile.Extras(
+                pathFormats: FinderPresets.pathFormats.map { FinderMenuFile.Named(id: $0.word, title: $0.title) },
+                ides: FinderPresets.ideCatalog.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.id) != nil }.map { FinderMenuFile.Named(id: $0.id, title: $0.name) },
+                folderSets: FinderPresets.destinationChoices(FolderSetStore.shared.sets),
+                quickTags: tagPresets.map { FinderMenuFile.Named(id: $0.id, title: $0.title) },
+                inspections: FinderPresets.inspections.map { FinderMenuFile.Named(id: $0.id, title: $0.title) }
+            ),
+            profiles: profiles.isEmpty ? nil : profiles
         )
     }
 
@@ -288,6 +334,11 @@ final class FinderStore: ObservableObject {
         case .newFolderFromTemplate(let id) where id == nil: return .folderTemplates
         case .openWith(let id) where id == nil: return .favoriteApps
         case .convert(let target) where target == nil: return .conversions
+        case .copyPathAs: return .pathFormats
+        case .openInIde: return .ides
+        case .toFolderSet(let copy): return copy ? .folderSetsCopy : .folderSetsMove
+        case .quickTag: return .quickTags
+        case .inspect: return .inspect
         default: return nil
         }
     }

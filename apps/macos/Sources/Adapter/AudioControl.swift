@@ -245,4 +245,35 @@ final class AudioControl {
 
     /// The device with this unique name, if it is connected.
     func device(uid: String) -> AudioDevice? { devices().first { $0.uid == uid } }
+
+    // MARK: Sound effects (alerts)
+
+    /// The device the Mac plays alerts and other sound effects on. It can differ from the main output.
+    func defaultSystemOutputDevice() -> AudioDeviceID? {
+        var a = address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size, &id) == noErr && id != 0 ? id : nil
+    }
+
+    @discardableResult
+    func setDefaultSystemOutput(_ device: AudioDevice) -> Bool {
+        var a = address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+        var id = device.id
+        return AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, UInt32(MemoryLayout<AudioDeviceID>.size), &id) == noErr
+    }
+
+    /// The alert (sound effects) volume, 0 to 1.
+    func alertVolume() -> Double? {
+        var error: NSDictionary?
+        guard let result = NSAppleScript(source: "alert volume of (get volume settings)")?.executeAndReturnError(&error), error == nil else { return nil }
+        return Double(result.int32Value) / 100
+    }
+
+    @discardableResult
+    func setAlertVolume(_ level: Double) -> Bool {
+        var error: NSDictionary?
+        _ = NSAppleScript(source: "set volume alert volume \(Int((min(max(level, 0), 1) * 100).rounded()))")?.executeAndReturnError(&error)
+        return error == nil
+    }
 }

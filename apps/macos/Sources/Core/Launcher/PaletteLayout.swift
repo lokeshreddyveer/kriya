@@ -3,7 +3,7 @@ import Foundation
 
 /// How big the launcher window is for what it is showing: a bar alone, then growing as results appear, up to a limit.
 enum PaletteLayout {
-    static let width: CGFloat = 680
+    static let width: CGFloat = 560
     /// The search pill, the gap, and the results panel under it (a row of kinds, then the results).
     static let searchHeight: CGFloat = 58
     static let gap: CGFloat = 10

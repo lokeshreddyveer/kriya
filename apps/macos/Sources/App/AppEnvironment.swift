@@ -287,6 +287,9 @@ final class AppEnvironment {
         bridge.showSelection = { [weak selection] text in DispatchQueue.main.async { selection?.showText(text) } }
         safariInbox.showSelection = { [weak selection] text in DispatchQueue.main.async { selection?.showText(text) } }
         selection.runner.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "Selection bar", input: text) }
+        selection.runner.sendToShelf = { [weak fileShelf] text in fileShelf?.add(text: text) }
+        fileShelf.workflows = { [weak automation] in (automation?.store.workflows ?? []).filter(\.enabled).map { (id: $0.id, name: $0.name) } }
+        fileShelf.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "File shelf", input: text) }
         finder.runner.runWorkflow = { [weak automation] id, text in automation?.fire(id, source: "Finder menu", input: text) }
         pointerMenu.runWorkflow = { [weak automation] id in automation?.fire(id, source: "Pointer menu") }
         WindowCommands.dynamic = { [weak workspaceStore, weak pointerStore] in
@@ -311,6 +314,8 @@ final class AppEnvironment {
             guard let capture else { done(image); return }
             captureEditor.show(image, service: capture, completion: done)
         }
+        capture.sendToShelf = { [weak fileShelf] url in fileShelf?.add(file: url) }
+        executor.registerCommand("capture.restore") { DispatchQueue.main.async { CaptureOverlay.shared.restoreLast() } }
         capture.start()
         timeline.start(events: events)
         keyboard.palette.addProvider { [weak capture] in

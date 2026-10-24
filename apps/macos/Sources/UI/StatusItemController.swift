@@ -29,6 +29,10 @@ final class StatusItemController: NSObject {
         button.target = self
         button.action = #selector(clicked(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        // Dropping files, text or a picture on the icon makes a new shelf of them.
+        let drop = StatusDropView(frame: button.bounds)
+        drop.onDrop = { [weak self] board in self?.env.fileShelf.createShelf(from: board) ?? false }
+        button.addSubview(drop)
         updateIcon(safeMode: env.crashGuard.isSafeMode)
     }
 

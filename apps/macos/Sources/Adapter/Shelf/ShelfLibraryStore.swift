@@ -18,6 +18,11 @@ final class ShelfLibraryStore: ObservableObject {
         library = loaded
         let released = library.expire()
         removeImages(released)
+        // Pictures left over from a shelf that was not saved are removed.
+        let kept = Set(library.allImageNames)
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasSuffix(".png") && !kept.contains(name) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
         // Let go of old items now and then while the app runs.
         timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.change { _ = $0.expire() }; self?.remindAboutExpiry() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in self?.remindAboutExpiry() }
@@ -83,6 +88,19 @@ final class ShelfLibraryStore: ObservableObject {
         } catch { return nil }
     }
 
+    /// The PNG data of a kept picture.
+    func imageData(named name: String) -> Data? { try? Data(contentsOf: folder.appendingPathComponent((name as NSString).lastPathComponent)) }
+
+    /// Keeps PNG data in the shelf folder and returns its name.
+    func storeImage(png: Data) -> String? {
+        let name = UUID().uuidString + ".png"
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try png.write(to: folder.appendingPathComponent(name), options: .atomic)
+            return name
+        } catch { return nil }
+    }
+
     func image(named name: String) -> NSImage? { NSImage(contentsOf: folder.appendingPathComponent((name as NSString).lastPathComponent)) }
 
     private func removeImages(_ names: [String]) {
@@ -93,7 +111,8 @@ final class ShelfLibraryStore: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let url = folder.appendingPathComponent("shelves.json")
-            try JSONEncoder().encode(library).write(to: url, options: .atomic)
+            // A shelf marked "do not save" stays in memory only.
+            try JSONEncoder().encode(library.persistable).write(to: url, options: .atomic)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             Log.warning("Shelf", "Could not save the shelves: \(error.localizedDescription)")

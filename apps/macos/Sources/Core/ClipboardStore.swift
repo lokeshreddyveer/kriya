@@ -153,6 +153,22 @@ final class ClipboardStore: ObservableObject {
 
     func markUsed(_ id: String) { try? core.clipMarkUsed(id: id, now: SystemInfo.nowSeconds) }
 
+    // MARK: Words in pictures and secret labels (safe from any thread)
+
+    /// The newest copied pictures whose words have not been read yet.
+    func imagesWithoutText(limit: UInt32) -> [String] { (try? core.clipImagesWithoutText(limit: limit)) ?? [] }
+
+    /// Adds the words read from a picture to what search matches. A picture is only read once.
+    func addSearchText(_ id: String, _ text: String) { try? core.clipAddSearchText(id: id, text: text) }
+
+    /// Labels what kind of secret an item looks like, as a tag, without touching its text.
+    func labelSecret(_ id: String, _ kind: ClipSecretKind) {
+        let existing = ((try? core.clipItem(id: id)) ?? nil)?.tags ?? []
+        guard !existing.contains(kind.tag) else { return }
+        try? core.clipSetTags(id: id, tags: existing + [kind.tag])
+        DispatchQueue.main.async { [self] in tags = (try? core.clipAllTags()) ?? tags }
+    }
+
     // MARK: Editing items
 
     func setPinned(_ id: String, _ pinned: Bool) { perform { try core.clipSetPinned(id: id, pinned: pinned) } }

@@ -19,7 +19,9 @@ final class FinderSync: FIFinderSync {
 
     override init() {
         super.init()
-        // Watching the whole disk is what lets the menu appear for any folder.
+        // Watching the whole disk is what lets the menu appear for any folder (Apple's Finder Sync only adds a menu inside watched
+        // folders, and a nil list adds it nowhere). This costs nothing extra: the extension implements no folder-observing or badge
+        // callbacks, so Finder has nothing to call it about on large, network or cloud folders except to build the menu on a right-click.
         FIFinderSyncController.default().directoryURLs = [URL(fileURLWithPath: "/")]
     }
 
@@ -44,11 +46,14 @@ final class FinderSync: FIFinderSync {
         let controller = FIFinderSyncController.default()
         let background = menuKind == .contextualMenuForContainer || menuKind == .toolbarItemMenu
         let urls = background ? [] : (controller.selectedItemURLs() ?? [])
+        // The folder being looked at, so a profile can limit an action to some places: the folder itself, or the one holding the selection.
+        let place = controller.targetedURL()?.path ?? urls.first?.deletingLastPathComponent().path
         let selection = FinderMenuFile.Selection(
             count: background ? 1 : urls.count,
             folders: background ? 1 : urls.filter { $0.hasDirectoryPath }.count,
             extensions: urls.map { $0.hasDirectoryPath ? "" : $0.pathExtension.lowercased() },
-            isBackground: background
+            isBackground: background,
+            folder: place
         )
         let items = file.visibleItems(for: selection)
         log.info("menu: kind \(menuKind.rawValue), \(selection.count) selected, \(items.count) actions")

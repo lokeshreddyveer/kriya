@@ -340,7 +340,7 @@ enum SettingsIndex {
         e("launcher", nil, "Check Links", "quicklinks broken url test"), e("capture", nil, "Capture profiles", "quick copy documentation tutorial pointer"),
         e("capture", nil, "Text in pictures", "ocr languages recognition"), e("launcher", nil, "Why was this shown?", "score ranking explain result"),
         e("selection", nil, "Open straight in keyboard mode", "arrows tab return voiceover shortcut twice"), e("folderRules", nil, "Two rules want the same file", "overlap who wins order"),
-        e("diskMap", nil, "Safe to remove", "cache build folders trash cleanup suggestions"), e("notes", nil, "Locked notes and templates", "encrypt keychain pinned attachments"),
+        e("diskMap", nil, "Likely rebuildable files", "cache build folders trash cleanup suggestions largest duplicates snapshots purgeable full disk access sunburst"), e("notes", nil, "Locked notes and templates", "encrypt keychain pinned attachments"),
     ]
 
     /// Entries that match every word, best first: a title that starts with the word, then one that contains it, then keywords.

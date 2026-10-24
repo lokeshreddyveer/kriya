@@ -40,6 +40,8 @@ final class ScreenCaptureService: ObservableObject {
     init(settings: CaptureSettingsStore) {
         self.settings = settings
         recording.onEnd = { [weak self] in self?.isCapturing = false }
+        recording.onSaved = { [weak self] url in self?.recordingSaved(url) }
+        CaptureOverlay.shared.actions = overlayActions(settings: settings.settings)
     }
 
     // MARK: Starting and shortcuts
@@ -82,6 +84,11 @@ final class ScreenCaptureService: ObservableObject {
         default: break
         }
         guard !isCapturing else { return }
+        // A password manager or bank in front is never photographed, so a secret is not captured by accident.
+        if action != .ruler, CaptureExclusions.isExcluded(NSWorkspace.shared.frontmostApplication?.bundleIdentifier, list: CaptureExtraSettings.excludedApps) {
+            toast.show("Not captured: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "that app") is on the list of apps Kriya never captures.", isError: true)
+            return
+        }
         guard hasPermission() else {
             requestPermission()
             toast.show("Allow Screen Recording for Kriya in System Settings, then try again.", isError: true)
@@ -141,12 +148,12 @@ final class ScreenCaptureService: ObservableObject {
             capturer(["-i", "-v", movie.path])
             DispatchQueue.main.async { self.isCapturing = false }
             guard FileManager.default.fileExists(atPath: movie.path) else { return }
-            guard asGIF else { DispatchQueue.main.async { self.toast.show("Recording saved as \(movie.lastPathComponent)") }; return }
+            guard asGIF else { DispatchQueue.main.async { self.toast.show("Recording saved as \(movie.lastPathComponent)"); self.recordingSaved(movie, settings: settings) }; return }
             let gif = movie.deletingPathExtension().appendingPathExtension("gif")
             Task {
                 let ok = await GIFExporter.convert(movie: movie, to: gif)
                 await MainActor.run {
-                    if ok { try? FileManager.default.removeItem(at: movie); self.toast.show("GIF saved as \(gif.lastPathComponent)") }
+                    if ok { try? FileManager.default.removeItem(at: movie); self.toast.show("GIF saved as \(gif.lastPathComponent)"); self.recordingSaved(gif, settings: settings) }
                     else { self.toast.show("The recording was saved, but could not be turned into a GIF.", isError: true) }
                 }
             }
@@ -269,6 +276,18 @@ final class ScreenCaptureService: ObservableObject {
                 self.isCapturing = false
                 self.deliverText(text)
             }
+        case .textJoined, .textMarkdown, .textTable:
+            let lines = (try? recognizer.recognize(image)) ?? []
+            let text: String
+            switch action {
+            case .textJoined: text = OCRText.joined(lines)
+            case .textMarkdown: text = OCRText.markdown(lines)
+            default: text = OCRText.csv(OCRText.table(lines))
+            }
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                self.deliverText(text)
+            }
         case .qr:
             let found = QRCodeReader.read(image)
             DispatchQueue.main.async {
@@ -302,7 +321,7 @@ final class ScreenCaptureService: ObservableObject {
             DispatchQueue.main.async {
                 if settings.openEditor {
                     self.showEditor(picture) { finished in
-                        if let finished { self.deliver(finished, settings: settings, hidden: hidden) }
+                        if let finished { self.deliver(finished, settings: settings, hidden: hidden, original: picture, edited: true) }
                         self.isCapturing = false
                     }
                 } else {
@@ -340,29 +359,86 @@ final class ScreenCaptureService: ObservableObject {
         toast.show("Copied \(trimmed.count) characters of text")
     }
 
-    private func deliver(_ image: CGImage, settings: CaptureSettings, hidden: Int) {
+    /// Hands the picture on as the settings say, then shows the quick card with it. `original` is the picture before editing, kept
+    /// beside the edited one when that is turned on.
+    private func deliver(_ image: CGImage, settings: CaptureSettings, hidden: Int, original: CGImage? = nil, edited: Bool = false) {
         var done: [String] = []
+        var picture = image
+        // A backdrop set for every capture is put on pictures that were not styled in the editor.
+        let style = CaptureExtraSettings.beautify
+        if !edited, style.isOn, let styled = CaptureRenderer.beautified(picture, style) { picture = styled }
         if hidden > 0 { done.append("\(hidden) private place\(hidden == 1 ? "" : "s") hidden") }
-        if settings.copyImage, let data = image.pngData {
+        if settings.copyImage, let data = picture.pngData {
             pasteboard.clearContents()
             pasteboard.setData(data, forType: .png)
             done.append("copied")
         }
+        var savedFile: URL?
         if settings.saveToFolder {
-            if let name = save(image, to: settings.folder) { done.append("saved as \(name)") }
+            if let name = save(picture, to: settings.folder) { done.append("saved as \(name)"); savedFile = settings.folder.appendingPathComponent(name) }
             else { toast.show("The capture could not be saved in \(settings.folder.lastPathComponent).", isError: true) }
+            if edited, CaptureExtraSettings.keepOriginal, let original, save(original, to: settings.folder, original: true) != nil { done.append("original kept") }
         }
         toast.show(done.isEmpty ? "Captured, but copying and saving are both off." : "Captured: " + done.joined(separator: ", "))
+        showCard(picture, file: savedFile, recording: false, settings: settings)
     }
 
-    /// Writes the picture into the folder and returns the file's name.
+    /// Shows the quick access card for a capture (the settings decide whether it gets one).
+    private func showCard(_ image: CGImage, file: URL?, recording: Bool, settings: CaptureSettings) {
+        let overlay = CaptureOverlay.shared
+        overlay.actions = overlayActions(settings: settings)
+        overlay.isRecording = { [weak self] in self?.recording.isRecording ?? false }
+        overlay.show(image, file: file, isRecording: recording)
+    }
+
+    /// Called when a recording has been saved, so it gets a card too.
+    func recordingSaved(_ url: URL, settings: CaptureSettings? = nil) {
+        let current = settings ?? self.settings.settings
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let frame = CaptureOverlay.thumbnail(forMovie: url) else { return }
+            DispatchQueue.main.async { self.showCard(frame, file: url, recording: true, settings: current) }
+        }
+    }
+
+    /// What the cards' buttons and keys do. Also what the menu-bar icon uses.
+    func overlayActions(settings: CaptureSettings) -> CaptureOverlayActions {
+        var actions = CaptureOverlayActions(
+            edit: { [weak self] image in
+                self?.showEditor(image) { finished in if let finished { self?.deliver(finished, settings: settings, hidden: 0, original: image, edited: true) } }
+            },
+            copyText: { [weak self] in self?.copyText(from: $0) },
+            pin: { PinnedShots.shared.pin(NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height))) },
+            save: { [weak self] image, format in self?.saveFile(image, format: format, folder: settings.folder) },
+            message: { [weak self] text, isError in self?.toast.show(text, isError: isError) }
+        )
+        actions.sendToShelf = { [weak self] in self?.sendToShelf($0) }
+        actions.openHistory = { [weak self] in self?.openHistory() }
+        actions.openSettings = { [weak self] in self?.openSettings() }
+        actions.runCommand = { [weak self] in self?.run(command: $0) }
+        actions.captureFolder = { settings.folder }
+        return actions
+    }
+
+    /// Put a file on the shelf, open the history, open settings: set by the app, which owns those screens.
+    var sendToShelf: (URL) -> Void = { _ in }
+    var openHistory: () -> Void = {}
+    var openSettings: () -> Void = {}
+
+    /// Saves in a chosen format (from the card's menu) and returns the file.
+    private func saveFile(_ image: CGImage, format: CaptureFormat, folder: URL) -> URL? {
+        guard let name = save(image, to: folder, format: format) else { return nil }
+        return folder.appendingPathComponent(name)
+    }
+
+    /// Writes the picture into the folder and returns the file's name. In the saved format (PNG unless changed); `original` marks the
+    /// untouched copy of an edited capture.
     @discardableResult
-    func save(_ image: CGImage, to folder: URL, now: Date = Date()) -> String? {
+    func save(_ image: CGImage, to folder: URL, now: Date = Date(), format: CaptureFormat = CaptureExtraSettings.format, original: Bool = false) -> String? {
         let manager = FileManager.default
         do {
             try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let name = CaptureNaming.fileName(pattern: settings.settings.namePattern, date: now, app: frontApp, mode: "capture", ext: "png") { manager.fileExists(atPath: folder.appendingPathComponent($0).path) }
-            guard let data = image.pngData else { return nil }
+            let name = CaptureNaming.fileName(pattern: settings.settings.namePattern, date: now, app: frontApp, mode: original ? "original" : "capture", ext: format.fileExtension) { manager.fileExists(atPath: folder.appendingPathComponent($0).path) }
+            guard let data = image.data(as: format) else { return nil }
             try data.write(to: folder.appendingPathComponent(name), options: .atomic)
             return name
         } catch {

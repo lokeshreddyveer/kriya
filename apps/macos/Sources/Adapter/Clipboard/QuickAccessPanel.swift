@@ -3,6 +3,8 @@ import SwiftUI
 
 enum ClipChip: String, CaseIterable, Identifiable {
     case all = "All", text = "Text", links = "Links", images = "Images", files = "Files", pinned = "Pinned", snippets = "Snippets"
+    /// Items labelled as a password, key, token or card; and what has been pasted three times or more.
+    case secrets = "Secrets", frequent = "Frequent"
     var id: String { rawValue }
 
     func filter(collection: String?) -> ClipFilter {
@@ -22,7 +24,11 @@ final class QuickClipModel: ObservableObject {
     @Published var query = "" { didSet { reload() } }
     @Published var chip: ClipChip = .all { didSet { reload() } }
     @Published var collection: String? { didSet { reload() } }
+    /// Where it came from and when, on top of the search.
+    @Published var view = ClipViewFilter() { didSet { reload() } }
     @Published private(set) var results: [ClipItem] = []
+    /// The apps that copied what is in the history, most copies first, for the "From app" menu.
+    @Published private(set) var sources: [String] = []
     @Published var selected = 0
     @Published private(set) var blob: ClipBlob?
 
@@ -33,13 +39,22 @@ final class QuickClipModel: ObservableObject {
         query = ""
         chip = .all
         collection = nil
+        view = ClipViewFilter()
         reload()
     }
 
+    private func fetch() -> [ClipItem] {
+        var filter = view
+        if chip == .secrets { filter.secretsOnly = true }
+        if chip == .frequent { filter.frequentOnly = true }
+        return filter.apply(store.search(query, filter: chip.filter(collection: collection), limit: 400))
+    }
+
     func reload() {
-        results = store.search(query, filter: chip.filter(collection: collection), limit: 200)
+        results = fetch()
         selected = 0
         loadPreview()
+        sources = ClipViewFilter.sources(in: store.search("", limit: 400))
     }
 
     func move(_ delta: Int) {
@@ -83,7 +98,7 @@ final class QuickClipModel: ObservableObject {
         let keep = selected
         let keepID = current?.id
         store.delete(item.id)
-        results = store.search(query, filter: chip.filter(collection: collection), limit: 200)
+        results = fetch()
         selected = keepID.flatMap { id in results.firstIndex { $0.id == id } } ?? min(keep, max(0, results.count - 1))
         loadPreview()
     }
@@ -98,7 +113,7 @@ final class QuickClipModel: ObservableObject {
     }
 
     private func reloadKeepingSelection(_ id: String) {
-        results = store.search(query, filter: chip.filter(collection: collection), limit: 200)
+        results = fetch()
         selected = results.firstIndex { $0.id == id } ?? 0
         loadPreview()
     }
@@ -141,6 +156,8 @@ final class QuickAccessPanel: NSObject, NSWindowDelegate {
         model.open()
         let panel = self.panel ?? makePanel()
         self.panel = panel
+        // Left out of screen sharing and other apps' screenshots, unless the person turned that off.
+        panel.sharingType = ClipExtraSettings.hideWhenSharing ? .none : .readOnly
         placing = true
         let size = panel.frame.size
         let screens = NSScreen.screens.map(\.visibleFrame)
@@ -227,11 +244,75 @@ final class QuickAccessPanel: NSObject, NSWindowDelegate {
             if let url = URL(string: item.preview), ["http", "https"].contains(url.scheme?.lowercased()) {
                 list.append(QuickMenuAction(title: "Open Link", symbol: "safari") { NSWorkspace.shared.open(url) })
             }
+        case .image:
+            list.append(QuickMenuAction(title: "Paste as PNG", symbol: "photo", submenu: "Picture") { [weak self] in self?.close(); self?.paster.pasteImage(item, as: .png) })
+            list.append(QuickMenuAction(title: "Paste as JPEG", symbol: "photo", submenu: "Picture") { [weak self] in self?.close(); self?.paster.pasteImage(item, as: .jpeg) })
+            list.append(QuickMenuAction(title: "Copy Text from Picture", symbol: "text.viewfinder", submenu: "Picture") { [weak self] in self?.copyPictureText(item) })
+            list.append(QuickMenuAction(title: "Copy QR Code Text", symbol: "qrcode.viewfinder", submenu: "Picture") { [weak self] in self?.copyQRText(item) })
         default:
             break
         }
+        if item.kind == .url, let markdown = ClipPasteText.markdownLink(item.preview) {
+            list.append(QuickMenuAction(title: "Paste as Markdown Link", symbol: "text.badge.plus") { [weak self] in self?.close(); self?.paster.pasteTransformed(markdown) })
+        }
+        // Items that go away by themselves.
+        list.append(QuickMenuAction(title: "Paste Once, Then Delete", symbol: "flame", submenu: "Expire") { [weak self] in self?.close(); self?.paster.choose(item, plain: false, once: true) })
+        for (title, minutes) in [("Delete in 5 Minutes", 5), ("Delete in 1 Hour", 60), ("Delete in 1 Day", 1440)] {
+            list.append(QuickMenuAction(title: title, symbol: "timer", submenu: "Expire") { [weak self] in
+                ClipLifetimes.shared.schedule(item.id, minutes: minutes)
+                self?.toast.show("It will be removed in \(minutes < 60 ? "\(minutes) minutes" : minutes == 60 ? "an hour" : "a day")")
+            })
+        }
+        if ClipLifetimes.shared.remaining(item.id) != nil {
+            list.append(QuickMenuAction(title: "Keep It (Cancel the Timer)", symbol: "timer", submenu: "Expire") { ClipLifetimes.shared.cancel(item.id) })
+        }
+        if let app = item.sourceApp {
+            list.append(QuickMenuAction(title: "Delete Everything From \(AppChoice.name(for: app))…", symbol: "trash", submenu: "Expire") { [weak self] in self?.deleteAll(from: app) })
+        }
         list.append(contentsOf: extraMenuActions(item))
         return list
+    }
+
+    private func copyPictureText(_ item: ClipItem) {
+        guard let data = store.blob(item.id)?.image else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [toast] in
+            let text = ClipImageTools.text(in: data)
+            DispatchQueue.main.async {
+                guard let text else { toast.show("No text found in that picture.", isError: true); return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                toast.show("Copied the text from the picture")
+            }
+        }
+    }
+
+    private func copyQRText(_ item: ClipItem) {
+        guard let data = store.blob(item.id)?.image else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [toast] in
+            let codes = ClipImageTools.qrPayloads(in: data)
+            DispatchQueue.main.async {
+                guard !codes.isEmpty else { toast.show("No QR code found in that picture.", isError: true); return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(codes.joined(separator: "\n"), forType: .string)
+                toast.show(codes.count == 1 ? "Copied the QR code's text" : "Copied \(codes.count) QR codes' text")
+            }
+        }
+    }
+
+    /// Removes every unpinned, non-snippet item copied from one app, after asking.
+    private func deleteAll(from app: String) {
+        let doomed = store.search("", limit: 5000).filter { $0.sourceApp == app && !$0.pinned && !$0.favorite }
+        guard !doomed.isEmpty else { toast.show("Nothing to delete: what is left is pinned or a snippet."); return }
+        close()
+        let alert = NSAlert()
+        alert.messageText = "Delete \(doomed.count) item\(doomed.count == 1 ? "" : "s") copied from \(AppChoice.name(for: app))?"
+        alert.informativeText = "Pinned items and snippets stay. This cannot be undone."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        for item in doomed { store.delete(item.id) }
+        toast.show("Deleted \(doomed.count) item\(doomed.count == 1 ? "" : "s")")
     }
 }
 

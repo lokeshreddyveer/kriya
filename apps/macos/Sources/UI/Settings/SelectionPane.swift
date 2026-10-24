@@ -333,6 +333,9 @@ struct TextOpFields: View {
 
 private struct AppearanceTab: View {
     @AppStorage(SelectionService.startInKeyboardKey) private var startInKeyboard = false
+    @AppStorage(SelectionPins.rankKey) private var rankByContext = true
+    @AppStorage(ReplacementPeek.enabledKey) private var showReplacement = true
+    @State private var pinned = SelectionPins.pinned
     @EnvironmentObject private var store: SelectionStore
     private var config: SelectionConfig { store.config }
     @ObservedObject private var usage = UsageLogStore.selection
@@ -350,6 +353,24 @@ private struct AppearanceTab: View {
                 }
                 if !usage.log.entries.isEmpty { Button("Clear") { usage.clear() }.controlSize(.small) }
             } header: { Text("Most used") } footer: { Text("Only the name of the action and the app it was used in are kept, never the text.") }
+            Section {
+                Toggle("Put the actions that fit the selection first", isOn: $rankByContext)
+                Toggle("Show what changed after a replacement, with Undo", isOn: $showReplacement)
+                ForEach(pinned, id: \.self) { id in
+                    HStack {
+                        Label(store.current.actions.first { $0.id == id }?.title ?? id, systemImage: "pin.fill")
+                        Spacer()
+                        Button(role: .destructive) { pinned.removeAll { $0 == id }; SelectionPins.pinned = pinned } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Unpin")
+                    }
+                }
+                Menu("Pin an Action") {
+                    ForEach(store.current.actions.filter { !pinned.contains($0.id) }) { action in
+                        Button { pinned.append(action.id); SelectionPins.pinned = pinned } label: { Label(action.title, systemImage: action.symbol.isEmpty ? "star" : action.symbol) }
+                    }
+                }.fixedSize()
+            } header: { Text("Which actions come first") } footer: {
+                Text("With this on, a link puts Open Link first, JSON puts Format JSON first, a path puts Show in Finder first, a long text puts the AI actions first, and so on; then what you use most, with slow actions (scripts, AI, web) after quick ones. Pinned actions always come first. The extras go under headings in the “…” menu: Transform, Search, Share, Developer, AI, Apps. Turn it off to keep exactly your own order.")
+            }
             Section("Look") {
                 Picker("Style", selection: Binding(get: { config.theme }, set: { v in store.updateConfig { $0.theme = v } })) {
                     Text("Match the system").tag(ToolbarTheme.system); Text("Light").tag(ToolbarTheme.light); Text("Dark").tag(ToolbarTheme.dark); Text("Accent color").tag(ToolbarTheme.accent)

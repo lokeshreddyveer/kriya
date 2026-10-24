@@ -85,6 +85,14 @@ pub enum SelectionActionKind {
     Intelligence {
         task: IntelligenceTask,
     },
+    /// Copies the selection as HTML: blank lines make paragraphs, and everything is escaped.
+    CopyHtml,
+    /// Shows the selected path in Finder.
+    RevealPath,
+    /// Opens a terminal in the selected folder (or the folder holding the selected file).
+    OpenInTerminal,
+    /// Puts the selected text on the file shelf.
+    SendToShelf,
 }
 
 /// What Apple Intelligence is asked to do with some text. The core names the tasks and says what to ask the model; the
@@ -283,6 +291,19 @@ pub enum SelectionTarget {
     ContainsUrl,
     MultipleLines,
     LooksLikeJson,
+    /// One line that starts like a file path: `/…`, `~/…` or `file://…`.
+    LooksLikePath,
+    ContainsEmail,
+}
+
+/// Whether the text is one line that reads as a file path.
+pub fn looks_like_path(text: &str) -> bool {
+    let t = text.trim();
+    !t.is_empty()
+        && !t.contains('\n')
+        && t.len() < 1024
+        && (t.starts_with('/') || t.starts_with("~/") || t.starts_with("file://"))
+        && !t.starts_with("//")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
@@ -576,6 +597,10 @@ pub fn actions_for(
     }
     let has_url = !crate::text_tools::find_urls(text).is_empty();
     let multiline = text.trim().contains('\n');
+    let path_like = looks_like_path(text);
+    let has_email = text.contains('@')
+        && crate::text_tools::apply(&TextOp::ExtractEmails, text)
+            .is_ok_and(|found| !found.trim().is_empty());
     let json_like = {
         let t = text.trim();
         (t.starts_with('{') && t.ends_with('}')) || (t.starts_with('[') && t.ends_with(']'))
@@ -594,6 +619,8 @@ pub fn actions_for(
             SelectionTarget::ContainsUrl => has_url,
             SelectionTarget::MultipleLines => multiline,
             SelectionTarget::LooksLikeJson => json_like,
+            SelectionTarget::LooksLikePath => path_like,
+            SelectionTarget::ContainsEmail => has_email,
         })
         .map(|a| a.id.clone())
         .collect()
@@ -690,6 +717,11 @@ pub fn suggested_actions() -> Vec<SelectionAction> {
         make("keep-emails", "Keep only the email addresses", "at", ops(TextOp::ExtractEmails), EditableOnly, Some("Links")),
         make("unix-date", "Unix time to date", "clock", ops(TextOp::UnixTimeToDate), EditableOnly, Some("Code")),
         make("date-unix", "Date to Unix time", "clock.arrow.circlepath", ops(TextOp::DateToUnixTime), EditableOnly, Some("Code")),
+        make("join-lines", "Remove line breaks", "text.alignleft", ops(TextOp::JoinLines), EditableOnly, Some("Lists")),
+        make("copy-html", "Copy as HTML", "chevron.left.slash.chevron.right", CopyHtml, Anything, None),
+        make("reveal-path", "Show in Finder", "folder", RevealPath, LooksLikePath, None),
+        make("terminal-here", "Open in Terminal", "terminal", OpenInTerminal, LooksLikePath, None),
+        make("to-shelf", "Put on the shelf", "tray.and.arrow.down", SendToShelf, Anything, None),
         make("count", "Count words", "textformat.123", Count, Anything, None),
         make("share", "Share", "square.and.arrow.up", Share, Anything, None),
         make("email", "Email this", "envelope", search("mailto:?body={text}"), Anything, Some("Create")),
@@ -1527,5 +1559,30 @@ mod tests {
         let mut long = action("g", SelectionActionKind::Count, SelectionTarget::Anything);
         long.group = Some("x".repeat(41));
         assert!(long.check().is_err());
+    }
+
+    #[test]
+    fn paths_and_emails_decide_which_actions_are_offered() {
+        assert!(looks_like_path("/Users/me/Documents"));
+        assert!(looks_like_path(" ~/code/app "));
+        assert!(looks_like_path("file:///Users/me/a%20b.txt"));
+        assert!(!looks_like_path("//cdn.example.com/x"));
+        assert!(!looks_like_path("see /usr/bin for more"));
+        assert!(!looks_like_path("/a\n/b"));
+        assert!(!looks_like_path(""));
+        let config = SelectionConfig::default();
+        let list = suggested_actions();
+        let ids = |text: &str| actions_for(&list, &config, None, true, text);
+        assert!(ids("/Users/me/Documents").contains(&"s-reveal-path".to_string()));
+        assert!(ids("/Users/me/Documents").contains(&"s-terminal-here".to_string()));
+        assert!(!ids("plain words here").contains(&"s-reveal-path".to_string()));
+        assert!(
+            ids("a line\nanother line").contains(&"s-join-lines".to_string())
+                || ids("a line\nanother line").contains(&"s-copy-html".to_string())
+        );
+        for id in ["s-copy-html", "s-to-shelf", "s-join-lines"] {
+            assert!(list.iter().any(|a| a.id == id), "{id}");
+        }
+        assert!(list.iter().all(|a| a.check().is_ok()));
     }
 }

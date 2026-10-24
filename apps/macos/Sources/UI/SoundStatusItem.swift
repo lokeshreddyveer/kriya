@@ -92,11 +92,14 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate {
         if !forcing, let event, event.type == .rightMouseUp || event.modifierFlags.contains(.control) { popover.performClose(nil); showMenu(); return }
         if !forcing, event == nil { return }
         if popover.isShown { popover.performClose(nil); return }
-        let view = ScrollView { Form { SoundMixerContent() }.formStyle(.grouped).scrollDisabled(true) }
-            .frame(width: 400, height: 560)
+        let view = SoundPopoverView(openSettings: { [weak self] in self?.popover.performClose(nil); self?.openSettings() },
+                                    setPinned: { [weak self] pinned in self?.popover.behavior = pinned ? .applicationDefined : .transient })
             .environmentObject(engine).environmentObject(mixer).environmentObject(quickConfigs ?? QuickConfigStore(engine: engine))
-        popover.contentViewController = NSHostingController(rootView: view)
-        popover.contentSize = NSSize(width: 400, height: 560)
+        let host = NSHostingController(rootView: view)
+        host.sizingOptions = .preferredContentSize
+        popover.appearance = NSAppearance(named: .darkAqua)
+        popover.behavior = .transient
+        popover.contentViewController = host
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
         if !viewing { viewing = true; engine.viewerAppeared() }
     }

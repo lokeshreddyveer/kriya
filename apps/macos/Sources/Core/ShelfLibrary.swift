@@ -29,6 +29,23 @@ struct ShelfSet: Codable, Identifiable, Equatable {
     var id = UUID().uuidString
     var name: String
     var items: [ShelfRecord] = []
+    /// A shelf marked "do not save": it is never written to disk, so it is gone when Kriya quits. Optional so older files load.
+    var temporary: Bool? = nil
+}
+
+extension ShelfLibrary {
+    /// What is written to disk: everything except shelves marked "do not save". There is always at least one shelf, and the current
+    /// one is always among them.
+    var persistable: ShelfLibrary {
+        var copy = self
+        copy.shelves = shelves.filter { $0.temporary != true }
+        if copy.shelves.isEmpty { copy.shelves = [ShelfSet(id: "main", name: "Shelf")] }
+        if !copy.shelves.contains(where: { $0.id == copy.currentID }) { copy.currentID = copy.shelves[0].id }
+        // Items taken off a temporary shelf are not kept either.
+        let temporaryIDs = Set(shelves.filter { $0.temporary == true }.flatMap(\.items).map(\.id))
+        copy.history.removeAll { temporaryIDs.contains($0.id) }
+        return copy
+    }
 }
 
 struct ShelfLibrary: Codable, Equatable {

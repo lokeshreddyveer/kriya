@@ -25,6 +25,34 @@ pub enum PathStyle {
     NameWithoutExtension,
     Parent,
     ShellEscaped,
+    /// `file:///Users/me/a%20b.txt`
+    FileUrl,
+    /// `Macintosh HD:Users:me:a b.txt`. The app converts it (it needs the disk's name); here it is the plain path.
+    Hfs,
+    /// `[a b.txt](file:///Users/me/a%20b.txt)`
+    MarkdownLink,
+    /// `<a href="file:///Users/me/a%20b.txt">a b.txt</a>`
+    HtmlLink,
+    /// One JSON array holding every path.
+    JsonArray,
+    /// One line of quoted, comma-separated paths.
+    CsvList,
+}
+
+impl PathStyle {
+    pub const ALL_FORMATS: [PathStyle; 11] = [
+        PathStyle::Full,
+        PathStyle::ShellEscaped,
+        PathStyle::FileUrl,
+        PathStyle::Hfs,
+        PathStyle::MarkdownLink,
+        PathStyle::HtmlLink,
+        PathStyle::JsonArray,
+        PathStyle::CsvList,
+        PathStyle::Name,
+        PathStyle::NameWithoutExtension,
+        PathStyle::Parent,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
@@ -172,6 +200,18 @@ pub enum FinderActionKind {
     EditComment,
     /// Opens the system share menu for the selected items.
     Share,
+    /// A submenu of ways to copy the path: URL, Markdown link, JSON list and more.
+    CopyPathAs,
+    /// A submenu of the code editors and terminals installed on this Mac.
+    OpenInIde,
+    /// A submenu of the saved folder sets: each destination in each set. Moves, or copies when `copy` is set.
+    ToFolderSet {
+        copy: bool,
+    },
+    /// A submenu of tag and comment presets that apply with one click.
+    QuickTag,
+    /// A submenu of read-only looks at a file: permissions, signature, quarantine, size, duration.
+    Inspect,
 }
 
 /// What a selection has to look like for an action to be offered.
@@ -501,17 +541,65 @@ fn join_extension(stem: &str, ext: &str) -> String {
 
 /// The text a "copy path" action puts on the clipboard: one line per item.
 pub fn path_text(style: PathStyle, paths: &[String]) -> String {
+    match style {
+        PathStyle::JsonArray => {
+            return serde_json::to_string(paths).unwrap_or_else(|_| "[]".into())
+        }
+        PathStyle::CsvList => {
+            return paths
+                .iter()
+                .map(|p| format!("\"{}\"", p.replace('"', "\"\"")))
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+        _ => {}
+    }
     paths
         .iter()
         .map(|p| match style {
-            PathStyle::Full => p.clone(),
+            PathStyle::Full | PathStyle::Hfs => p.clone(),
             PathStyle::Name => file_name(p),
             PathStyle::NameWithoutExtension => split_extension(&file_name(p)).0,
             PathStyle::Parent => parent_path(p),
             PathStyle::ShellEscaped => shell_escape(p),
+            PathStyle::FileUrl => file_url(p),
+            PathStyle::MarkdownLink => {
+                let label = file_name(p).replace('[', "\\[").replace(']', "\\]");
+                format!(
+                    "[{label}]({})",
+                    file_url(p).replace('(', "%28").replace(')', "%29")
+                )
+            }
+            PathStyle::HtmlLink => format!(
+                "<a href=\"{}\">{}</a>",
+                html_escape(&file_url(p)),
+                html_escape(&file_name(p))
+            ),
+            PathStyle::JsonArray | PathStyle::CsvList => String::new(),
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// `file://` plus the path with everything but letters, digits and `-._~/` written as `%XX`.
+pub fn file_url(path: &str) -> String {
+    let mut out = String::from("file://");
+    for b in path.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// `candidate` if it is free, otherwise "name 2.ext", "name 3.ext" and so on.
@@ -846,6 +934,42 @@ pub fn suggested_items() -> Vec<FinderItem> {
             Applies::Anything,
         ),
         item("share", "Share…", FinderActionKind::Share, Applies::Files),
+        item(
+            "copy-path-as",
+            "Copy Path As",
+            FinderActionKind::CopyPathAs,
+            Applies::Anything,
+        ),
+        item(
+            "open-in-ide",
+            "Open In",
+            FinderActionKind::OpenInIde,
+            Applies::Anything,
+        ),
+        item(
+            "move-to-set",
+            "Move To Folder Set",
+            FinderActionKind::ToFolderSet { copy: false },
+            Applies::Anything,
+        ),
+        item(
+            "copy-to-set",
+            "Copy To Folder Set",
+            FinderActionKind::ToFolderSet { copy: true },
+            Applies::Anything,
+        ),
+        item(
+            "quick-tag",
+            "Quick Tag",
+            FinderActionKind::QuickTag,
+            Applies::Anything,
+        ),
+        item(
+            "inspect",
+            "Inspect",
+            FinderActionKind::Inspect,
+            Applies::Anything,
+        ),
     ]
 }
 
@@ -1486,5 +1610,64 @@ mod tests {
             list.iter().all(|i| !taken.contains(&i.id)),
             "none repeats a shipped action"
         );
+    }
+
+    #[test]
+    fn new_path_formats_encode_and_escape_hostile_names() {
+        let p = names(&["/Users/me/a b/report (1) [draft].pdf"]);
+        assert_eq!(
+            path_text(PathStyle::FileUrl, &p),
+            "file:///Users/me/a%20b/report%20%281%29%20%5Bdraft%5D.pdf"
+        );
+        assert_eq!(
+            path_text(PathStyle::MarkdownLink, &p),
+            "[report (1) \\[draft\\].pdf](file:///Users/me/a%20b/report%20%281%29%20%5Bdraft%5D.pdf)"
+        );
+        let html = path_text(PathStyle::HtmlLink, &names(&["/x/a&b<c>\"d\".txt"]));
+        assert_eq!(
+            html,
+            "<a href=\"file:///x/a%26b%3Cc%3E%22d%22.txt\">a&amp;b&lt;c&gt;&quot;d&quot;.txt</a>"
+        );
+        assert!(!html.contains("<c>"), "markup in a name never survives");
+        let two = names(&["/a/b", "/c/\"d\""]);
+        assert_eq!(
+            path_text(PathStyle::JsonArray, &two),
+            "[\"/a/b\",\"/c/\\\"d\\\"\"]"
+        );
+        assert_eq!(
+            path_text(PathStyle::CsvList, &two),
+            "\"/a/b\",\"/c/\"\"d\"\"\""
+        );
+        assert_eq!(path_text(PathStyle::JsonArray, &[]), "[]");
+        assert_eq!(
+            path_text(PathStyle::Hfs, &names(&["/a"])),
+            "/a",
+            "the app converts this one"
+        );
+        assert_eq!(file_url("/é"), "file:///%C3%A9");
+    }
+
+    #[test]
+    fn menu_submenu_actions_are_offered_checked_and_never_ask() {
+        let list = suggested_items();
+        for id in [
+            "copy-path-as",
+            "open-in-ide",
+            "move-to-set",
+            "copy-to-set",
+            "quick-tag",
+            "inspect",
+        ] {
+            let i = list
+                .iter()
+                .find(|i| i.id == id)
+                .unwrap_or_else(|| panic!("{id}"));
+            i.check().unwrap();
+        }
+        // Moving to a set is the person picking a named destination, so it follows the move rule; the others only read.
+        assert!(!is_destructive(&FinderActionKind::CopyPathAs));
+        assert!(!is_destructive(&FinderActionKind::Inspect));
+        assert!(!is_destructive(&FinderActionKind::OpenInIde));
+        assert_eq!(PathStyle::ALL_FORMATS.len(), 11);
     }
 }

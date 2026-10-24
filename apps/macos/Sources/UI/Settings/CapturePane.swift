@@ -114,6 +114,9 @@ struct CapturePane: View {
                 Text("In the file name, {date}, {time}, {app} (the app in front), {mode} and {n} are filled in; recordings use the same pattern with “Recording” in place of “Capture”. Pictures are made and kept on this Mac. Reading text and hiding private text use the Mac's own text recognition, with no internet.")
             }
 
+            CaptureOutputSection()
+            CaptureUploadSection()
+
             Section {
                 if settings.redactWords.isEmpty { Text("None.").font(.callout).foregroundStyle(.secondary) }
                 ForEach(settings.redactWords, id: \.self) { word in

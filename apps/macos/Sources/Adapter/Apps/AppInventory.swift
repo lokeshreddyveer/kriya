@@ -19,6 +19,9 @@ struct InstalledApp: Identifiable, Hashable {
     let source: Source
     /// When the app was last opened, as Spotlight knows it. Nil when it never has been.
     let lastUsed: Date?
+    /// Where its updates come from and how sure that is, decided from what is inside it (see `AppSourceDetector`).
+    var info = AppSourceInfo(source: .unknown, confidence: .unknown, why: "")
+    var architectures: Set<AppArchitecture> = []
     var id: String { url.path }
     var isProtected: Bool {
         bundleID.hasPrefix("com.apple.") || bundleID == Bundle.main.bundleIdentifier || bundleID.isEmpty
@@ -31,6 +34,8 @@ struct Leftover: Identifiable, Hashable {
     let bytes: Int64
     /// Something outside the person's own Library cannot be moved without an administrator, so it is listed but kept.
     let needsAdmin: Bool
+    /// Why it was matched to the app. Only an exact bundle identifier is ticked by default.
+    var evidence: LeftoverEvidence = .bundleID
     var id: String { url.path }
 }
 
@@ -94,7 +99,23 @@ final class AppInventory: ObservableObject {
     /// For tests: a stand-in program used instead of the real Homebrew.
     var brewExecutableOverride: String?
 
+    /// Apps held at their current version: their updates are listed as pinned and never installed by Kriya.
+    @Published var pinnedUpdates: Set<String> {
+        didSet { UserDefaults.standard.set(Array(pinnedUpdates), forKey: "appPinnedUpdates.v1") }
+    }
+    /// Update sources (`AppUpdateSource` raw values) whose updates are not shown or installed.
+    @Published var ignoredSources: Set<String> {
+        didSet { UserDefaults.standard.set(Array(ignoredSources), forKey: "appIgnoredSources.v1") }
+    }
+    /// Keep a copy of a Homebrew app before it is upgraded, so the old version can be put back.
+    @Published var backupBeforeUpgrade: Bool {
+        didSet { UserDefaults.standard.set(backupBeforeUpgrade, forKey: "appBackupBeforeUpgrade") }
+    }
+
     init() {
+        pinnedUpdates = Set(UserDefaults.standard.stringArray(forKey: "appPinnedUpdates.v1") ?? [])
+        ignoredSources = Set(UserDefaults.standard.stringArray(forKey: "appIgnoredSources.v1") ?? [])
+        backupBeforeUpgrade = UserDefaults.standard.object(forKey: "appBackupBeforeUpgrade") as? Bool ?? true
         ignoredUpdates = Set(UserDefaults.standard.stringArray(forKey: "ignoredAppUpdates") ?? [])
         upgradeHomebrewAutomatically = UserDefaults.standard.object(forKey: Self.upgradeKey) as? Bool ?? true
         // The upgrade history survives a restart.
@@ -162,10 +183,11 @@ final class AppInventory: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let roots = [URL(fileURLWithPath: "/Applications"), URL(fileURLWithPath: "/Applications/Utilities"), home.appendingPathComponent("Applications")]
             var found: [InstalledApp] = []
+            let casks = Self.caskroomAppNames()
             for root in roots {
                 let entries = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
                 for url in entries where url.pathExtension == "app" {
-                    if let app = Self.read(url) { found.append(app) }
+                    if let app = Self.read(url, caskApps: casks) { found.append(app) }
                 }
             }
             found.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -195,23 +217,81 @@ final class AppInventory: ObservableObject {
         }
     }
 
-    private static func read(_ url: URL) -> InstalledApp? {
+    /// The `.app` file names Homebrew has installed as casks, from its Caskroom folders (no need to run `brew`).
+    static func caskroomAppNames() -> Set<String> {
+        var names = Set<String>()
+        for room in ["/opt/homebrew/Caskroom", "/usr/local/Caskroom"] {
+            for token in (try? FileManager.default.contentsOfDirectory(atPath: room)) ?? [] {
+                for version in (try? FileManager.default.contentsOfDirectory(atPath: room + "/" + token)) ?? [] {
+                    for item in (try? FileManager.default.contentsOfDirectory(atPath: room + "/" + token + "/" + version)) ?? [] where item.hasSuffix(".app") { names.insert(item) }
+                }
+            }
+        }
+        return names
+    }
+
+    /// The `.app` file a Homebrew cask installs, from its Caskroom folder.
+    static func caskAppName(_ token: String) -> String? {
+        for room in ["/opt/homebrew/Caskroom", "/usr/local/Caskroom"] {
+            for version in (try? FileManager.default.contentsOfDirectory(atPath: room + "/" + token)) ?? [] {
+                if let app = ((try? FileManager.default.contentsOfDirectory(atPath: room + "/" + token + "/" + version)) ?? []).first(where: { $0.hasSuffix(".app") }) { return app }
+            }
+        }
+        return nil
+    }
+
+    /// The processors in an app's main program, from its first bytes.
+    static func architectures(of bundle: Bundle) -> Set<AppArchitecture> {
+        guard let exe = bundle.executableURL, let handle = try? FileHandle(forReadingFrom: exe) else { return [] }
+        defer { try? handle.close() }
+        return AppArchitecture.parse(header: (try? handle.read(upToCount: 4096)) ?? Data())
+    }
+
+    /// The provider named by an Electron app's update config (`provider: github`), if it has one.
+    private static func electronProvider(_ url: URL) -> String? {
+        guard let text = try? String(contentsOf: url.appendingPathComponent("Contents/Resources/app-update.yml"), encoding: .utf8) else { return nil }
+        for line in text.split(separator: "\n") where line.hasPrefix("provider:") { return line.dropFirst(9).trimmingCharacters(in: .whitespaces) }
+        return nil
+    }
+
+    private static func read(_ url: URL, caskApps: Set<String> = []) -> InstalledApp? {
         guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier else { return nil }
         let info = bundle.infoDictionary ?? [:]
+        let fm = FileManager.default
         let name = (info["CFBundleDisplayName"] as? String) ?? (info["CFBundleName"] as? String) ?? url.deletingPathExtension().lastPathComponent
+        let feed = (info["SUFeedURL"] as? String).flatMap(URL.init(string:))
+        let facts = AppSourceFacts(
+            path: url.path, bundleID: id,
+            hasStoreReceipt: fm.fileExists(atPath: url.appendingPathComponent("Contents/_MASReceipt").path),
+            sparkleFeed: feed,
+            hasSparkleFramework: fm.fileExists(atPath: url.appendingPathComponent("Contents/Frameworks/Sparkle.framework").path),
+            hasElectron: fm.fileExists(atPath: url.appendingPathComponent("Contents/Frameworks/Electron Framework.framework").path) || fm.fileExists(atPath: url.appendingPathComponent("Contents/Resources/app.asar").path),
+            electronProvider: electronProvider(url),
+            inHomebrewCaskroom: caskApps.contains(url.lastPathComponent),
+            isIOSWrapper: fm.fileExists(atPath: url.appendingPathComponent("Wrapper").path) || fm.fileExists(atPath: url.appendingPathComponent("WrappedBundle").path),
+            isWebApp: info["CrAppModeShortcutID"] != nil || id.hasPrefix("com.apple.Safari.WebApp"))
+        let detected = AppSourceDetector.detect(facts)
         let source: InstalledApp.Source
-        if FileManager.default.fileExists(atPath: url.appendingPathComponent("Contents/_MASReceipt").path) {
-            source = .appStore
-        } else if let feed = (info["SUFeedURL"] as? String).flatMap(URL.init(string:)) {
-            source = .sparkle(feed)
-        } else {
-            source = .other
+        switch detected.source {
+        case .appStore, .iosApp: source = .appStore
+        case .homebrew: source = .homebrew
+        default: source = feed.map { .sparkle($0) } ?? .other
         }
         let lastUsed = MDItemCreateWithURL(kCFAllocatorDefault, url as CFURL).flatMap { MDItemCopyAttribute($0, kMDItemLastUsedDate) as? Date }
-        return InstalledApp(
+        var app = InstalledApp(
             url: url, name: name, bundleID: id, version: (info["CFBundleShortVersionString"] as? String) ?? "",
             build: (info["CFBundleVersion"] as? String) ?? "", source: source, lastUsed: lastUsed
         )
+        app.info = detected
+        app.architectures = architectures(of: bundle)
+        return app
+    }
+
+    /// The developer's Team ID, read from the signature. Slow (it starts `codesign`), so only asked for one app at a time.
+    static func teamID(of app: InstalledApp) -> String? {
+        guard let out = try? ToolRunner.run("/usr/bin/codesign", ["-dv", "--verbose=2", app.url.path], timeout: 15) else { return nil }
+        let team = out.split(separator: "\n").first { $0.hasPrefix("TeamIdentifier=") }.map { String($0.dropFirst(15)) }
+        return team == "not set" ? nil : team
     }
 
     // MARK: Leftovers
@@ -225,24 +305,18 @@ final class AppInventory: ObservableObject {
     /// Everything of an app's that sits in the person's Library, found by its identifier and exact name.
     func leftovers(for app: InstalledApp) -> [Leftover] {
         guard !app.isProtected else { return [] }
-        let id = app.bundleID.lowercased()
-        let name = app.name.lowercased()
-        let nameUsable = name.count >= 4
+        let team = Self.teamID(of: app)
         var result: [Leftover] = []
         for folder in libraryFolders {
             for entry in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [])) ?? [] {
-                let file = entry.lastPathComponent.lowercased()
-                let stem = (file as NSString).deletingPathExtension
-                let byID = file == id || file.hasPrefix(id + ".") || stem == id || file.hasSuffix("." + id)
-                let byName = nameUsable && (file == name || stem == name) && folder.lastPathComponent != "Preferences"
-                guard byID || byName else { continue }
-                result.append(Leftover(url: entry, bytes: Self.size(of: entry), needsAdmin: false))
+                guard let evidence = LeftoverClassifier.evidence(fileName: entry.lastPathComponent, folder: folder.lastPathComponent, bundleID: app.bundleID, appName: app.name, teamID: team) else { continue }
+                result.append(Leftover(url: entry, bytes: Self.size(of: entry), needsAdmin: false, evidence: evidence))
             }
         }
         // Items outside the user's Library are only listed.
         for path in ["/Library/Application Support/\(app.name)", "/Library/LaunchAgents/\(app.bundleID).plist", "/Library/LaunchDaemons/\(app.bundleID).plist", "/Library/Preferences/\(app.bundleID).plist"] where fm.fileExists(atPath: path) {
             let url = URL(fileURLWithPath: path)
-            result.append(Leftover(url: url, bytes: Self.size(of: url), needsAdmin: true))
+            result.append(Leftover(url: url, bytes: Self.size(of: url), needsAdmin: true, evidence: path.contains(app.bundleID) ? .bundleID : .nameOnly))
         }
         return result.sorted { $0.url.path < $1.url.path }
     }
@@ -433,7 +507,8 @@ final class AppInventory: ObservableObject {
         guard upgradeHomebrewAutomatically else { return }
         for update in list {
             guard case .brew(let token) = update.action, HomebrewParsing.isValidToken(token),
-                  !ignoredUpdates.contains(update.appName), !upgrading.contains(token) else { continue }
+                  !ignoredUpdates.contains(update.appName), !pinnedUpdates.contains(update.appName), !ignoredSources.contains(AppUpdateSource.homebrew.rawValue),
+                  !upgrading.contains(token) else { continue }
             note("Updating \(token)…")
             runBrewUpgrade(token) { [weak self] result in self?.note(result) }
         }
@@ -458,7 +533,15 @@ final class AppInventory: ObservableObject {
         upgrading.insert(token)
         AuditLog.shared.record(.install, "brew upgrade --cask \(token)")
         let override = brewExecutableOverride
+        // The app this cask installs, so a copy can be kept before it is replaced.
+        let target = backupBeforeUpgrade ? Self.caskAppName(token).flatMap { name in apps.first { $0.url.lastPathComponent == name } } : nil
+        let targetBytes = target.flatMap { sizes[$0.id] }
         HomebrewQueue.shared.async {
+            if let target, let saved = AppBackup.backup(target, bytes: targetBytes) {
+                DispatchQueue.main.async { self.note("Kept a copy of \(target.name) \(target.version) before updating (\(saved.id)).") }
+            } else if let target {
+                DispatchQueue.main.async { self.note("No copy of \(target.name) was kept (too large or not enough room), updating anyway.") }
+            }
             guard let brew = override ?? ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
                 DispatchQueue.main.async { self.upgrading.remove(token); done("Homebrew was not found.") }
                 return

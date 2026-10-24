@@ -40,7 +40,8 @@ final class FileActionRunner {
         Log.info("Finder", "Running an action of kind \(String(describing: item.kind).prefix(24)) on \(count) item(s)")
 
         // Batch rename has its own window with a preview, which is its confirmation.
-        if case .batchRename = item.kind {} else if let question = finderConfirmationMessage(item: item, count: UInt32(count), config: store.config), !confirm(question) {
+        // The question carries the real list of what will change (which files lose the warning, which move where), not just a count.
+        if case .batchRename = item.kind {} else if let question = finderConfirmationMessage(item: item, count: UInt32(count), config: store.config), !confirm(question, detail: FinderPreview.detail(item, urls: urls, folder: folder)) {
             return
         }
         perform(item, urls: urls, folder: folder, child: child)
@@ -52,6 +53,34 @@ final class FileActionRunner {
             let paths = urls.isEmpty ? [folder?.path ?? ""] : urls.map(\.path)
             copyToPasteboard(finderPathText(style: style, paths: paths))
             toast.show(paths.count == 1 ? "Copied" : "Copied \(paths.count) paths")
+
+        case .copyPathAs:
+            guard let style = child.flatMap(FinderPresets.pathFormat) else { toast.show("Choose a format.", isError: true); return }
+            let paths = urls.isEmpty ? [folder?.path ?? ""] : urls.map(\.path)
+            copyToPasteboard(FinderPresets.text(style: style, paths: paths))
+            toast.show(paths.count == 1 ? "Copied" : "Copied \(paths.count) paths")
+
+        case .openInIde:
+            guard let appID = child, FinderPresets.ideCatalog.contains(where: { $0.id == appID }) else { toast.show("Choose an app.", isError: true); return }
+            // A terminal opens in the folder; an editor opens the items themselves (or the folder when nothing is selected).
+            if FinderPresets.isTerminal(appID) { openInTerminal(urls: urls, folder: folder, appID: appID) }
+            else { openWith(urls: urls.isEmpty ? (folder.map { [$0] } ?? []) : urls, appID: appID) }
+
+        case .toFolderSet(let copy):
+            // The destination comes in the request, so it is only used when it is one of the person's saved folders.
+            guard let path = child, FinderPresets.isSavedDestination(path, in: FolderSetStore.shared.sets), fm.fileExists(atPath: path) else {
+                toast.show("That folder is not in a saved set any more.", isError: true)
+                return
+            }
+            transfer(urls, to: path, move: !copy)
+
+        case .quickTag:
+            guard !urls.isEmpty else { toast.show("Select the items to tag.", isError: true); return }
+            guard let preset = store.tagPresets.first(where: { $0.id == child }) else { toast.show("That preset is gone.", isError: true); return }
+            inBackground { try Self.apply(preset, to: urls) }
+
+        case .inspect:
+            FinderInspect.run(child ?? "", urls: urls.isEmpty ? (folder.map { [$0] } ?? []) : urls)
 
         case .runWorkflow(let id):
             runWorkflow(id, (urls.isEmpty ? [folder?.path ?? ""] : urls.map(\.path)).joined(separator: "\n"))
@@ -579,10 +608,10 @@ final class FileActionRunner {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private func confirm(_ question: String) -> Bool {
+    private func confirm(_ question: String, detail: String? = nil) -> Bool {
         let alert = NSAlert()
         alert.messageText = question
-        alert.informativeText = "Nothing is overwritten: a name that is taken becomes “name 2”."
+        alert.informativeText = (detail.map { $0 + "\n\n" } ?? "") + "Nothing is overwritten: a name that is taken becomes “name 2”."
         alert.addButton(withTitle: "Continue")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
@@ -592,6 +621,19 @@ final class FileActionRunner {
 
 
 extension FileActionRunner {
+    /// Puts a preset's tags (after clearing, if it says so) and comment on each item.
+    static func apply(_ preset: FinderTagPreset, to urls: [URL]) throws -> Outcome {
+        var failures: [String] = []
+        var changed = 0
+        for url in urls {
+            let tags = preset.clearsTags ? preset.tags : FinderMetadata.merged(existing: FinderMetadata.tags(of: url), adding: preset.tags)
+            do { try (url as NSURL).setResourceValue(tags, forKey: .tagNamesKey); changed += 1 } catch { failures.append("\(url.lastPathComponent): \(error.localizedDescription)") }
+        }
+        if let comment = preset.comment { _ = try FinderMetadata.setComment(comment, on: urls) }
+        let message = failures.isEmpty ? "“\(preset.title)” applied to \(changed) item\(changed == 1 ? "" : "s")" : "“\(preset.title)” applied to \(changed), \(failures.count) failed"
+        return Outcome(message: message, reveal: [], steps: [], failures: failures, isError: changed == 0)
+    }
+
     static func jobTitle(_ item: FinderItem, count: Int) -> String {
         let what: String
         switch item.kind {

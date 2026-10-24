@@ -18,6 +18,9 @@ final class SoundMixerModel: ObservableObject {
     @Published private(set) var sampleRate = 0.0
     @Published private(set) var balance = 0.5
     @Published private(set) var hasBalance = false
+    /// Where alerts and other sound effects play, and how loud.
+    @Published private(set) var effectsID = AudioDeviceID(0)
+    @Published private(set) var effectsVolume = 1.0
 
     private let audio = AudioControl.shared
     private var timer: Timer?
@@ -26,6 +29,7 @@ final class SoundMixerModel: ObservableObject {
     func viewerAppeared() {
         viewers += 1
         refresh()
+        refreshEffectsVolume()
         guard timer == nil else { return }
         let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(t, forMode: .common)
@@ -54,6 +58,7 @@ final class SoundMixerModel: ObservableObject {
             hasBalance = b != nil
             balance = b ?? 0.5
         }
+        if let effects = audio.defaultSystemOutputDevice() { effectsID = effects }
         if let input = audio.defaultDevice(input: true) {
             inputID = input
             let v = audio.volume(of: input, input: true)
@@ -88,6 +93,24 @@ final class SoundMixerModel: ObservableObject {
 
     func chooseInput(_ id: AudioDeviceID) {
         guard let device = inputs.first(where: { $0.id == id }), audio.setDefault(device) else { return }
+        refresh()
+    }
+
+    /// Reading the alert volume runs a small script, so it is read when a window opens, not every second.
+    func refreshEffectsVolume() {
+        DispatchQueue.global(qos: .utility).async { [audio] in
+            let v = audio.alertVolume()
+            DispatchQueue.main.async { if let v { self.effectsVolume = v } }
+        }
+    }
+
+    func setEffectsVolume(_ v: Double) {
+        effectsVolume = v
+        DispatchQueue.global(qos: .utility).async { [audio] in _ = audio.setAlertVolume(v) }
+    }
+
+    func chooseEffectsOutput(_ id: AudioDeviceID) {
+        guard let device = outputs.first(where: { $0.id == id }), audio.setDefaultSystemOutput(device) else { return }
         refresh()
     }
 

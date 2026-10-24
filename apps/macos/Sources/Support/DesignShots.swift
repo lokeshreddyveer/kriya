@@ -15,6 +15,7 @@ enum DesignShots {
                     let dir = root.appendingPathComponent(name)
                     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                     capturePopover(env: env, to: dir.appendingPathComponent("popover.png"))
+                    captureSoundPopover(env: env, to: dir.appendingPathComponent("soundpopover.png"))
                     captureClipboardPanel(env: env, to: dir.appendingPathComponent("quickpaste.png"))
                     captureSwitcher(to: dir.appendingPathComponent("switcher.png"))
                     await captureLauncher(env: env, into: dir)
@@ -56,6 +57,31 @@ enum DesignShots {
         window.setFrameOrigin(NSPoint(x: 200, y: 200))
         window.orderFrontRegardless()
         RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        snap(window, to: url)
+        window.orderOut(nil)
+    }
+
+    private static func captureSoundPopover(env: AppEnvironment, to url: URL) {
+        env.soundMixer.refresh()
+        // Sample apps in a throwaway preference suite, so the picture shows favorites, a boost and a mute without touching real settings.
+        let suite = UserDefaults(suiteName: "kriya-shot-\(UUID().uuidString)")!
+        let engine = AppAudioEngine(defaults: suite)
+        engine.setFavorite("com.apple.Safari", true)
+        engine.setFavorite("com.apple.Music", true)
+        engine.setFavorite("com.spotify.client", true)
+        engine.update("com.apple.Safari") { $0.volume = 0.7 }
+        engine.update("com.apple.Music") { $0.volume = 1 }
+        engine.update("com.spotify.client") { $0.muted = true; $0.volume = 0.5 }
+        engine.refresh()
+        let host = NSHostingController(rootView: SoundPopoverView().environmentObject(engine).environmentObject(env.soundMixer).environmentObject(QuickConfigStore(engine: engine, defaults: suite)))
+        host.sizingOptions = .preferredContentSize
+        let window = NSWindow(contentViewController: host)
+        window.styleMask = [.borderless]
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = .black
+        window.setFrameOrigin(NSPoint(x: 200, y: 200))
+        window.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
         snap(window, to: url)
         window.orderOut(nil)
     }

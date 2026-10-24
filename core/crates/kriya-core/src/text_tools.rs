@@ -81,6 +81,8 @@ pub enum TextOp {
     UnixTimeToDate,
     /// A date and time in UTC (`2026-10-21 18:30:00`) becomes seconds since 1970.
     DateToUnixTime,
+    /// Takes the line breaks out so the text reads as one line, with single spaces between what was on each line.
+    JoinLines,
 }
 
 impl TextOp {
@@ -127,8 +129,31 @@ impl TextOp {
             TextOp::ExtractEmails => "Keep only the email addresses",
             TextOp::UnixTimeToDate => "Unix time to date",
             TextOp::DateToUnixTime => "Date to Unix time",
+            TextOp::JoinLines => "Remove line breaks",
         }
     }
+}
+
+/// The text as HTML: blank lines separate paragraphs, a single line break becomes `<br>`, and everything is escaped.
+pub fn text_to_html(text: &str) -> String {
+    let normalized = text.replace("\r\n", "\n");
+    normalized
+        .trim()
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| format!("<p>{}</p>", html_escape(p).replace('\n', "<br>\n")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Every line joined into one, with single spaces where the breaks were.
+fn join_lines(text: &str) -> String {
+    text.split(['\n', '\r'])
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Runs one step. The error is a plain sentence for the person.
@@ -221,6 +246,7 @@ pub fn apply(op: &TextOp, text: &str) -> Result<String, String> {
         TextOp::ExtractEmails => extract_matches(text, EMAIL_PATTERN)?,
         TextOp::UnixTimeToDate => unix_to_date(text)?,
         TextOp::DateToUnixTime => date_to_unix(text)?,
+        TextOp::JoinLines => join_lines(text),
     })
 }
 
@@ -997,6 +1023,20 @@ mod tests {
         );
         assert_eq!(run(TextOp::SnakeCase, "HelloBigWorld"), "hello_big_world");
         assert_eq!(run(TextOp::KebabCase, "Hello big World"), "hello-big-world");
+    }
+
+    #[test]
+    fn line_breaks_come_out_and_html_is_escaped_into_paragraphs() {
+        assert_eq!(
+            run(TextOp::JoinLines, "one\n  two \r\n\n three"),
+            "one two three"
+        );
+        assert_eq!(run(TextOp::JoinLines, "single"), "single");
+        assert_eq!(
+            text_to_html("Tom & <Jerry>\nsecond line\n\nNext paragraph"),
+            "<p>Tom &amp; &lt;Jerry&gt;<br>\nsecond line</p>\n<p>Next paragraph</p>"
+        );
+        assert_eq!(text_to_html("  \n "), "");
     }
 
     #[test]

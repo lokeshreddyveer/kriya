@@ -181,7 +181,20 @@ again when the same displays reconnect, and hot corners that run a saved action.
 
 ## Right-click menu
 
-**Settings › Finder Actions.** Tabs: Actions, Templates, Apps, Pointer Menu, Setup.
+**Settings › Finder Actions.** Tabs: Actions, Templates, Menus, Apps, Pointer Menu, Setup.
+
+- **Submenus** (add them with *Add Common Actions*): **Copy Path As** (POSIX, shell-escaped, `file://` URL, HFS, Markdown link, HTML link, JSON
+  array, CSV list, name, name without extension, parent folder), **Open In** (every code editor and terminal installed: VS Code, Cursor, Xcode,
+  JetBrains IDEs, Sublime, Zed, Nova, Terminal, iTerm, Warp, Ghostty, kitty), **Move / Copy To Folder Set** (every folder of every saved folder set
+  as “Set › Folder”; a request is only honoured for a folder that is still in a set), **Quick Tag** (one-click tag and comment presets such as
+  Mark for Review, Ready, Archive, Client, Personal, Remove All Tags; you edit them under *Menus*) and **Inspect** (Quick Look, permissions and
+  owner, code signature, download-warning state, SHA-256, size and dates, image size or audio/video length, Spotlight details; read-only).
+- **Starter file types:** *Templates › Add Starter Types* adds JSON, CSV, YAML, Python, JavaScript, TypeScript, Swift, SQL, CSS and Markdown
+  with front matter to *New File from Template*.
+- **Profiles** (*Menus* tab): show chosen actions only inside chosen folders (and their subfolders): developer actions in your code folders,
+  cleanup in Downloads. An action in no profile shows everywhere.
+- **Previews before changes:** removing download warnings lists the files that really have one; tidying lists what would move into which
+  folder; converting says the new format and that originals are kept. Nothing is moved by the preview.
 
 1. Go to **Setup** and switch on “Kriya” under Finder extensions in System Settings, then restart the extension and relaunch Finder.
 2. Right-click a file, a folder, or the empty space in a folder, and choose from the Kriya menu.
@@ -249,6 +262,15 @@ imported rules come in switched off, and any whose folder is missing or not allo
   (`utm_`, `fbclid`, `gclid` and more), trim, keep plain text only, change case, join into one line, remove tags. What you paste and
   what the history keeps is the tidy version. Files and pictures are never touched.
 - **Paste stack:** turn it on, copy several things, then paste them one after another in the order you copied them.
+- **Find a picture by what is written in it:** words in copied screenshots are read on this Mac (Apple's own text recognition) and kept with
+  the item, encrypted like the rest of the history, so search finds them. Right-click a picture: Paste as PNG or JPEG, Copy Text from Picture,
+  Copy QR Code Text.
+- **Secret labels:** a password, GitHub/AWS/Slack/Stripe/Google key, JWT, private key or card number (with the check digit) is labelled by
+  kind, shown masked, and found under the *Secrets* filter. Right-click › *Expire*: Paste Once Then Delete, or delete in 5 minutes, 1 hour or
+  1 day; *Remove a secret right after I paste it* in Privacy; *Delete everything from this app*.
+- **Filters:** by kind, pinned, snippets, secrets, *Frequent* (pasted 3 times or more), where it was copied (app) and when (today, past
+  week, past month). *Paste as Markdown Link* for a copied web address. **Pause** recording for 5 minutes, 30 minutes or until you resume.
+- **Hidden from screen sharing:** the quick paste window asks macOS to leave it out of screen sharing and other apps' screenshots (switchable).
 - **Sync through iCloud Drive:** with iCloud Drive on, Kriya can keep your snippets and pinned text, and optionally recent copies, the same
   on your Macs. Each Mac writes its own encrypted file; removals travel too, and when two Macs change the same thing a copy is kept instead of
   one being lost. Snippets can also be exported and imported as an encrypted file.
@@ -274,6 +296,14 @@ imported rules come in switched off, and any whose folder is missing or not allo
 - **Keyboard mode:** move through the actions with the arrow keys or Tab, press Return or a digit to run one, Escape to leave; its position is spoken for VoiceOver.
 - **Most used and recent actions** are listed first (their names only are kept).
 - **Nothing selected?** Give “Show paste actions here” a shortcut under Keyboard › Shortcuts (or run it from the launcher). A small bar with only paste actions appears beside the pointer, for blank space in a document or a place where nothing can be selected.
+- **Actions that fit come first:** a link puts *Open Link* first, JSON puts *Format JSON*, a path puts *Show in Finder* and *Open in Terminal*,
+  a single word puts *Look up*, percent-encoded text puts *URL decode*, a Unix time puts *Unix time to date*, several lines put *Remove line
+  breaks* and the list tools, a long text puts the AI actions; then what you use most, with scripts, AI and web actions after quick ones. Pin
+  actions to keep them first. The “…” menu is sorted under Transform, Search, Share, Developer, AI and Apps. Switch it off to keep your own order.
+- **What changed, with Undo:** after the bar replaces text, a small card shows the text before and after, *Undo* (the app's own ⌘Z),
+  *Copy Original* and *Copy Result*.
+- **More actions** (*Add Common Actions*): *Remove line breaks*, *Copy as HTML*, *Show in Finder* and *Open in Terminal* for a selected path, *Put on
+  the shelf*, and *Count words* now adds the reading time for a longer text.
 - Per-app behavior, appearance and delay are settings. The bar never appears in password fields.
 
 # Launcher
@@ -394,7 +424,23 @@ an optional delay, and copy or save the result.
 
 - **Copy text from a region** with the Mac's own text recognition.
 - **Hide private text:** blur or block emails, phone numbers, card numbers, addresses, keys and words you list.
-- **Editor:** boxes, arrows, highlights, blocks, mosaic and notes.
+- **Editor:** boxes, ovals, arrows, lines, freehand pen, highlights, numbered steps, notes, solid blocks, mosaic and **crop**; undo and redo.
+  **Style** puts the picture on a backdrop (white, black, ocean, sunset, forest, graphite) with space, round corners, a shadow and a chosen shape
+  (1:1, 16:9, 4:3, social), shown with *Preview the Result*; it can also be applied to every capture. **Projects** (`.kriyashot`) keep the picture and
+  every mark so you can open and change them later; with *Keep the untouched picture* the original is saved beside the edited one.
+- **Quick access cards:** after a screenshot or a recording a card shows the picture (drag it into Finder, Mail, Slack or Messages), its size,
+  format and time, and buttons for copy, save, annotate, copy the text in it, pin, send to the shelf, share, move to the Trash and open the
+  history; also Copy as Markdown, HTML, Base64 or path, and Save as PNG, JPEG, HEIC, PDF or TIFF. Keys over a card: C, S, E, O, P, H, X, Y, ⌫, Esc;
+  swipe sideways to dismiss. You choose for what (screenshots, recordings, both, never), the position (nine places or near the pointer), the
+  display, the size, the distance from the edge, how long it stays (or until closed), how many stack, and whether it waits during a recording.
+  Closed cards come back from the optional **menu-bar icon** (always, hidden, or only while there is something to show) or the command
+  `capture.restore`; the icon also lists recent captures and starts a capture. Cards and the editor are hidden from screen sharing and recordings.
+- **Upload to your own bucket** (off until set up): Amazon S3, Cloudflare R2, Backblaze B2, MinIO or anything S3-compatible. Requests are signed
+  on this Mac (AWS Signature V4) and go straight to your bucket; the secret key is in the Keychain; there is no Kriya server. A public address
+  makes the link, otherwise an expiring link (15 minutes to 7 days) from a private bucket; optionally the local file goes to the Trash afterwards.
+- **Text from pictures:** *Copy text as one paragraph*, *as Markdown paragraphs* and *a table as CSV* join the plain *Copy text* command.
+- **Privacy:** private text now also covers AWS, GitHub, Slack and Stripe keys, JWTs and card numbers; a capture is refused while a password
+  manager or another app on your list is in front.
 - **Capture history and pins:** the Capture pane lists your last captures with Pin, Copy and Show in Finder. A pinned picture stays on top of
   every window (drag it, scroll to resize, ⌥-scroll to see through it, double-click to close). The *Pin* button and the “Pin the clipboard
   picture or the latest capture” command pin whatever is on the clipboard, or the newest capture.
@@ -410,7 +456,7 @@ an optional delay, and copy or save the result.
 - **More capture:** *Menu capture* (capture an open menu), *capture an area* and *capture the previous area again* (forgotten when the displays
   change), **OCR languages** (automatic, or up to five), **subject cutout**, and **profiles** (a named set of capture choices).
 - **Read QR Code:** choose a region and Kriya copies what the code says.
-- Nothing is uploaded.
+- Nothing is uploaded unless you set up your own bucket and press Upload.
 
 # Link routing and browsers
 
@@ -438,6 +484,13 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
 - **Search and history:** search every shelf and a history of what you removed.
 - **Expiry:** items can expire after some days and move to the history; a notification warns before they do. Kriya also lists files on a shelf
   that are missing and items held on more than one shelf.
+- **Instant actions** (the ⚡ button): make pictures smaller (1920, 1280 or 800 px), change their format (PNG, JPEG, HEIC), combine them into a
+  PDF, copy the text in them, copy all paths or everything as text, send text to Notes, compress to ZIP, upload to your own bucket, or run a
+  workflow on the shelf. New files are made beside the originals; the originals are never changed.
+- **Drop on the menu-bar icon** to make a new shelf of what you drop. A list or a grid of larger pictures, with size, kind and age.
+- **Export and import:** a shelf can be saved to a `.kriyashelf` file (optionally encrypted with a passphrase) and imported on another Mac; files
+  are listed by path, text and pictures travel inside. **Do Not Save This Shelf** keeps a shelf in memory only: it is gone when Kriya quits.
+- **From the Selection Bar:** *Put on the shelf* sends selected text to it.
 
 # Automation
 
@@ -467,8 +520,13 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
 
 **Settings › Apps.** Tabs: Installed, Install, Leftovers, Updates.
 
-- **Installed:** every app, with version, size and when you last opened it. Search, sort, and remove an app together with the files
-  it leaves in your Library (you see the list first, and it goes to the Trash).
+- **Installed:** every app, with version, size and when you last opened it. Each shows where its updates come from (App Store, Homebrew,
+  Sparkle, GitHub, Electron, web app, iPhone app, direct download) and how sure that is (verified, detected, inferred, unknown), the
+  processors it supports (Apple silicon, Intel only, Universal), and flags for duplicate copies and apps outside the Applications folders.
+  Search (name, identifier or source), filter by *not opened for 6/12/24 months*, sort, export the list as CSV, JSON or Markdown, drop an
+  app onto the list to remove it, **Reset…** to clear an app's saved data but keep the app, or remove an app together with the files it
+  leaves in your Library. You see the list first, each file says why it was matched (exact bundle identifier, developer's team, name
+  only), only exact matches start ticked, and everything goes to the Trash.
 - **Install:** search every app Homebrew offers as you type, see its description and version, and install it. You see the exact
   command and confirm first. With nothing typed it lists popular apps. *Save My Apps as a List* and *Reinstall from a List* move
   your Homebrew apps to another Mac. Needs Homebrew; Kriya never installs Homebrew itself.
@@ -480,7 +538,9 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   **Run in Terminal** if it needs a password or gets stuck. The log is kept on disk.
 - **Updates:** apps with their own update feed and Homebrew apps. Kriya can upgrade outdated Homebrew apps one at a time by itself
   (switch it off here); apps that update themselves are only listed. **Check Now** and **Stop** control a check, each source shows its own progress,
-  failed upgrades are retried with a growing wait, and an update history is kept.
+  failed upgrades are retried with a growing wait, and an update history is kept. **Pin** holds an app at its version, sources can be hidden,
+  and before a Homebrew upgrade Kriya keeps a copy of the app (newest two, under 3 GB) so **Put Back** restores it. Only Homebrew apps are ever
+  installed by Kriya; every other source opens the developer's page or the App Store.
 
 # System and general
 
@@ -502,9 +562,18 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   Copy, Show in Finder and Delete. In the launcher, type `note buy milk` to save one at once, `notes` to open the window, or `notes shopping` to find.
 - **Sound:** commands for volume up, down, mute, microphone mute and the next sound output, usable from shortcuts, mouse buttons and
   the launcher. In the launcher type `volume 40`, `volume up`, or `output` to switch the speakers, headphones or microphone.
-- **Disk Map:** a picture of where the room went. Every item in a folder is a tile as big as the item (folders get colours, files are
-  coloured by kind); click a folder to look inside it, use the path at the top to go back up, right-click a tile for Show in Finder or Move to
-  Trash. A *Safe to remove* list under the map shows the biggest caches and build folders with their total size and one *Move All to Trash* button. It starts at your Home folder; *Look At* chooses another. It only measures, and macOS may ask before Kriya can read some folders.
+- **Disk Map:** a picture of where the room went, in four tabs. **Map**: every item in a folder is a tile (or an arc, with the *Sunburst*
+  shape) as big as the item, coloured by kind, age, risk or folder; click a folder to look inside, or use the arrow keys, Return and Space
+  (preview). It starts at Home; *Look At* chooses Home, the whole startup disk, another volume or any folder, and the map fills in as it measures.
+  When there is nothing to draw it says why (empty, no permission, gone, timed out, cloud only). A map older than 10 minutes warns you.
+  **Largest**: every big file under the folder in a sortable table (disk usage, length, modified, kind, risk, folder) with search, kind,
+  size and age filters, multi-select, Quick Look, Show in Finder and CSV/JSON export. **Cleanup**: *Likely rebuildable* caches and build
+  folders, developer files (Xcode, simulators, npm, Homebrew, Docker…), duplicate files compared by content, large files untouched for a
+  year, this week's big files, a Collector to gather items, and a saved cleanup report. **Advanced**: free space, purgeable space and
+  local Time Machine snapshots, Full Disk Access status, an optional measure-as-administrator, a cloud-folders option, and what grew or
+  shrank since the last reading. Sizes are *disk usage* (room taken on disk), which Finder can show differently. Nothing is called safe:
+  Kriya says *Likely rebuildable*, matches whole path pieces only, never treats your own folders as rebuildable, never follows a link out of
+  a folder, asks before every move to the Trash, and offers Undo right after. It only measures; macOS may ask before Kriya can read some folders.
 - **Focus Sessions:** a timed session (25 minutes by default) that hides the Dock and desktop icons, asks chosen apps to quit and runs two
   Shortcuts you name (macOS gives apps no way to switch Do Not Disturb, so make a Shortcut with the “Set Focus” action). A setting that was
   already as wanted is left alone, and if Kriya quits mid-session it puts everything back next time. Launcher: `focus`, `focus 45`, `focus off`.

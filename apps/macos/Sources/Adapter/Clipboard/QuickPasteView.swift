@@ -76,7 +76,7 @@ struct QuickAccessView: View {
     @State private var hovered: String?
 
     /// The filters shown here. Pinned items have no place in this panel, so that filter is left out.
-    private static let chips: [ClipChip] = [.all, .pinned, .text, .links, .images, .files, .snippets]
+    private static let chips: [ClipChip] = [.all, .pinned, .text, .links, .images, .files, .snippets, .secrets, .frequent]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -116,8 +116,9 @@ struct QuickAccessView: View {
                 .focused($searchFocused)
                 .onSubmit { if let item = model.current { onChoose(item, false) } }
             if store.currentConfig.paused {
-                Label("Paused", systemImage: "pause.circle.fill").font(.caption).foregroundStyle(Theme.warn)
+                Label(ClipPause.label(until: ClipPauseController.until), systemImage: "pause.circle.fill").font(.caption).foregroundStyle(Theme.warn)
             }
+            pauseMenu
             if !model.query.isEmpty {
                 Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                     .buttonStyle(.plain)
@@ -129,6 +130,39 @@ struct QuickAccessView: View {
         .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
         .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
         .animation(.smooth(duration: 0.15), value: model.query.isEmpty)
+    }
+
+    /// Stops recording for a while (or until turned back on), and turns it back on.
+    private var pauseMenu: some View {
+        Menu {
+            if store.currentConfig.paused {
+                Button("Resume Recording") { ClipPauseController.resume(store: store) }
+            } else {
+                Button("Pause for 5 Minutes") { ClipPauseController.pause(store: store, minutes: 5) }
+                Button("Pause for 30 Minutes") { ClipPauseController.pause(store: store, minutes: 30) }
+                Button("Pause Until I Resume") { ClipPauseController.pause(store: store, minutes: 0) }
+            }
+        } label: { Image(systemName: store.currentConfig.paused ? "play.circle" : "pause.circle").foregroundStyle(.secondary) }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help(store.currentConfig.paused ? "Resume recording" : "Pause recording")
+    }
+
+    /// Narrow the list by the app it was copied in and by when.
+    private var filterMenu: some View {
+        Menu {
+            Picker("When", selection: $model.view.range) { ForEach(ClipDateRange.allCases) { Text($0.rawValue).tag($0) } }.pickerStyle(.inline)
+            if !model.sources.isEmpty {
+                Divider()
+                Button("Any App") { model.view.sourceApp = nil }
+                ForEach(model.sources.prefix(12), id: \.self) { app in
+                    Button { model.view.sourceApp = app } label: { Text(AppChoice.name(for: app)) }
+                }
+            }
+        } label: {
+            Label(model.view.isActive ? "Filtered" : "Filter", systemImage: model.view.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                .font(.system(size: 11))
+        }
+        .menuStyle(.borderlessButton).fixedSize()
     }
 
     private var chipRow: some View {
@@ -146,6 +180,7 @@ struct QuickAccessView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                filterMenu
                 if !store.collections.isEmpty {
                     Menu {
                         Button("All collections") { model.collection = nil }
@@ -271,6 +306,7 @@ struct QuickAccessView: View {
     private var footer: some View {
         HStack(spacing: 12) {
             hint("↩", "Paste")
+            hint("⌘1–9", "Quick")
             hint("⌘↩", "Plain")
             hint("⌘P", "Pin")
             hint("⌘⌫", "Delete")
@@ -347,6 +383,10 @@ private struct QuickRow: View {
 
     private var tint: Color { KindStyle.color(item.kind) }
 
+    /// What kind of secret it is, when it was labelled one (kept as a tag, never as the secret's text).
+    private var secretKind: ClipSecretKind? { item.tags.lazy.compactMap(ClipSecretKind.from(tag:)).first }
+    private var hidden: Bool { item.sensitive || secretKind != nil }
+
     private var looksLikeCode: Bool {
         item.kind == .text && (item.preview.contains("{") || item.preview.contains("=>") || item.preview.contains("();") || item.preview.contains("</"))
     }
@@ -391,7 +431,7 @@ private struct QuickRow: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous).fill(tint.opacity(0.16))
             if item.kind == .files, let first = item.files.first {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: first)).resizable().scaledToFit().padding(5)
-            } else if item.sensitive {
+            } else if hidden {
                 Image(systemName: "lock.fill").font(.system(size: 14, weight: .medium)).foregroundStyle(tint)
             } else {
                 Image(systemName: item.kind.symbol).font(.system(size: 14, weight: .medium)).foregroundStyle(tint)
@@ -412,8 +452,8 @@ private struct QuickRow: View {
         case .image:
             Text(item.title ?? "Image").font(.system(size: 13, weight: .medium)).lineLimit(1)
         default:
-            if item.sensitive {
-                Text("•••••••• Sensitive").font(.system(size: 13, weight: .medium)).lineLimit(1)
+            if hidden {
+                Text("•••••••• \(secretKind?.title ?? "Sensitive")").font(.system(size: 13, weight: .medium)).lineLimit(1)
             } else {
                 Text(item.title ?? item.preview)
                     .font(looksLikeCode ? .system(size: 12, design: .monospaced) : .system(size: 13))
@@ -430,7 +470,8 @@ private struct QuickRow: View {
             Text(detailText)
             if item.pinned { Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(Theme.warn) }
             if item.favorite { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(Theme.warn) }
-            ForEach(item.tags.prefix(2), id: \.self) { Text("#\($0)").foregroundStyle(Theme.accent) }
+            ForEach(item.tags.filter { ClipSecretKind.from(tag: $0) == nil }.prefix(2), id: \.self) { Text("#\($0)").foregroundStyle(Theme.accent) }
+            if ClipLifetimes.shared.remaining(item.id) != nil { Image(systemName: "timer").font(.system(size: 9)).foregroundStyle(Theme.warn) }
         }
         .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
     }
@@ -476,8 +517,8 @@ private struct QuickRow: View {
             }
             .font(.system(size: 11)).foregroundStyle(.secondary)
         default:
-            if item.sensitive {
-                Label("Hidden. Press Return to paste it.", systemImage: "eye.slash")
+            if hidden {
+                Label("Hidden\(secretKind.map { " (\($0.title))" } ?? ""). Press Return to paste it.", systemImage: "eye.slash")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))

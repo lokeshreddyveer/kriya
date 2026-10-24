@@ -357,6 +357,9 @@ private struct ClipPrivacyTab: View {
     @ObservedObject private var lock = ClipboardLock.shared
     @State private var confirmPurge = false
     @State private var note: String?
+    @AppStorage(ClipExtraSettings.hideWhenSharingKey) private var hideWhenSharing = true
+    @AppStorage(ClipExtraSettings.deleteSecretsAfterPasteKey) private var deleteSecretsAfterPaste = false
+    @AppStorage(ClipExtraSettings.ocrImagesKey) private var ocrImages = true
 
     private var config: ClipConfig { clip.config }
 
@@ -408,6 +411,14 @@ private struct ClipPrivacyTab: View {
                 .disabled(!lock.isEnabled)
             } header: { Text("Lock") } footer: {
                 Text("The history also locks when the Mac sleeps or the screen locks. The lock covers what Kriya shows you; the saved file itself is protected by encryption.")
+            }
+
+            Section {
+                Toggle("Hide the quick paste window from screen sharing and screenshots", isOn: $hideWhenSharing)
+                Toggle("Remove a secret from the history right after I paste it", isOn: $deleteSecretsAfterPaste)
+                Toggle("Read the words in copied pictures, so I can search for them", isOn: $ocrImages)
+            } header: { Text("Pasting and sharing") } footer: {
+                Text("Other apps and screen-sharing tools do not see the quick paste window (this is a request to macOS; a phone pointed at the screen still sees it). A secret pasted this way is also taken off the clipboard if nothing else was copied meanwhile. Words in pictures are read on this Mac only, stored encrypted with the rest of the history, and never sent anywhere. Right-click any item for Paste Once, or to make it expire.")
             }
 
             Section {

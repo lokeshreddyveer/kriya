@@ -190,6 +190,9 @@ final class AppAudioEngine: ObservableObject {
     @Published private(set) var favoritePlugins: [String]
     /// Apps with an icon of their own in the menu bar.
     @Published private(set) var menuBarApps: [String]
+    /// Apps whose volume slider goes past 100% (up to 400%).
+    @Published private(set) var boostApps: Set<String>
+    private static let boostKey = "appAudio.boost.v1"
     private static let menuBarAppsKey = "appAudio.menuBarApps.v1"
     private static let favoritePluginsKey = "soundFavoritePlugins.v1"
 
@@ -224,6 +227,7 @@ final class AppAudioEngine: ObservableObject {
         excluded = Set(defaults.stringArray(forKey: Self.excludedKey) ?? [])
         favoritePlugins = defaults.stringArray(forKey: Self.favoritePluginsKey) ?? []
         menuBarApps = defaults.stringArray(forKey: Self.menuBarAppsKey) ?? []
+        boostApps = Set(defaults.stringArray(forKey: Self.boostKey) ?? [])
         alerts = (defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode([SoundAlert].self, from: $0) }) ?? []
         let minutes = defaults.object(forKey: Self.recentKey) as? Int ?? SoundAppList.defaultRecentMinutes
         recentMinutes = min(max(minutes, 1), 240)
@@ -284,6 +288,14 @@ final class AppAudioEngine: ObservableObject {
         favorites = SoundAppList.move(key, by: offset, in: favorites)
         defaults.set(favorites, forKey: Self.favoritesKey)
         refresh()
+    }
+
+    /// Whether the slider goes past 100% for this app: switched on, or already louder than 100%.
+    func isBoosted(_ key: String) -> Bool { boostApps.contains(key) || current(key).volume > 1.005 }
+
+    func setBoost(_ key: String, _ on: Bool) {
+        if on { boostApps.insert(key) } else { boostApps.remove(key); if current(key).volume > 1 { update(key) { $0.volume = 1 } } }
+        defaults.set(boostApps.sorted(), forKey: Self.boostKey)
     }
 
     func setMenuBarIcon(_ key: String, _ on: Bool) {

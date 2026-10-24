@@ -55,6 +55,9 @@ final class ShelfModel: ObservableObject {
     @Published var groupFilter: String?
     /// The item being dragged inside the panel, so dropping it on a group chip moves it there.
     var draggingItemID: String?
+    /// The workflows that can be run on the shelf's contents, and how to run one. Set by the app.
+    var workflows: () -> [(id: String, name: String)] = { [] }
+    var runWorkflow: (String, String) -> Void = { _, _ in }
 
     var items: [ShelfItem] {
         store.library.current.items.filter { groupFilter == nil || $0.group == groupFilter }.compactMap { ShelfItem(record: $0, store: store) }
@@ -235,6 +238,39 @@ final class FileShelf: NSObject, NSWindowDelegate, ObservableObject {
         show()
     }
 
+    func add(text: String) {
+        model.addText(text)
+    }
+
+    /// Workflows for the shelf's "Run Workflow" action. Set by the app.
+    var workflows: () -> [(id: String, name: String)] {
+        get { model.workflows }
+        set { model.workflows = newValue }
+    }
+    var runWorkflow: (String, String) -> Void {
+        get { model.runWorkflow }
+        set { model.runWorkflow = newValue }
+    }
+
+    /// Dropping on the menu-bar icon: a new shelf holding what was dropped, shown at once.
+    @discardableResult
+    func createShelf(from board: NSPasteboard) -> Bool {
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
+        var created = false
+        ShelfLibraryStore.shared.change { created = $0.addShelf(named: "Dropped \(stamp)") != nil }
+        guard created else { return false }
+        model.groupFilter = nil
+        if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+            for url in urls { model.addFile(url) }
+        } else if let image = NSImage(pasteboard: board) {
+            model.addImage(image)
+        } else if let text = board.string(forType: .string), !text.isEmpty {
+            model.addText(text)
+        }
+        show()
+        return true
+    }
+
     func addClipboard() {
         let board = NSPasteboard.general
         if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
@@ -259,6 +295,7 @@ private struct ShelfView: View {
     @State private var naming: Naming?
     @State private var renamingGroup: String?
     @State private var groupingItem: String?
+    @State private var grid = false
 
     private enum Naming { case new, rename }
 
@@ -329,11 +366,18 @@ private struct ShelfView: View {
                 Button("New Shelf…") { newName = ""; naming = .new }.disabled(library.shelves.count >= ShelfLibrary.maxShelves)
                 Button("Rename This Shelf…") { newName = library.current.name; naming = .rename }
                 Button("Delete This Shelf", role: .destructive) { store.change { $0.deleteShelf($0.currentID) } }.disabled(library.shelves.count < 2)
+                Divider()
+                Toggle("Do Not Save This Shelf", isOn: Binding(get: { library.current.temporary == true }, set: { on in store.change { lib in if let i = lib.shelves.firstIndex(where: { $0.id == lib.currentID }) { lib.shelves[i].temporary = on ? true : nil } } }))
+                Button("Export This Shelf…") { exportShelf(encrypted: false) }
+                Button("Export Encrypted…") { exportShelf(encrypted: true) }
+                Button("Import a Shelf…") { importShelf() }.disabled(library.shelves.count >= ShelfLibrary.maxShelves)
             } label: {
                 Label(library.current.name, systemImage: "tray").font(.headline)
             }
             .menuStyle(.borderlessButton).fixedSize()
+            if library.current.temporary == true { Image(systemName: "eye.slash").foregroundStyle(.secondary).help("This shelf is not saved: it is gone when Kriya quits") }
             Spacer()
+            instantMenu
             Button { searching.toggle(); if !searching { model.query = "" } } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Search every shelf and the history").accessibilityLabel("Search every shelf and the history")
             Button("Add Clipboard") { add(NSPasteboard.general) }.controlSize(.small)
             Button { store.change { $0.clear() } } label: { Image(systemName: "trash") }.accessibilityLabel("Delete")
@@ -341,6 +385,138 @@ private struct ShelfView: View {
             Button(action: onClose) { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
+    }
+
+    // MARK: Instant actions
+
+    private var fileURLs: [URL] { model.items.compactMap { if case .file(let url) = $0.kind { return url } else { return nil } } }
+    private var textItems: [String] { model.items.compactMap { if case .text(let t) = $0.kind { return t } else { return nil } } }
+
+    private var instantMenu: some View {
+        Menu {
+            let files = fileURLs
+            Menu("Make Pictures Smaller") {
+                ForEach([1920, 1280, 800], id: \.self) { edge in Button("\(edge) px") { run { ShelfInstant.resize(files, maxEdge: CGFloat(edge)) } } }
+            }.disabled(ShelfInstant.images(files).isEmpty)
+            Menu("Change Picture Format To") {
+                ForEach([CaptureFormat.png, .jpeg, .heic], id: \.self) { f in Button(f.title) { run { ShelfInstant.convert(files, to: f) } } }
+            }.disabled(ShelfInstant.images(files).isEmpty)
+            Button("Combine Pictures into a PDF") { run { ShelfInstant.pdf(files) } }.disabled(ShelfInstant.images(files).isEmpty)
+            Button("Copy Text from Pictures") { readText(files) }.disabled(ShelfInstant.images(files).isEmpty)
+            Divider()
+            Button("Copy All Paths") { copy(ShelfInstant.paths(files), "Copied \(files.count) path\(files.count == 1 ? "" : "s")") }.disabled(files.isEmpty)
+            Button("Copy Everything as Text") { copy((files.map(\.path) + textItems).joined(separator: "\n"), "Copied") }.disabled(model.items.isEmpty)
+            Button("Send Text to Notes") { sendNotes() }.disabled(textItems.isEmpty)
+            Button("Compress to ZIP") { zipAll() }.disabled(files.isEmpty)
+            if CaptureUploadStore.shared.ready {
+                Button("Upload to My Bucket and Copy Links") { uploadFiles(files) }.disabled(files.isEmpty)
+            }
+            let flows = model.workflows()
+            if !flows.isEmpty {
+                Divider()
+                Menu("Run Workflow on the Shelf") {
+                    ForEach(flows, id: \.id) { flow in Button(flow.name) { model.runWorkflow(flow.id, (files.map(\.path) + textItems).joined(separator: "\n")) } }
+                }
+            }
+        } label: { Image(systemName: "bolt.fill") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Instant actions on what is on this shelf")
+            .disabled(model.items.isEmpty)
+    }
+
+    /// Runs a file action off the main thread, then adds what it made to the shelf and says what happened.
+    private func run(_ work: @escaping () -> ShelfInstant.Outcome) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = work()
+            DispatchQueue.main.async {
+                for url in outcome.outputs { model.addFile(url) }
+                Toast().show(outcome.message, isError: outcome.isError)
+            }
+        }
+    }
+
+    private func copy(_ text: String, _ done: String) {
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+        Toast().show(done)
+    }
+
+    private func readText(_ files: [URL]) {
+        Toast().show("Reading the pictures…")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let text = ShelfInstant.text(in: files)
+            DispatchQueue.main.async {
+                guard !text.isEmpty else { Toast().show("No text found in those pictures.", isError: true); return }
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+                model.addText(text)
+                Toast().show("Copied the text, and kept it on the shelf")
+            }
+        }
+    }
+
+    private func sendNotes() {
+        let text = textItems.joined(separator: "\n\n")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = ShelfInstant.sendToNotes(text)
+            DispatchQueue.main.async { Toast().show(ok ? "Made a note" : "Notes would not take it. Allow Kriya to control Notes in System Settings › Privacy › Automation.", isError: !ok) }
+        }
+    }
+
+    private func uploadFiles(_ files: [URL]) {
+        Toast().show("Uploading…")
+        ShelfInstant.upload(files) { result in
+            switch result {
+            case .success(let links): copy(links, "Uploaded. The link\(links.contains("\n") ? "s are" : " is") on the clipboard")
+            case .failure(let error): Toast().show(error.localizedDescription, isError: true)
+            }
+        }
+    }
+
+    // MARK: Export and import
+
+    private func exportShelf(encrypted: Bool) {
+        guard let data = ShelfExchange.exported(library.current, imageData: { store.imageData(named: $0) }) else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(library.current.name).kriyashelf"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        var out = data
+        if encrypted {
+            guard let pass = askPassphrase("Passphrase for this shelf file", confirm: true), let sealed = try? BackupCrypto.seal(String(decoding: data, as: UTF8.self), passphrase: pass) else { return }
+            out = sealed
+        }
+        do { try out.write(to: url, options: .atomic); try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path); Toast().show("Saved \(url.lastPathComponent)") }
+        catch { Toast().show("The shelf could not be saved.", isError: true) }
+    }
+
+    private func importShelf() {
+        let panel = NSOpenPanel()
+        panel.message = "Choose a Kriya shelf file"
+        guard panel.runModal() == .OK, let url = panel.url, var data = try? Data(contentsOf: url) else { return }
+        if BackupCrypto.isEncrypted(data) {
+            guard let pass = askPassphrase("Passphrase for this shelf file", confirm: false), let text = try? BackupCrypto.open(data, passphrase: pass) else { Toast().show("That passphrase did not open the file.", isError: true); return }
+            data = Data(text.utf8)
+        }
+        guard let parsed = ShelfExchange.imported(data) else { Toast().show("That is not a shelf file this version can read.", isError: true); return }
+        var added = 0
+        store.change { library in
+            guard library.addShelf(named: parsed.name) != nil else { return }
+            for item in parsed.items {
+                var value = item.value
+                if item.kind == .image { guard let png = item.png, let name = store.storeImage(png: png) else { continue }; value = name }
+                if library.add(ShelfRecord(kind: item.kind, value: value, added: item.added, group: item.group)) { added += 1 }
+            }
+        }
+        Toast().show("Imported \(added) item\(added == 1 ? "" : "s")\(parsed.skipped > 0 ? ", left out \(parsed.skipped) that were not valid" : "")")
+    }
+
+    private func askPassphrase(_ message: String, confirm: Bool) -> String? {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = confirm ? "Anyone with the file needs this to open it. Kriya cannot recover it." : ""
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty else { return nil }
+        return field.stringValue
     }
 
     /// Chips for the groups on every shelf. Click to show only one; drop something on a chip to put it in that group.
@@ -399,6 +575,7 @@ private struct ShelfView: View {
             if store.expiringCount > 0 { Label("\(store.expiringCount) expiring", systemImage: "clock.badge.exclamationmark").font(.caption).foregroundStyle(Theme.warn) }
             Button(showingHistory ? "Hide History" : "History (\(library.history.count))") { showingHistory.toggle() }.controlSize(.small).disabled(library.history.isEmpty && !showingHistory)
             Spacer()
+            Button { withAnimation(.smooth(duration: 0.2)) { grid.toggle() } } label: { Image(systemName: grid ? "list.bullet" : "square.grid.2x2") }.buttonStyle(.borderless).help(grid ? "Show as a list" : "Show as larger pictures").accessibilityLabel(grid ? "List" : "Grid")
             Button("Zip All") { zipAll() }.controlSize(.small).disabled(!hasFiles)
         }
         .padding(.horizontal, 12).padding(.vertical, 7)
@@ -436,9 +613,48 @@ private struct ShelfView: View {
             placeholder("Drop files, text or images here", "Then drag them out into any app.")
         } else {
             ScrollView {
-                VStack(spacing: 2) { ForEach(model.items) { item in row(item, note: nil, fromHistory: false) } }.padding(6)
+                if grid {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 96, maximum: 130), spacing: 8)], spacing: 8) { ForEach(model.items) { item in tile(item) } }.padding(8)
+                } else {
+                    VStack(spacing: 2) { ForEach(model.items) { item in row(item, note: detail(item), fromHistory: false) } }.padding(6)
+                }
             }
         }
+    }
+
+    /// A larger picture with its name, for the grid view.
+    private func tile(_ item: ShelfItem) -> some View {
+        VStack(spacing: 4) {
+            Group {
+                if case .text(let t) = item.kind {
+                    Text(String(t.prefix(120))).font(.system(size: 9)).foregroundStyle(.secondary).padding(6).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else {
+                    Image(nsImage: item.icon).resizable().scaledToFit().padding(4)
+                }
+            }
+            .frame(width: 96, height: 76)
+            .background(Color.primary.opacity(hovered == item.id ? 0.1 : 0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(item.title).font(.system(size: 10)).lineLimit(1).truncationMode(.middle).frame(width: 96)
+        }
+        .onHover { hovered = $0 ? item.id : nil }
+        .onDrag { model.draggingItemID = item.id; return item.provider }
+        .contextMenu { Button("Remove") { remove(item) } }
+    }
+
+    /// Size, kind and age of an item, so a list tells more than a name does.
+    private func detail(_ item: ShelfItem) -> String? {
+        var parts: [String] = []
+        switch item.kind {
+        case .file(let url):
+            if let v = try? url.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey]) {
+                if v.isDirectory == true { parts.append("Folder") } else if let size = v.fileSize { parts.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) }
+            } else { parts.append("Missing") }
+            if !url.pathExtension.isEmpty { parts.append(url.pathExtension.uppercased()) }
+        case .text(let t): parts.append("\(t.count) characters")
+        case .image(let image): parts.append("\(Int(image.size.width)) × \(Int(image.size.height))")
+        }
+        parts.append(RelativeDateTimeFormatter().localizedString(for: item.record.added, relativeTo: Date()))
+        return parts.joined(separator: " · ")
     }
 
     private func placeholder(_ title: String, _ detail: String) -> some View {

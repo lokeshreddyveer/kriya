@@ -26,7 +26,11 @@ struct AppsPane: View {
     @State private var query = ""
     @State private var sort: Sort = .name
     @State private var removing: InstalledApp?
+    @State private var resetting: InstalledApp?
     @State private var message: String?
+    @State private var unusedMonths = 0
+    @State private var backups: [AppBackup.Entry] = AppBackup.list()
+    @State private var dropTargeted = false
 
     enum Tab: String, CaseIterable, Identifiable {
         case installed = "Installed", install = "Install", leftovers = "Leftovers", updates = "Updates", background = "Background"
@@ -69,6 +73,12 @@ struct AppsPane: View {
                 message = failures.isEmpty ? "Moved “\(app.name)” to the Trash." : failures.joined(separator: "\n")
             }
         }
+        .sheet(item: $resetting) { app in
+            RemoveSheet(app: app, resetOnly: true) { failures in
+                resetting = nil
+                message = failures.isEmpty ? "Reset “\(app.name)”: its saved data went to the Trash." : failures.joined(separator: "\n")
+            }
+        }
         .overlay(alignment: .bottom) {
             if let message {
                 Text(message).font(.callout).padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8)).padding()
@@ -82,7 +92,11 @@ struct AppsPane: View {
     // MARK: Installed
 
     private var filtered: [InstalledApp] {
-        let list = query.isEmpty ? inventory.apps : inventory.apps.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.bundleID.localizedCaseInsensitiveContains(query) }
+        var list = query.isEmpty ? inventory.apps : inventory.apps.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.bundleID.localizedCaseInsensitiveContains(query) || $0.info.source.title.localizedCaseInsensitiveContains(query) }
+        if unusedMonths > 0 {
+            let names = Set(AppInventoryTools.unused(list.map { ($0.name, $0.lastUsed) }, months: unusedMonths))
+            list = list.filter { names.contains($0.name) }
+        }
         switch sort {
         case .name: return list
         case .size: return list.sorted { (inventory.sizes[$0.id] ?? 0) > (inventory.sizes[$1.id] ?? 0) }
@@ -91,8 +105,47 @@ struct AppsPane: View {
         }
     }
 
+    private var duplicateIDs: Set<String> { Set(AppInventoryTools.duplicates(inventory.apps.map { ($0.bundleID, $0.url.path) }).keys) }
+
+    private func badge(_ text: String, tint: Color = .secondary, help: String = "") -> some View {
+        Text(text).font(.system(size: 10, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 1.5)
+            .background(tint.opacity(0.14), in: Capsule()).foregroundStyle(tint).help(help)
+    }
+
+    private func badges(_ app: InstalledApp) -> some View {
+        HStack(spacing: 4) {
+            badge(app.info.source.title + (app.info.confidence == .verified ? "" : " · " + app.info.confidence.title.lowercased()), tint: app.info.confidence == .unknown ? .orange : .accentColor, help: app.info.why)
+            if let arch = AppArchitecture.badge(app.architectures) { badge(arch, tint: arch == "Intel only" ? .orange : .secondary, help: "The processors its program supports.") }
+            if duplicateIDs.contains(app.bundleID) { badge("Duplicate", tint: .orange, help: "The same app is installed more than once.") }
+            if AppInventoryTools.isUnusualLocation(app.url.path) { badge("Unusual place", tint: .orange, help: "Not in an Applications folder: \(app.url.deletingLastPathComponent().path).") }
+        }
+    }
+
+    /// The inventory as a file: CSV, JSON or Markdown.
+    private func export(_ format: String) {
+        let rows = filtered.map { AppInventoryTools.Row(name: $0.name, bundleID: $0.bundleID, version: $0.version, source: $0.info.source.title, confidence: $0.info.confidence.title, architecture: AppArchitecture.badge($0.architectures) ?? "—", path: $0.url.path, bytes: inventory.sizes[$0.id] ?? 0, lastOpened: $0.lastUsed) }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "kriya-apps.\(format)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let data: Data? = format == "csv" ? Data(AppInventoryTools.csv(rows).utf8) : format == "json" ? AppInventoryTools.json(rows) : Data(AppInventoryTools.markdown(rows).utf8)
+        do { try (data ?? Data()).write(to: url, options: .atomic); message = "Saved \(rows.count) apps to \(url.lastPathComponent)." } catch { message = "Could not save the file." }
+    }
+
+    /// An app file dropped on the list opens the same reviewed removal as the Remove button.
+    private func dropped(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url, url.pathExtension == "app" else { DispatchQueue.main.async { message = "Drop an app (a .app file) to remove it." }; return }
+            DispatchQueue.main.async {
+                if let app = inventory.apps.first(where: { $0.url.path == url.path }) ?? inventory.apps.first(where: { $0.url.resolvingSymlinksInPath().path == url.resolvingSymlinksInPath().path }) { removing = app }
+                else { message = "“\(url.deletingPathExtension().lastPathComponent)” is not in an Applications folder Kriya watches." }
+            }
+        }
+        return true
+    }
+
     private func detail(_ app: InstalledApp) -> String {
-        var parts = [app.version.isEmpty ? "—" : app.version, app.source.label]
+        var parts = [app.version.isEmpty ? "—" : app.version]
         if let bytes = inventory.sizes[app.id] { parts.append(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) }
         if let used = app.lastUsed {
             parts.append("Opened " + RelativeDateTimeFormatter().localizedString(for: used, relativeTo: Date()))
@@ -108,8 +161,15 @@ struct AppsPane: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search apps", text: $query).textFieldStyle(.plain)
                 if inventory.isScanning { ProgressView().controlSize(.small) }
+                Picker("Not opened for", selection: $unusedMonths) { Text("Any time").tag(0); Text("6 months").tag(6); Text("12 months").tag(12); Text("24 months").tag(24) }
+                    .pickerStyle(.menu).fixedSize().help("Only apps not opened for this long")
                 Picker("", selection: $sort) { ForEach(Sort.allCases) { Text($0.rawValue).tag($0) } }
                     .labelsHidden().pickerStyle(.menu).fixedSize()
+                Menu {
+                    Button("CSV…") { export("csv") }
+                    Button("JSON…") { export("json") }
+                    Button("Markdown…") { export("md") }
+                } label: { Image(systemName: "square.and.arrow.up") }.menuStyle(.borderlessButton).fixedSize().help("Export this list")
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
             .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -119,17 +179,21 @@ struct AppsPane: View {
                 HStack(spacing: 10) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path)).resizable().frame(width: 30, height: 30)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(app.name)
+                        HStack(spacing: 6) { Text(app.name); badges(app) }
                         Text(detail(app)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([app.url]) }.controlSize(.small)
                     Button("Check Signature") { checkTrust(app) }.controlSize(.small)
+                    Button("Reset…") { resetting = app }.controlSize(.small).disabled(app.isProtected).help("Remove its saved data and settings but keep the app")
                     Button("Remove…") { removing = app }.controlSize(.small).disabled(app.isProtected)
                 }
                 .padding(.vertical, 2)
             }
             .listStyle(.inset)
+            .overlay { if dropTargeted { RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6])).padding(6).allowsHitTesting(false) } }
+            .animation(.easeInOut(duration: 0.15), value: dropTargeted)
+            .onDrop(of: [.fileURL], isTargeted: $dropTargeted, perform: dropped)
         }
     }
 
@@ -179,6 +243,15 @@ struct AppsPane: View {
     }
 
     // MARK: Updates
+
+    /// Which source an update came from: Homebrew installs, App Store handoffs, and everything else is a feed or developer page.
+    private static func source(of update: AppUpdate) -> AppUpdateSource {
+        switch update.action {
+        case .brew: return .homebrew
+        case .appStore: return .appStore
+        case .open(let url): return (url.host ?? "").contains("github") ? .github : .sparkle
+        }
+    }
 
     private var updatesTab: some View {
         Form {
@@ -243,14 +316,16 @@ struct AppsPane: View {
                     Button("Clear History") { updateStore.clearHistory() }.controlSize(.small)
                 } header: { Text("Update history") }
             }
-            let visible = inventory.updates.filter { !inventory.ignoredUpdates.contains($0.appName) }
-            Section("Updates available") {
+            let visible = inventory.updates.filter { !inventory.ignoredUpdates.contains($0.appName) && !inventory.ignoredSources.contains(Self.source(of: $0).rawValue) }
+            Section {
                 if visible.isEmpty { Text(inventory.isCheckingUpdates ? "Checking…" : "Everything that could be checked is up to date.").foregroundStyle(.secondary) }
                 ForEach(visible) { update in
+                    let pinned = inventory.pinnedUpdates.contains(update.appName)
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(update.appName)
+                            HStack(spacing: 6) { Text(update.appName); badge(Self.source(of: update).title, tint: .accentColor, help: "Where this update comes from."); if pinned { badge("Pinned", tint: .orange, help: "Held at this version. Kriya will not install the update.") } }
                             Text("\(update.installed) → \(update.latest)").font(.caption).foregroundStyle(.secondary)
+                            if case .open = update.action { Text("Opens the developer's page; Kriya does not install this one for you.").font(.caption2).foregroundStyle(.tertiary) }
                         }
                         Spacer()
                         switch update.action {
@@ -258,15 +333,39 @@ struct AppsPane: View {
                         case .brew(let token):
                             if inventory.upgrading.contains(token) {
                                 HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Upgrading…").font(.caption).foregroundStyle(.secondary) }
+                            } else if pinned {
+                                Text("Held").font(.caption).foregroundStyle(.secondary)
                             } else {
-                                Button("Upgrade") { inventory.runBrewUpgrade(token) { message = $0 } }.controlSize(.small)
+                                Button("Upgrade") { inventory.runBrewUpgrade(token) { message = $0; backups = AppBackup.list() } }.controlSize(.small)
                             }
                         case .appStore: Button("App Store") { NSWorkspace.shared.open(URL(string: "macappstore://showUpdatesPage")!) }.controlSize(.small)
                         }
+                        Button(pinned ? "Unpin" : "Pin") { if pinned { inventory.pinnedUpdates.remove(update.appName) } else { inventory.pinnedUpdates.insert(update.appName) } }.controlSize(.small).buttonStyle(.borderless)
                         Button("Ignore") { inventory.ignoredUpdates.insert(update.appName) }.controlSize(.small).buttonStyle(.borderless)
                     }
                 }
+            } header: { Text("Updates available") } footer: {
+                Text("Only Homebrew apps are ever installed by Kriya, and only when automatic upgrades are on. Pin holds an app at its version. Every other source opens the developer's page or the App Store.")
             }
+            Section {
+                Toggle("Keep a copy of a Homebrew app before upgrading it", isOn: $inventory.backupBeforeUpgrade)
+                if backups.isEmpty { Text("No saved copies yet.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(backups) { entry in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) { Text("\(entry.appName) \(entry.version)"); Text("Saved \(entry.date.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
+                        Spacer()
+                        Button("Put Back") { message = AppBackup.restore(entry) ?? "Put back “\(entry.appName)” \(entry.version). The newer one is in the Trash."; inventory.scan() }.controlSize(.small)
+                        Button { try? FileManager.default.removeItem(at: entry.folder); backups = AppBackup.list() } label: { Image(systemName: "xmark.circle") }.buttonStyle(.borderless).accessibilityLabel("Delete this copy")
+                    }
+                }
+            } header: { Text("Rollback") } footer: {
+                Text("Copies are kept in Kriya's own folder, the newest two per app, for apps under 3 GB. Putting one back moves the current version to the Trash first.")
+            }
+            Section {
+                ForEach(AppUpdateSource.allCases.filter { [.sparkle, .github, .electron, .homebrew].contains($0) }, id: \.self) { source in
+                    Toggle("Hide updates from \(source.title)", isOn: Binding(get: { inventory.ignoredSources.contains(source.rawValue) }, set: { on in if on { inventory.ignoredSources.insert(source.rawValue) } else { inventory.ignoredSources.remove(source.rawValue) } }))
+                }
+            } header: { Text("By source") }
             if let note = inventory.updateNote { Section { Text(note).font(.callout).foregroundStyle(.secondary) } }
             if !inventory.ignoredUpdates.isEmpty {
                 Section("Ignored") {
@@ -332,6 +431,8 @@ extension RemoveSheet {
 /// The preview before an app is removed: the app and every file found for it, each with a tick.
 struct RemoveSheet: View {
     let app: InstalledApp
+    /// Keeps the app and moves only its saved data and settings to the Trash.
+    var resetOnly = false
     let onDone: ([String]) -> Void
     @EnvironmentObject private var inventory: AppInventory
     @State private var items: [Leftover] = []
@@ -344,15 +445,17 @@ struct RemoveSheet: View {
             HStack(spacing: 12) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path)).resizable().frame(width: 44, height: 44)
                 VStack(alignment: .leading) {
-                    Text("Remove “\(app.name)”").font(.headline)
-                    Text("Everything ticked goes to the Trash, so you can put it back.").font(.callout).foregroundStyle(.secondary)
+                    Text(resetOnly ? "Reset “\(app.name)”" : "Remove “\(app.name)”").font(.headline)
+                    Text(resetOnly ? "The app stays. Its ticked saved data goes to the Trash, so it starts fresh next time and you can put it back." : "Everything ticked goes to the Trash, so you can put it back.").font(.callout).foregroundStyle(.secondary)
                 }
             }
             .padding(16)
             Divider()
             List {
-                Section("The app") {
-                    Text(app.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                if !resetOnly {
+                    Section("The app") {
+                        Text(app.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                    }
                 }
                 Section(loaded ? "Files it left in your Library (\(items.count))" : "Looking for its files…") {
                     ForEach(items) { item in
@@ -362,6 +465,7 @@ struct RemoveSheet: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(item.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")).lineLimit(1).truncationMode(.middle)
                                 if item.needsAdmin { Text("Outside your Library: kept, remove it yourself if you want it gone").font(.caption).foregroundStyle(.secondary) }
+                                else { Text(item.evidence.title + (item.evidence.preselected ? "" : " — not ticked, check it is really this app's")).font(.caption).foregroundStyle(item.evidence.preselected ? Color.secondary : Color.orange) }
                             }
                             Spacer()
                             Text(ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
@@ -376,14 +480,14 @@ struct RemoveSheet: View {
             }
             .padding(.horizontal, 12).padding(.top, 8)
             HStack {
-                Text("\(chosen.count) file\(chosen.count == 1 ? "" : "s") + the app").font(.caption).foregroundStyle(.secondary)
+                Text("\(chosen.count) file\(chosen.count == 1 ? "" : "s")\(resetOnly ? "" : " + the app")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { onDone(["Nothing was removed."]) }.keyboardShortcut(.cancelAction)
-                Button("Move to Trash", role: .destructive) {
+                Button(resetOnly ? "Reset App Data" : "Move to Trash", role: .destructive) {
                     let picked = items.filter { chosen.contains($0.id) }
                     var notes: [String] = []
                     if keepZip { notes += Self.archive(app: app, leftovers: picked) }
-                    onDone(notes + inventory.trash(app: app, leftovers: picked))
+                    onDone(notes + inventory.trash(app: resetOnly ? nil : app, leftovers: picked))
                 }
                 .keyboardShortcut(.defaultAction)
             }
@@ -395,7 +499,8 @@ struct RemoveSheet: View {
                 let found = inventory.leftovers(for: app)
                 DispatchQueue.main.async {
                     items = found
-                    chosen = Set(found.filter { !$0.needsAdmin }.map(\.id))
+                    // Only exact bundle-identifier matches start ticked; a name match is shown but left for the person to decide.
+                    chosen = Set(found.filter { !$0.needsAdmin && $0.evidence.preselected }.map(\.id))
                     loaded = true
                 }
             }

@@ -56,7 +56,10 @@ final class ClipboardMonitor {
         applyRules(to: board, source: source, types: types)
         guard let clip = Self.read(board, source: source, config: config) else { return }
         queue.async { [store, onRecorded] in
-            if store.record(clip) != nil { DispatchQueue.main.async { store.refreshStats(); onRecorded() } }
+            if let outcome = store.record(clip) {
+                DispatchQueue.main.async { store.refreshStats(); onRecorded() }
+                ClipboardExtras.afterRecord(outcome, clip: clip, store: store)
+            }
         }
     }
 
@@ -145,17 +148,51 @@ final class ClipboardPaster {
         return ok
     }
 
-    /// Chooses an item: copies it, and pastes it if Kriya may.
-    func choose(_ item: ClipItem, plain: Bool) {
+    /// Chooses an item: copies it, and pastes it if Kriya may. `once` (or the setting, for a secret) removes it from the history
+    /// and the clipboard a moment after it is pasted.
+    func choose(_ item: ClipItem, plain: Bool, once: Bool = false) {
         guard put(item, plain: plain) else {
             toast.show("That item could not be copied.", isError: true)
             return
         }
         store.markUsed(item.id)
+        if once || (item.sensitive && ClipExtraSettings.deleteSecretsAfterPaste) { removeAfterPaste(item) }
         if store.currentConfig.autoPaste, AXIsProcessTrusted() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { Self.sendPaste() }
         } else {
             toast.show(store.currentConfig.autoPaste ? "Copied. Allow Accessibility to paste automatically." : "Copied. Press ⌘V to paste.")
+        }
+    }
+
+    /// Takes a pasted item out of the history, and off the clipboard if nothing else has been copied since.
+    private func removeAfterPaste(_ item: ClipItem) {
+        let board = NSPasteboard.general
+        let count = board.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [store, monitor] in
+            store.delete(item.id)
+            ClipLifetimes.shared.cancel(item.id)
+            if board.changeCount == count {
+                board.clearContents()
+                monitor.ignore(changeCount: board.changeCount)
+            }
+        }
+    }
+
+    /// Pastes a picture as PNG or JPEG, whatever it was copied as.
+    func pasteImage(_ item: ClipItem, as format: ClipImageTools.Format) {
+        guard let data = store.blob(item.id)?.image, let converted = ClipImageTools.convert(data, to: format) else {
+            toast.show("That picture could not be converted.", isError: true)
+            return
+        }
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setData(converted, forType: format == .png ? .png : NSPasteboard.PasteboardType("public.jpeg"))
+        monitor.ignore(changeCount: board.changeCount)
+        store.markUsed(item.id)
+        if store.currentConfig.autoPaste, AXIsProcessTrusted() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { Self.sendPaste() }
+        } else {
+            toast.show("Copied as \(format == .png ? "PNG" : "JPEG"). Press ⌘V to paste.")
         }
     }
 
@@ -244,6 +281,7 @@ final class ClipboardService: ObservableObject {
     @Published private(set) var isRunning = false
     private var hotkeys: HotkeyCenter?
     private var cleanupTimer: Timer?
+    private var minuteTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
     init(store: ClipboardStore) {
@@ -261,6 +299,16 @@ final class ClipboardService: ObservableObject {
         let timer = Timer(timeInterval: 3600, repeats: true) { [store] _ in store.cleanup() }
         RunLoop.main.add(timer, forMode: .common)
         cleanupTimer = timer
+        // Once a minute: remove what has expired, end a timed pause, and read the words in newly copied pictures.
+        let minute = Timer(timeInterval: 60, repeats: true) { [store] _ in
+            ClipLifetimes.shared.sweep(store: store)
+            ClipPauseController.resumeIfDue(store: store)
+            ClipOCRIndexer.run(store: store)
+        }
+        RunLoop.main.add(minute, forMode: .common)
+        minuteTimer = minute
+        ClipPauseController.resumeIfDue(store: store)
+        ClipOCRIndexer.run(store: store)
         hotkeys = HotkeyCenter(owner: "Clipboard") { [weak self] command in self?.fire(command) }
         store.$config
             .receive(on: DispatchQueue.main)
@@ -275,6 +323,8 @@ final class ClipboardService: ObservableObject {
         monitor.stop()
         cleanupTimer?.invalidate()
         cleanupTimer = nil
+        minuteTimer?.invalidate()
+        minuteTimer = nil
         cancellables.removeAll()
         hotkeys?.unregisterAll()
         hotkeys = nil

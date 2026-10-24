@@ -104,6 +104,17 @@ extension ClipboardPaster {
             event.post(tap: .cghidEventTap)
         }
     }
+
+    /// Presses ⌘Z in the app in front: the way back from a replacement the bar made.
+    static func sendUndo() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: 6, keyDown: down) else { continue }
+            event.flags = .maskCommand
+            event.setIntegerValueField(.eventSourceUserData, value: EventMonitor.syntheticMarker)
+            event.post(tap: .cghidEventTap)
+        }
+    }
 }
 
 /// Carries out a selection action.
@@ -181,6 +192,21 @@ final class SelectionActionRunner {
             runShortcut(name, replace, snapshot)
         case .workflow(let id):
             runWorkflow(id, snapshot.text)
+        case .copyHtml:
+            let html = textToHtml(text: snapshot.text)
+            let board = NSPasteboard.general
+            board.clearContents()
+            board.setString(html, forType: .html)
+            board.setString(html, forType: .string)
+            toast.show("Copied as HTML")
+        case .revealPath:
+            if let url = Self.fileURL(from: snapshot.text), FileManager.default.fileExists(atPath: url.path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            else { toast.show("That path does not exist.", isError: true) }
+        case .openInTerminal:
+            openTerminal(at: snapshot.text)
+        case .sendToShelf:
+            sendToShelf(snapshot.text)
+            toast.show("Put on the shelf")
         case .intelligence(let task):
             // The text is not logged, and not sent anywhere but the model on this Mac. An app can report only part of a
             // selection when the bar first appears, so it is read again now, and the fuller reading is used.
@@ -210,13 +236,35 @@ final class SelectionActionRunner {
 
     // MARK: Pieces
 
-    /// "12 words · 68 characters · 3 lines"
+    /// "12 words · 68 characters · 3 lines", and for a longer text how long it takes to read.
     static func counts(_ text: String) -> String {
         let words = text.split(whereSeparator: \.isWhitespace).count
         let lines = text.isEmpty ? 0 : text.components(separatedBy: .newlines).count
         func plural(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
-        return [plural(words, "word"), plural(text.count, "character"), plural(lines, "line")].joined(separator: " · ")
+        var parts = [plural(words, "word"), plural(text.count, "character"), plural(lines, "line")]
+        if words >= 110 { parts.append("\(max(1, Int((Double(words) / 220).rounded()))) min read") }
+        return parts.joined(separator: " · ")
     }
+
+    /// A path typed in text, as a file address: `~` is the home folder, and a `file://` address is read as one.
+    static func fileURL(from text: String) -> URL? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.hasPrefix("file://") { return URL(string: t) }
+        guard t.hasPrefix("/") || t.hasPrefix("~") else { return nil }
+        return URL(fileURLWithPath: (t as NSString).expandingTildeInPath)
+    }
+
+    /// Opens a terminal in the folder (or the folder holding the file) the text names.
+    private func openTerminal(at text: String) {
+        guard let url = Self.fileURL(from: text), FileManager.default.fileExists(atPath: url.path) else { toast.show("That path does not exist.", isError: true); return }
+        let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        let folder = isFolder ? url : url.deletingLastPathComponent()
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
+        NSWorkspace.shared.open([folder], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    /// Puts text on the file shelf. Set by the app.
+    var sendToShelf: (String) -> Void = { _ in }
 
     /// Opens the system share menu next to the pointer.
     private func share(_ text: String, near pointer: CGPoint) {
@@ -329,6 +377,13 @@ final class SelectionActionRunner {
             } else if !replace(snapshot, with: result) {
                 toast.show("This app would not take the change. Result copied instead.", isError: true)
                 copyToClipboard(result)
+            } else if result != snapshot.text {
+                // What changed, with a way back: the app's own Undo (⌘Z), or the original on the clipboard.
+                ReplacementPeek.shared.show(original: snapshot.text, result: result, title: ops.first.map { textOpTitle(op: $0) } ?? "Replaced") { [weak self] in
+                    ClipboardPaster.sendUndo()
+                    self?.toast.show("Undone with ⌘Z. The original is also on the clipboard.")
+                    self?.copyToClipboard(snapshot.text)
+                }
             }
         } catch {
             toast.show(error.userMessage, isError: true)

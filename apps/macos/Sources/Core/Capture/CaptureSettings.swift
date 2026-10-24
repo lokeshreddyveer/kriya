@@ -55,6 +55,8 @@ enum CaptureAction: String, CaseIterable, Identifiable, Codable {
     case mirror
     /// A capture of the whole screen after a countdown, so a menu can be opened first. It opens in the editor to be cropped.
     case menu
+    /// Read the text and copy it as one paragraph (no line breaks), as Markdown paragraphs, or a table as CSV.
+    case textJoined, textMarkdown, textTable
     var id: String { rawValue }
 }
 
@@ -94,6 +96,9 @@ struct CaptureSettings: Codable, Equatable {
         ("capture.window", "Capture a window", .window, .normal),
         ("capture.screen", "Capture the whole screen", .screen, .normal),
         ("capture.text", "Copy text from a region (OCR)", .region, .text),
+        ("capture.text.joined", "Copy text from a region as one paragraph (OCR)", .region, .textJoined),
+        ("capture.text.markdown", "Copy text from a region as Markdown paragraphs (OCR)", .region, .textMarkdown),
+        ("capture.table", "Copy a table from a region as CSV (OCR)", .region, .textTable),
         ("capture.redacted", "Capture a region and hide private text", .region, .redacted),
         ("capture.qr", "Read a QR code from a region", .region, .qr),
         ("capture.area", "Capture an area (and remember it)", .region, .area),

@@ -22,7 +22,7 @@ extension TextOp {
 }
 
 extension SelectionTarget {
-    static var all: [SelectionTarget] { [.anything, .editableOnly, .readOnlyOnly, .containsUrl, .multipleLines, .looksLikeJson] }
+    static var all: [SelectionTarget] { [.anything, .editableOnly, .readOnlyOnly, .containsUrl, .multipleLines, .looksLikeJson, .looksLikePath, .containsEmail] }
 
     var title: String {
         switch self {
@@ -32,6 +32,8 @@ extension SelectionTarget {
         case .containsUrl: return "Only when it has a link"
         case .multipleLines: return "Only several lines"
         case .looksLikeJson: return "Only when it looks like JSON"
+        case .looksLikePath: return "Only when it is a file path"
+        case .containsEmail: return "Only when it has an email address"
         }
     }
 }
@@ -72,6 +74,10 @@ extension SelectionActionKind {
         case .shortcut(let name, _): return "Shortcut “\(name)”"
         case .workflow: return "Run a workflow"
         case .intelligence(let task): return "Apple Intelligence: " + intelligenceTitle(task: task).lowercased()
+        case .copyHtml: return "Copy the selection as HTML"
+        case .revealPath: return "Show the selected path in Finder"
+        case .openInTerminal: return "Open a terminal in the selected folder"
+        case .sendToShelf: return "Put the text on the file shelf"
         }
     }
 }

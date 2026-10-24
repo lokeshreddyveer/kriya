@@ -53,7 +53,8 @@ enum Redaction {
             for word in text.split(whereSeparator: \.isWhitespace) {
                 guard let range = text.range(of: word, range: searchStart..<text.endIndex) else { continue }
                 searchStart = range.upperBound
-                if word.count >= 16, clipLooksSensitive(text: String(word)) { found.append(NSRange(range, in: text)) }
+                // Judged by the clipboard's rules, and by the shapes of known keys (AWS, GitHub, Slack, Stripe, JWT, card numbers).
+                if (word.count >= 16 && clipLooksSensitive(text: String(word))) || (word.count >= 8 && ClipSecrets.classify(String(word)) != nil) { found.append(NSRange(range, in: text)) }
             }
         }
         for extra in options.extraWords.map({ $0.trimmingCharacters(in: .whitespaces) }) where extra.count >= 2 {

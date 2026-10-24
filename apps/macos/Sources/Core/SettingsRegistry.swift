@@ -57,12 +57,12 @@ enum SettingsRegistry {
         s("placeRules.v1", "sound"), s("placeRules.enabled", "sound"), s("appAudio.profiles.v1", "sound"), s("appAudio.settings.v1", "sound"),
         s("soundMenuBar.enabled", "sound", .live), s("volumeKeys.enabled", "sound"),
         s("appAudio.favorites.v1", "sound"), s("appAudio.excluded.v1", "sound"), s("appAudio.recentMinutes", "sound"), s("soundQuickConfigs.v1", "sound"),
-        s("soundDeviceNames.v1", "sound"), s("soundFavoritePlugins.v1", "sound"), s("appAudio.menuBarApps.v1", "sound"), s("soundMenuBar.showVolume", "sound", .live), s("soundMenuBar.showDevice", "sound", .live), s("soundMenuBar.iconStyle", "sound", .live), s("soundMixer.compact", "sound", .live), s("soundVolumeFeedback", "sound", .live), s("soundTimedFadeSeconds", "sound", .live), h("soundAlerts.v1", "sound"),
+        s("soundDeviceNames.v1", "sound"), s("soundFavoritePlugins.v1", "sound"), s("appAudio.menuBarApps.v1", "sound"), s("appAudio.boost.v1", "sound"), s("soundMenuBar.showVolume", "sound", .live), s("soundMenuBar.showDevice", "sound", .live), s("soundMenuBar.iconStyle", "sound", .live), s("soundMixer.compact", "sound", .live), s("soundVolumeFeedback", "sound", .live), s("soundTimedFadeSeconds", "sound", .live), h("soundAlerts.v1", "sound"),
         h("soundDeviceHistory.v1", "sound"), m("soundSnapshot.v1", "sound"), m("soundSnapshotTime.v1", "sound"),
         // Speech
         s("speech.pitch", "speech"), s("speech.rate", "speech"), s("speech.voice", "speech"), s("dictation.language", "speech"), a("dictation.allowServer", "speech"),
         // Finder and dialogs. Folder rules and sets act on files by themselves, so they are not restored from a file.
-        a("folderRules.v1", "finder"), a("folderSets.v1", "finder"), s("finder.destinations.v1", "finder"), h("finder.fileOperations.v1", "finder"),
+        a("folderRules.v1", "finder"), a("folderSets.v1", "finder"), s("finderTagPresets.v1", "finder"), s("finderProfiles.v1", "finder"),s("finder.destinations.v1", "finder"), h("finder.fileOperations.v1", "finder"),
         h("finderWindows.history.v1", "finder"), s("finderWindows.enabled", "finder"), s("dialogAppFolders.v1", "finder"), s("dialogAutoJump", "finder"),
         m("folderRules.paused", "finder"), m("finder.lastTidy", "finder"), m("finderRequestToken"),
         // Capture
@@ -83,7 +83,7 @@ enum SettingsRegistry {
         a("extensions.enabled.v1", nil), a("extensions.trusted.v1", nil), a("localOnlyMode", nil),
         // Activity and updates
         h("auditLog.v1", "activity"), h("appUpgradeHistory.v1", "activity"), h("appUpdateHistory.v1", "activity"), h("appUpdateRetry.v1", "activity"),
-        h("featureActivity.v1", nil), h("evidenceLedger.v1", nil), s("ignoredAppUpdates", nil), a("installKriyaUpdatesAutomatically", nil),
+        h("featureActivity.v1", nil), h("evidenceLedger.v1", nil), s("ignoredAppUpdates", nil), s("appBackupBeforeUpgrade", nil), s("selection.pinned.v1", "selection"), s("selection.rankByContext", "selection"), s("selection.showReplacement", "selection"),s("capture.upload.v1", "capture"), s("capture.quickAccess.v1", "capture"),s("capture.hideWhenSharing", "capture"), s("capture.format", "capture"), s("capture.keepOriginal", "capture"), s("capture.beautify.v1", "capture"), s("capture.excludedApps.v1", "capture"),s("clipboard.hideWhenSharing", "clipboard"), s("clipboard.ocrImages", "clipboard"), s("clipboard.deleteSecretsAfterPaste", "clipboard"), h("clipboard.expiry.v1", "clipboard"), m("clipboard.pausedUntil", "clipboard"),s("appPinnedUpdates.v1", nil), s("appIgnoredSources.v1", nil), a("installKriyaUpdatesAutomatically", nil),
         a("upgradeHomebrewAppsAutomatically", nil), m("permissionNotices"), s("featureTimings.enabled", nil),
         // Timelines
         h("deviceTimeline.v1", "timelines"), h("displayHistory.v1", "timelines"),

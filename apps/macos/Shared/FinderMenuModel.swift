@@ -11,6 +11,26 @@ struct FinderMenuFile: Codable, Equatable {
     /// What a submenu holds, when an action offers a choice instead of acting at once.
     enum Submenu: String, Codable {
         case templates, folderTemplates, favoriteApps, conversions
+        case pathFormats, ides, folderSetsMove, folderSetsCopy, quickTags, inspect
+    }
+
+    /// The choices of the newer submenus. Optional so a menu file written by an older app still reads.
+    struct Extras: Codable, Equatable {
+        var pathFormats: [Named] = []
+        var ides: [Named] = []
+        /// Each destination of each saved folder set: the id is the folder's full path, the title is "Set › Folder".
+        var folderSets: [Named] = []
+        var quickTags: [Named] = []
+        var inspections: [Named] = []
+    }
+
+    /// Actions that only show in some places: `itemIDs` appear only where the current folder is inside one of `folders`.
+    /// An action in no profile shows everywhere; an empty `folders` list means everywhere for that profile.
+    struct Profile: Codable, Equatable, Identifiable {
+        var id: String
+        var name: String
+        var folders: [String] = []
+        var itemIDs: [String] = []
     }
 
     struct Item: Codable, Equatable {
@@ -33,6 +53,8 @@ struct FinderMenuFile: Codable, Equatable {
     var favoriteApps: [Named]
     /// Formats each file extension can be converted to.
     var conversions: [String: [Named]]
+    var extras: Extras? = nil
+    var profiles: [Profile]? = nil
 
     static let archiveExtensions: Set<String> = ["zip", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "7z", "rar", "cpgz"]
 
@@ -45,12 +67,32 @@ struct FinderMenuFile: Codable, Equatable {
         var extensions: [String]
         /// A right-click on the empty space of a folder window.
         var isBackground: Bool
+        /// The folder being looked at (the folder itself, or the one holding the selection), for profiles.
+        var folder: String? = nil
 
         var files: Int { count - folders }
         var allArchives: Bool { count > 0 && folders == 0 && extensions.allSatisfy { FinderMenuFile.archiveExtensions.contains($0) } }
     }
 
+    /// Whether the profiles let `id` show for the folder being looked at. An action no profile names is never limited.
+    func profileAllows(_ id: String, folder: String?) -> Bool {
+        let owners = (profiles ?? []).filter { $0.itemIDs.contains(id) }
+        guard !owners.isEmpty else { return true }
+        return owners.contains { profile in
+            if profile.folders.isEmpty { return true }
+            guard let folder else { return false }
+            return profile.folders.contains { Self.isInside(folder, $0) }
+        }
+    }
+
+    /// True when `path` is `folder` or inside it, by whole path pieces (so `/a/bc` is not inside `/a/b`).
+    static func isInside(_ path: String, _ folder: String) -> Bool {
+        let p = path.split(separator: "/"), f = folder.split(separator: "/")
+        return p.count >= f.count && Array(p.prefix(f.count)) == f
+    }
+
     func applies(_ item: Item, to selection: Selection) -> Bool {
+        guard profileAllows(item.id, folder: selection.folder) else { return false }
         if selection.isBackground {
             return item.applies == "folder_background" || item.applies == "anything"
         }
@@ -91,6 +133,11 @@ struct FinderMenuFile: Codable, Equatable {
         case .folderTemplates?: return folderTemplates
         case .favoriteApps?: return favoriteApps
         case .conversions?: return conversionTargets(for: selection)
+        case .pathFormats?: return extras?.pathFormats ?? []
+        case .ides?: return extras?.ides ?? []
+        case .folderSetsMove?, .folderSetsCopy?: return extras?.folderSets ?? []
+        case .quickTags?: return extras?.quickTags ?? []
+        case .inspect?: return extras?.inspections ?? []
         }
     }
 

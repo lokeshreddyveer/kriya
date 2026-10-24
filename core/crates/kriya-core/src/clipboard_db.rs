@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clipboard::{
     clean_tags, content_hash, looks_sensitive, make_preview, make_search_text, should_skip,
-    ClipConfig, ClipKind, ClipSkipReason, NewClip,
+    ClipConfig, ClipKind, ClipSkipReason, NewClip, MAX_SEARCH_CHARS,
 };
 use crate::error::CoreError;
 use crate::store::Store;
@@ -20,6 +20,8 @@ use rusqlite::types::Value;
 type MaybeBytes = Option<Vec<u8>>;
 
 /// What a locked item shows in place of its text.
+/// Written into a picture's search text once its words have been read, so it is not read twice.
+const OCR_MARK: &str = "\nocr-indexed";
 const LOCKED_PREVIEW: &str = "Locked: the encryption key is not available";
 
 const MAX_SNIPPET_BYTES: usize = 1024 * 1024;
@@ -983,6 +985,66 @@ impl ClipStore {
         )
     }
 
+    /// Adds the words read out of a copied picture (by the app's own text recognizer) to what search matches, and marks the
+    /// picture as read so it is not read again. The text is stored the same way as the rest of the item: sealed when history
+    /// is encrypted.
+    pub fn add_search_text(&self, id: &str, text: &str) -> Result<(), CoreError> {
+        self.ensure_writable()?;
+        let stored: Option<String> = self
+            .conn()
+            .query_row(
+                "SELECT search_text FROM clips WHERE id = ?1 AND kind = 'image'",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(stored) = stored else {
+            return Err(CoreError::NotFound);
+        };
+        let current = self
+            .open_text_col(&stored, id, "search")
+            .unwrap_or_default();
+        if current.contains(OCR_MARK) {
+            return Ok(());
+        }
+        let words: String = text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        let combined: String = format!("{current}{OCR_MARK}\n{words}")
+            .chars()
+            .take(MAX_SEARCH_CHARS)
+            .collect();
+        self.change(
+            id,
+            "UPDATE clips SET search_text = ?2 WHERE id = ?1",
+            params![id, self.seal_text_col(&combined, id, "search")],
+        )
+    }
+
+    /// Ids of the newest pictures whose text has not been read yet.
+    pub fn images_without_text(&self, limit: u32) -> Result<Vec<String>, CoreError> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, search_text FROM clips WHERE kind = 'image' ORDER BY created_at DESC LIMIT 500",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows
+            .into_iter()
+            .filter(|(id, text)| {
+                !self
+                    .open_text_col(text, id, "search")
+                    .unwrap_or_default()
+                    .contains(OCR_MARK)
+            })
+            .map(|(id, _)| id)
+            .take(limit.clamp(1, 50) as usize)
+            .collect())
+    }
+
     pub fn set_title(&self, id: &str, title: Option<String>) -> Result<(), CoreError> {
         let title = clean_title(title)?;
         self.ensure_writable()?;
@@ -1729,6 +1791,61 @@ mod tests {
         s.vault_disable().unwrap();
         check(&s);
         assert_eq!(find(&s, "hidden").len(), 1);
+    }
+
+    #[test]
+    fn words_read_from_a_picture_are_searchable_sealed_and_read_only_once() {
+        let s = vault_store();
+        let image = NewClip {
+            image: Some(vec![137, 80, 78, 71, 9]),
+            image_format: Some("png".into()),
+            image_width: Some(2),
+            image_height: Some(2),
+            ..NewClip::default()
+        };
+        let id = s.record(image, 1, &cfg()).unwrap().id.unwrap();
+        let note = NewClip {
+            text: Some("plain note".into()),
+            ..NewClip::default()
+        };
+        let note_id = s.record(note, 2, &cfg()).unwrap().id.unwrap();
+        assert_eq!(s.images_without_text(10).unwrap(), vec![id.clone()]);
+        assert!(find(&s, "invoice").is_empty());
+        s.add_search_text(&id, "Invoice  TOTAL\n 42.00").unwrap();
+        assert_eq!(
+            find(&s, "invoice").len(),
+            1,
+            "found by a word inside the picture"
+        );
+        assert_eq!(find(&s, "total 42.00").len(), 1);
+        assert!(
+            s.images_without_text(10).unwrap().is_empty(),
+            "marked as read"
+        );
+        let raw: String = s
+            .conn()
+            .query_row(
+                "SELECT search_text FROM clips WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            !raw.contains("invoice"),
+            "stored sealed, not as plain words"
+        );
+        s.add_search_text(&id, "something else").unwrap();
+        assert!(find(&s, "something").is_empty(), "a picture is read once");
+        assert!(
+            s.add_search_text(&note_id, "x").is_err(),
+            "only pictures take read text"
+        );
+        s.vault_disable().unwrap();
+        assert_eq!(
+            find(&s, "invoice").len(),
+            1,
+            "still found after history is no longer encrypted"
+        );
     }
 
     #[test]

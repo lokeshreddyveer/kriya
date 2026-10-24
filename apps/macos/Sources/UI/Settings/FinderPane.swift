@@ -11,7 +11,7 @@ struct FinderPane: View {
     @State private var confirmReset = false
 
     enum Tab: String, CaseIterable, Identifiable {
-        case actions = "Actions", templates = "Templates", apps = "Apps", pointer = "Pointer Menu", setup = "Setup"
+        case actions = "Actions", templates = "Templates", menus = "Menus", apps = "Apps", pointer = "Pointer Menu", setup = "Setup"
         var id: String { rawValue }
     }
 
@@ -29,7 +29,7 @@ struct FinderPane: View {
             }
             HStack {
                 Picker("", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }
-                    .paneTabBar(maxWidth: 500)
+                    .paneTabBar(maxWidth: 580)
                 Menu {
                     Button("Add Common Actions (editor, hidden files, parent folder)") { store.addSuggested() }
                     Divider()
@@ -43,6 +43,7 @@ struct FinderPane: View {
                 switch tab {
                 case .actions: ActionsTab(history: finder.runner.history, runner: finder.runner)
                 case .templates: TemplatesTab()
+                case .menus: FinderMenusTab()
                 case .apps: AppsSettingsTab()
                 case .pointer: PointerMenuTab()
                 case .setup: SetupTab()
@@ -364,6 +365,7 @@ private struct TemplatesTab: View {
                 HStack {
                     Text("File templates")
                     Spacer()
+                    Button { store.addStarterTemplates() } label: { Label("Add Starter Types", systemImage: "doc.badge.plus") }.controlSize(.small).help("JSON, CSV, YAML, Python, JavaScript, TypeScript, Swift, SQL, CSS and Markdown with front matter")
                     Button { editingFile = FileTemplate(id: UUID().uuidString, name: "", fileName: "untitled.txt", content: "", sourcePath: nil) } label: { Label("New", systemImage: "plus") }.controlSize(.small)
                 }
             } footer: { Text("Used by “New File from Template”. A template writes the text you give it, or copies a file you choose.") }

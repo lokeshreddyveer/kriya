@@ -777,6 +777,18 @@ pub fn text_find_urls(text: String) -> Vec<String> {
     text_tools::find_urls(&text)
 }
 
+/// The text as HTML paragraphs, escaped.
+#[uniffi::export]
+pub fn text_to_html(text: String) -> String {
+    text_tools::text_to_html(&text)
+}
+
+/// Whether the text is one line that reads as a file path.
+#[uniffi::export]
+pub fn selection_looks_like_path(text: String) -> bool {
+    selection::looks_like_path(&text)
+}
+
 #[uniffi::export]
 pub fn selection_translate_url(
     provider: TranslateProvider,
@@ -1600,6 +1612,16 @@ impl KriyaCore {
 
     pub fn clip_set_title(&self, id: String, title: Option<String>) -> Result<(), CoreError> {
         self.clips.set_title(&id, title)
+    }
+
+    /// Adds the words read from a copied picture to what search matches (once per picture).
+    pub fn clip_add_search_text(&self, id: String, text: String) -> Result<(), CoreError> {
+        self.clips.add_search_text(&id, &text)
+    }
+
+    /// The newest copied pictures whose words have not been read yet.
+    pub fn clip_images_without_text(&self, limit: u32) -> Result<Vec<String>, CoreError> {
+        self.clips.images_without_text(limit)
     }
 
     pub fn clip_set_tags(&self, id: String, tags: Vec<String>) -> Result<(), CoreError> {

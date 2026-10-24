@@ -52,19 +52,33 @@ final class StorageScanner: ObservableObject {
         }
     }
 
-    /// Bytes used by a folder, from `du`. Nil if it cannot be read (macOS asks before some folders; then it is skipped).
-    static func size(of url: URL) -> Int64? {
+    /// Bytes used by a folder, from `du` (not crossing into other volumes, so a network share inside it is not walked). Nil if it
+    /// cannot be read (macOS asks before some folders; then it is skipped) or if it takes longer than `timeout` seconds.
+    static func size(of url: URL, timeout: TimeInterval = 90) -> Int64? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/du")
-        task.arguments = ["-sk", url.path]
+        task.arguments = ["-skx", url.path]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
         guard (try? task.run()) != nil else { return nil }
+        // A folder that never finishes (a stuck cloud folder, a huge tree) is given up on instead of holding everything else.
+        let stop = DispatchWorkItem { if task.isRunning { task.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: stop)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
-        guard let kilobytes = String(decoding: data, as: UTF8.self).split(whereSeparator: { $0 == "\t" || $0 == " " }).first.flatMap({ Int64($0) }) else { return nil }
+        stop.cancel()
+        guard task.terminationReason == .exit,
+              let kilobytes = String(decoding: data, as: UTF8.self).split(whereSeparator: { $0 == "\t" || $0 == " " }).first.flatMap({ Int64($0) }) else { return nil }
         return kilobytes * 1024
+    }
+
+    /// Places whose contents live somewhere else (iCloud Drive, other cloud services, mounted volumes): measuring them can take
+    /// minutes and reads files that are not on this Mac, so the map does not.
+    static func isRemoteOrCloud(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        return path.contains("/library/cloudstorage") || path.contains("/library/mobile documents") || path.hasPrefix("/volumes")
+            || path.hasSuffix("/library/group containers/group.com.apple.cloudstorage") || path.contains("/library/application support/fileprovider")
     }
 
     func emptyTrash() {

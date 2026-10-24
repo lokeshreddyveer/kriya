@@ -52,6 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appSoundItems = AppSoundStatusItems(engine: env.appAudio, mixer: env.soundMixer, quick: env.quickConfigs)
         monitorItem = MonitorStatusItem(monitor: env.systemMonitor, openSettings: { [weak self] in self?.showSettings(.system) })
 
+        env.capture.openSettings = { [weak self] in self?.showSettings(.capture) }
+        env.capture.openHistory = { [weak self] in self?.showSettings(.capture) }
         env.keyboard.palette.openSettings = { [weak self] pane in self?.showSettings(pane) }
         env.launcherSources?.openSettings = { [weak self] pane in self?.showSettings(pane) }
         env.keyboard.palette.toggleFeature = { feature, on in env.services.setFeature(feature, enabled: on) }

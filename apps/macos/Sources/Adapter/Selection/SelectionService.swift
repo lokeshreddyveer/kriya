@@ -251,14 +251,28 @@ private struct ToolbarView: View {
             if !overflow.isEmpty {
                 Rectangle().fill(Color.primary.opacity(0.16)).frame(width: 1, height: button * 0.5).padding(.horizontal, 2)
                 Menu {
-                    ForEach(overflow) { entry in
-                        switch entry {
-                        case .single(let action):
-                            Button { onChoose(action) } label: { Label(action.title, systemImage: action.symbol.isEmpty ? "star" : action.symbol) }
-                        case .group(let name, let members):
-                            Menu(name) {
-                                ForEach(members) { action in
+                    // A long overflow is sorted under headings (Transform, Search, Share, Developer, AI, Apps) so it can be scanned.
+                    let flatActions: [SelectionAction] = overflow.flatMap { entry -> [SelectionAction] in
+                        switch entry { case .single(let a): return [a]; case .group(_, let members): return members }
+                    }
+                    if flatActions.count >= 6 {
+                        ForEach(SelectionRanking.grouped(flatActions), id: \.title) { section in
+                            Menu(section.title) {
+                                ForEach(section.actions) { action in
                                     Button { onChoose(action) } label: { Label(action.title, systemImage: action.symbol.isEmpty ? "star" : action.symbol) }
+                                }
+                            }
+                        }
+                    } else {
+                        ForEach(overflow) { entry in
+                            switch entry {
+                            case .single(let action):
+                                Button { onChoose(action) } label: { Label(action.title, systemImage: action.symbol.isEmpty ? "star" : action.symbol) }
+                            case .group(let name, let members):
+                                Menu(name) {
+                                    ForEach(members) { action in
+                                        Button { onChoose(action) } label: { Label(action.title, systemImage: action.symbol.isEmpty ? "star" : action.symbol) }
+                                    }
                                 }
                             }
                         }
@@ -525,8 +539,14 @@ final class SelectionService: ObservableObject {
         let keyboard = openInKeyboardNext
         openInKeyboardNext = false
         let (actions, config) = store.current
-        let chosen = ids.compactMap { id in actions.first { $0.id == id } }.filter(isOffered)
+        var chosen = ids.compactMap { id in actions.first { $0.id == id } }.filter(isOffered)
         guard !chosen.isEmpty else { return }
+        // What fits the selection comes first, then what the person uses and has pinned (turn it off in Settings › Selection Bar).
+        if SelectionPins.rankByContext {
+            var usage: [String: Int] = [:]
+            for entry in UsageLogStore.selection.log.entries { usage[entry.title, default: 0] += 1 }
+            chosen = SelectionRanking.rank(chosen, signals: .init(context: .detect(snapshot.text), editable: snapshot.editable, usage: usage, pinned: Set(SelectionPins.pinned)))
+        }
         self.snapshot = snapshot
         lastProblem = nil
         toolbar.show(actions: chosen, config: config, anchor: snapshot.bounds, pointer: pointer) { [weak self] action in

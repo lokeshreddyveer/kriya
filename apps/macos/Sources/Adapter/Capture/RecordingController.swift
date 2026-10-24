@@ -15,6 +15,8 @@ final class RecordingController: ObservableObject {
 
     /// Called on the main thread once a recording has ended, either way. The capture service uses it to allow the next capture.
     var onEnd: () -> Void = {}
+    /// Called with the movie once it has been saved, so it can get a quick access card.
+    var onSaved: (URL) -> Void = { _ in }
 
     var isRecording: Bool { recorder.isActive }
 
@@ -58,7 +60,8 @@ final class RecordingController: ObservableObject {
         switch result {
         case .success(let url):
             toast.show("Recording saved as \(url.lastPathComponent)")
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            // With the card turned off for recordings, the file is shown in Finder instead.
+            if QuickAccessStore.settings.shows(recording: true) { onSaved(url) } else { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         case .failure(let error):
             toast.show(error.localizedDescription, isError: true)
         }
