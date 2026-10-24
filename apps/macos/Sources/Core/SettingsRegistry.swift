@@ -57,7 +57,7 @@ enum SettingsRegistry {
         s("placeRules.v1", "sound"), s("placeRules.enabled", "sound"), s("appAudio.profiles.v1", "sound"), s("appAudio.settings.v1", "sound"),
         s("soundMenuBar.enabled", "sound", .live), s("volumeKeys.enabled", "sound"),
         s("appAudio.favorites.v1", "sound"), s("appAudio.excluded.v1", "sound"), s("appAudio.recentMinutes", "sound"), s("soundQuickConfigs.v1", "sound"),
-        s("soundDeviceNames.v1", "sound"), s("soundFavoritePlugins.v1", "sound"), s("soundTimedFadeSeconds", "sound", .live), h("soundAlerts.v1", "sound"),
+        s("soundDeviceNames.v1", "sound"), s("soundFavoritePlugins.v1", "sound"), s("appAudio.menuBarApps.v1", "sound"), s("soundMenuBar.showVolume", "sound", .live), s("soundMenuBar.showDevice", "sound", .live), s("soundMenuBar.iconStyle", "sound", .live), s("soundMixer.compact", "sound", .live), s("soundVolumeFeedback", "sound", .live), s("soundTimedFadeSeconds", "sound", .live), h("soundAlerts.v1", "sound"),
         h("soundDeviceHistory.v1", "sound"), m("soundSnapshot.v1", "sound"), m("soundSnapshotTime.v1", "sound"),
         // Speech
         s("speech.pitch", "speech"), s("speech.rate", "speech"), s("speech.voice", "speech"), s("dictation.language", "speech"), a("dictation.allowServer", "speech"),

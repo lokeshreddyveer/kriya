@@ -63,8 +63,18 @@ final class SoundMixerModel: ObservableObject {
         }
     }
 
+    private var lastTick = Date.distantPast
+
+    /// A quiet tick as the volume moves, if the person asked for one (like the Mac's own volume feedback).
+    private func tick() {
+        guard UserDefaults.standard.bool(forKey: "soundVolumeFeedback"), Date().timeIntervalSince(lastTick) > 0.12 else { return }
+        lastTick = Date()
+        NSSound(named: "Tink")?.play()
+    }
+
     func setVolume(_ v: Double) {
         guard audio.setVolume(v, of: outputID) else { return }
+        tick()
         volume = v
         if muted { _ = audio.setMuted(false, device: outputID); muted = false }
     }

@@ -6,6 +6,11 @@ struct SoundPane: View {
     @EnvironmentObject private var engine: AppAudioEngine
     @EnvironmentObject private var mixer: SoundMixerModel
     @AppStorage(SoundStatusItem.enabledKey) private var menuBar = false
+    @AppStorage(SoundStatusItem.iconStyleKey) private var iconStyle = "speaker"
+    @AppStorage(SoundStatusItem.showVolumeKey) private var showVolume = false
+    @AppStorage(SoundStatusItem.showDeviceKey) private var showDevice = false
+    @AppStorage("soundMixer.compact") private var compact = false
+    @AppStorage("soundVolumeFeedback") private var feedback = false
     @State private var keys = VolumeKeys.isEnabled {
         didSet { VolumeKeys.isEnabled = keys }
     }
@@ -17,6 +22,15 @@ struct SoundPane: View {
             }
             Section {
                 Toggle("Show a speaker in the menu bar", isOn: $menuBar)
+                if menuBar {
+                    Picker("Icon", selection: $iconStyle) {
+                        Text("Speaker").tag("speaker"); Text("Waveform").tag("waveform"); Text("Match the macOS sound icon").tag("match")
+                    }
+                    Toggle("Show the volume beside it", isOn: $showVolume)
+                    Toggle("Show the output's name beside it", isOn: $showDevice)
+                }
+                Toggle("Compact mixer", isOn: $compact)
+                Toggle("Play a tick when the volume changes", isOn: $feedback)
                 Toggle("Keyboard volume keys work on outputs without a volume", isOn: $keys)
             } footer: { Text("Many monitors over HDMI or DisplayPort ignore the volume keys. With this on, the keys change Kriya’s “All sound” level instead, only while such an output is in use. Click the menu-bar speaker for this mixer; right-click it for outputs and mutes. Shortcuts has actions to set an app’s volume, mute an app, switch the output and set the Mac’s volume.") }
             SoundMixerContent()
@@ -89,6 +103,7 @@ struct SoundPane: View {
 
 /// The mixer itself, shared by the settings page and the menu-bar window.
 struct SoundMixerContent: View {
+    @AppStorage("soundMixer.compact") private var compact = false
     @EnvironmentObject private var engine: AppAudioEngine
     @EnvironmentObject private var mixer: SoundMixerModel
     @ObservedObject private var names = DeviceNames.shared
@@ -112,11 +127,11 @@ struct SoundMixerContent: View {
             Picker("Output", selection: Binding(get: { mixer.outputID }, set: { mixer.chooseOutput($0) })) {
                 ForEach(mixer.outputs) { Text(names.name(for: $0)).tag($0.id) }
             }
-            DeviceLabelRow(device: mixer.outputs.first { $0.id == mixer.outputID }, input: false)
+            if !compact { DeviceLabelRow(device: mixer.outputs.first { $0.id == mixer.outputID }, input: false) }
             Picker("Input", selection: Binding(get: { mixer.inputID }, set: { mixer.chooseInput($0) })) {
                 ForEach(mixer.inputs) { Text(names.name(for: $0)).tag($0.id) }
             }
-            DeviceLabelRow(device: mixer.inputs.first { $0.id == mixer.inputID }, input: true)
+            if !compact { DeviceLabelRow(device: mixer.inputs.first { $0.id == mixer.inputID }, input: true) }
             HStack(spacing: 10) {
                 Image(systemName: mixer.micMuted ? "mic.slash.fill" : "mic.fill").frame(width: 22)
                 Slider(value: Binding(get: { mixer.inputVolume }, set: { mixer.setInputVolume($0) }), in: 0...1)
@@ -149,6 +164,7 @@ struct AppMixerRow: View {
     let bundleID: String?
     var isFavorite = false
     var isRecent = false
+    @AppStorage("soundMixer.compact") private var compact = false
     @State private var showEQ = false
 
     private var settings: AppAudioSettings { engine.current(key) }
@@ -169,7 +185,7 @@ struct AppMixerRow: View {
                     Button { engine.setFavorite(key, !isFavorite) } label: { Image(systemName: isFavorite ? "star.fill" : "star").foregroundStyle(isFavorite ? Theme.warn : .secondary) }
                         .buttonStyle(.borderless).accessibilityLabel(isFavorite ? "Remove favorite" : "Make favorite").help(isFavorite ? "Remove from favorites" : "Keep at the top of the mixer")
                 }
-                LevelMeter(level: engine.level(of: key)).frame(width: 46, height: 6)
+                if !compact { LevelMeter(level: engine.level(of: key)).frame(width: 46, height: 6) }
                 Menu {
                     Button("Effects…") { showEQ.toggle() }
                     TimedMuteMenu(key: key)
@@ -189,7 +205,10 @@ struct AppMixerRow: View {
                     }
                     Divider()
                     Button("Reset", role: .destructive) { engine.reset(key) }.disabled(settings.isDefault && engine.timed[key] == nil)
-                    if key != AppAudioEngine.systemKey { Button("Leave This App Alone", role: .destructive) { engine.setExcluded(key, true) } }
+                    if key != AppAudioEngine.systemKey {
+                        Button { engine.setMenuBarIcon(key, !engine.menuBarApps.contains(key)) } label: { Label("Show in the Menu Bar", systemImage: engine.menuBarApps.contains(key) ? "checkmark" : "") }
+                        Button("Leave This App Alone", role: .destructive) { engine.setExcluded(key, true) }
+                    }
                 } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("More")
                 .menuStyle(.borderlessButton).frame(width: 28)
             }

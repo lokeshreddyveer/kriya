@@ -188,6 +188,9 @@ final class AppAudioEngine: ObservableObject {
     private var chains: [String: AudioUnitChain] = [:]
     /// Audio Unit effects kept near the top of the list of effects to add.
     @Published private(set) var favoritePlugins: [String]
+    /// Apps with an icon of their own in the menu bar.
+    @Published private(set) var menuBarApps: [String]
+    private static let menuBarAppsKey = "appAudio.menuBarApps.v1"
     private static let favoritePluginsKey = "soundFavoritePlugins.v1"
 
     private let defaults: UserDefaults
@@ -220,6 +223,7 @@ final class AppAudioEngine: ObservableObject {
         favorites = defaults.stringArray(forKey: Self.favoritesKey) ?? []
         excluded = Set(defaults.stringArray(forKey: Self.excludedKey) ?? [])
         favoritePlugins = defaults.stringArray(forKey: Self.favoritePluginsKey) ?? []
+        menuBarApps = defaults.stringArray(forKey: Self.menuBarAppsKey) ?? []
         alerts = (defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode([SoundAlert].self, from: $0) }) ?? []
         let minutes = defaults.object(forKey: Self.recentKey) as? Int ?? SoundAppList.defaultRecentMinutes
         recentMinutes = min(max(minutes, 1), 240)
@@ -280,6 +284,12 @@ final class AppAudioEngine: ObservableObject {
         favorites = SoundAppList.move(key, by: offset, in: favorites)
         defaults.set(favorites, forKey: Self.favoritesKey)
         refresh()
+    }
+
+    func setMenuBarIcon(_ key: String, _ on: Bool) {
+        if on, !menuBarApps.contains(key), key != Self.systemKey { menuBarApps.append(key) }
+        if !on { menuBarApps.removeAll { $0 == key } }
+        defaults.set(menuBarApps, forKey: Self.menuBarAppsKey)
     }
 
     func setExcluded(_ key: String, _ on: Bool) {

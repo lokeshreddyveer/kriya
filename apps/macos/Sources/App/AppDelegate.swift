@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
     private var monitorItem: MonitorStatusItem?
     private var soundItem: SoundStatusItem?
+    private var appSoundItems: AppSoundStatusItems?
     private var clockItem: WorldClockStatusItem?
     private var settingsWindow: SettingsWindowController?
     private var setupGuide: SetupGuideController?
@@ -48,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clockItem = WorldClockStatusItem(model: env.worldClock)
         soundItem = SoundStatusItem(engine: env.appAudio, mixer: env.soundMixer, openSettings: { [weak self] in self?.showSettings(.sound) })
         soundItem?.quickConfigs = env.quickConfigs
+        appSoundItems = AppSoundStatusItems(engine: env.appAudio, mixer: env.soundMixer, quick: env.quickConfigs)
         monitorItem = MonitorStatusItem(monitor: env.systemMonitor, openSettings: { [weak self] in self?.showSettings(.system) })
 
         env.keyboard.palette.openSettings = { [weak self] pane in self?.showSettings(pane) }

@@ -6,6 +6,9 @@ import SwiftUI
 /// A speaker in the menu bar. Click for the mixer; right-click for outputs and quick mutes.
 final class SoundStatusItem: NSObject, NSPopoverDelegate {
     static let enabledKey = "soundMenuBar.enabled"
+    static let showVolumeKey = "soundMenuBar.showVolume"
+    static let showDeviceKey = "soundMenuBar.showDevice"
+    static let iconStyleKey = "soundMenuBar.iconStyle"
     static let toggleNotification = Notification.Name("kriya.sound.toggleMixer")
     private let engine: AppAudioEngine
     private let mixer: SoundMixerModel
@@ -55,16 +58,31 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// The speaker (or waveform) for the current state, with the volume and the output's name beside it if those are switched on.
     private func refreshIcon() {
         guard let button = item?.button else { return }
+        let style = UserDefaults.standard.string(forKey: Self.iconStyleKey) ?? "speaker"
         let name: String
         if mixer.micMuted { name = "mic.slash.fill" }
-        else if mixer.muted { name = "speaker.slash.fill" }
-        else if !mixer.hasVolume { name = "speaker.wave.2.fill" }
-        else { name = mixer.volume > 0.66 ? "speaker.wave.3.fill" : mixer.volume > 0.33 ? "speaker.wave.2.fill" : mixer.volume > 0 ? "speaker.wave.1.fill" : "speaker.fill" }
+        else if mixer.muted { name = style == "waveform" ? "waveform.slash" : "speaker.slash.fill" }
+        else if style == "waveform" { name = "waveform" }
+        else if !mixer.hasVolume { name = style == "match" ? "speaker.wave.2" : "speaker.wave.2.fill" }
+        else {
+            let level = mixer.volume > 0.66 ? "3" : mixer.volume > 0.33 ? "2" : mixer.volume > 0 ? "1" : ""
+            name = level.isEmpty ? (style == "match" ? "speaker" : "speaker.fill") : "speaker.wave.\(level)" + (style == "match" ? "" : ".fill")
+        }
         let image = NSImage(systemSymbolName: name, accessibilityDescription: "Sound")
         image?.isTemplate = true
         button.image = image
+        var text = ""
+        if UserDefaults.standard.bool(forKey: Self.showVolumeKey) { text += mixer.muted ? " Muted" : (mixer.hasVolume ? " \(Int((mixer.volume * 100).rounded()))%" : "") }
+        if UserDefaults.standard.bool(forKey: Self.showDeviceKey), let device = mixer.outputs.first(where: { $0.id == mixer.outputID }) {
+            let label = DeviceNames.shared.name(for: device)
+            text += " " + (label.count > 16 ? String(label.prefix(15)) + "…" : label)
+        }
+        button.title = text
+        button.imagePosition = text.isEmpty ? .imageOnly : .imageLeading
+        item?.length = text.isEmpty ? NSStatusItem.squareLength : NSStatusItem.variableLength
     }
 
     @objc private func clicked(_ sender: NSStatusBarButton) { clicked(sender, forcing: false) }
