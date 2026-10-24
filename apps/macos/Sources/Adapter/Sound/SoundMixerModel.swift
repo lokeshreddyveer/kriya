@@ -53,8 +53,9 @@ final class SoundMixerModel: ObservableObject {
     private func gather() -> Snapshot {
         var s = Snapshot()
         let devices = audio.devices()
-        s.outputs = devices.filter(\.isOutput)
-        s.inputs = devices.filter(\.isInput)
+        let hidden = DeviceNames.hiddenUIDs()
+        s.outputs = DeviceNaming.visible(devices.filter(\.isOutput), hidden: hidden, inUse: audio.defaultDevice(input: false))
+        s.inputs = DeviceNaming.visible(devices.filter(\.isInput), hidden: hidden, inUse: audio.defaultDevice(input: true))
         if let out = audio.defaultDevice(input: false) {
             s.output = (out, audio.volume(of: out), audio.isMuted(out) ?? false, audio.sampleRates(of: out), audio.sampleRate(of: out) ?? 0, audio.balance(of: out))
         }

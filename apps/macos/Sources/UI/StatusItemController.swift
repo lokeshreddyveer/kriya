@@ -61,11 +61,10 @@ final class StatusItemController: NSObject {
     }
 
     @objc private func clicked(_ sender: NSStatusBarButton) {
-        guard let event = NSApp.currentEvent else { return }
-        let isSecondary = event.type == .rightMouseUp || event.modifierFlags.contains(.control)
-        if isSecondary {
+        guard let click = StatusClick.current else { return }
+        if click == .secondary {
             popover.performClose(nil)
-            showMenu()
+            showMenu(from: sender)
         } else if popover.isShown {
             popover.performClose(nil)
         } else {
@@ -100,16 +99,13 @@ final class StatusItemController: NSObject {
         outsideClickMonitors.removeAll()
     }
 
-    private func showMenu() {
+    private func showMenu(from button: NSStatusBarButton) {
         let menu = NSMenu()
         let settings = menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Kriya", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        // Attaching the menu only for this click keeps the left click free to open the popover.
-        statusItem.menu = menu
-        statusItem.button?.performClick(nil)
-        statusItem.menu = nil
+        StatusMenu.popUp(menu, from: button)
     }
 
     @objc private func menuSettings() { openSettings(nil) }

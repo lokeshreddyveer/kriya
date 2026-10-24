@@ -4,11 +4,12 @@ import Combine
 import SwiftUI
 
 /// A speaker in the menu bar. Click for the mixer; right-click for outputs and quick mutes.
-final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
+final class SoundStatusItem: NSObject, NSPopoverDelegate {
     static let enabledKey = "soundMenuBar.enabled"
     static let showVolumeKey = "soundMenuBar.showVolume"
     static let showDeviceKey = "soundMenuBar.showDevice"
     static let iconStyleKey = "soundMenuBar.iconStyle"
+    static let scrollKey = "soundMenuBar.scrollVolume"
     static let toggleNotification = Notification.Name("kriya.sound.toggleMixer")
     private let engine: AppAudioEngine
     private let mixer: SoundMixerModel
@@ -18,6 +19,7 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
     private let popover = NSPopover()
     private var cancellables = Set<AnyCancellable>()
     private var viewing = false
+    private var scrollMonitor: Any?
 
     init(engine: AppAudioEngine, mixer: SoundMixerModel, openSettings: @escaping () -> Void) {
         self.engine = engine
@@ -31,7 +33,19 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
         mixer.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.refreshIcon() } }.store(in: &cancellables)
         NotificationCenter.default.publisher(for: Self.toggleNotification).receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.toggleMixer() }.store(in: &cancellables)
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in self?.scrolled(event) ?? event }
         sync()
+    }
+
+    deinit { if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) } }
+
+    /// Scrolling over the speaker changes the volume, the way the volume key does. Holding Option moves it in finer steps.
+    private func scrolled(_ event: NSEvent) -> NSEvent? {
+        guard let window = item?.button?.window, event.window === window, mixer.hasVolume, UserDefaults.standard.object(forKey: Self.scrollKey) as? Bool ?? true else { return event }
+        let delta = VolumeStep.scrollChange(delta: Double(event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas, fine: event.modifierFlags.contains(.option), inverted: event.isDirectionInvertedFromDevice)
+        guard delta != 0 else { return nil }
+        mixer.setVolume(min(max(mixer.volume + delta, 0), 1))
+        return nil
     }
 
     /// Opens or closes the mixer from a shortcut, even when the menu-bar speaker is switched off.
@@ -75,7 +89,7 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
         let image = NSImage(systemSymbolName: name, accessibilityDescription: "Sound")
         image?.isTemplate = true
         button.image = mixer.micMuted ? Self.badged(image, with: "mic.slash.fill") ?? image : image
-        button.toolTip = mixer.micMuted ? "The microphone is muted" : nil
+        button.toolTip = tooltip()
         var text = ""
         if UserDefaults.standard.bool(forKey: Self.showVolumeKey) { text += mixer.muted ? " Muted" : (mixer.hasVolume ? " \(Int((mixer.volume * 100).rounded()))%" : "") }
         if UserDefaults.standard.bool(forKey: Self.showDeviceKey), let device = mixer.outputs.first(where: { $0.id == mixer.outputID }) {
@@ -85,6 +99,17 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
         button.title = text
         button.imagePosition = text.isEmpty ? .imageOnly : .imageLeading
         item?.length = text.isEmpty ? NSStatusItem.squareLength : NSStatusItem.variableLength
+    }
+
+    /// What the icon stands for, for the pointer to rest on: the output, its volume or mute, and how many apps are playing.
+    private func tooltip() -> String {
+        let device = mixer.outputs.first(where: { $0.id == mixer.outputID }).map { DeviceNames.shared.name(for: $0) } ?? "Sound output"
+        let level = mixer.muted ? "muted" : (mixer.hasVolume ? "\(Int((mixer.volume * 100).rounded()))%" : "fixed volume")
+        var lines = ["\(device): \(level)"]
+        let playing = engine.apps.filter(\.isPlaying).count
+        lines.append(playing == 0 ? "Nothing is playing" : playing == 1 ? "1 app is playing" : "\(playing) apps are playing")
+        if mixer.micMuted { lines.append("The microphone is muted") }
+        return lines.joined(separator: "\n")
     }
 
     /// The speaker with a small symbol drawn beside it, as one template image (so the menu bar tints it for light and dark).
@@ -104,9 +129,9 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
     @objc private func clicked(_ sender: NSStatusBarButton) { clicked(sender, forcing: false) }
 
     private func clicked(_ sender: NSStatusBarButton, forcing: Bool) {
-        let event = NSApp.currentEvent
-        if !forcing, let event, event.type == .rightMouseUp || event.modifierFlags.contains(.control) { popover.performClose(nil); showMenu(); return }
-        if !forcing, event == nil { return }
+        let click = StatusClick.current
+        if !forcing, click == .secondary { popover.performClose(nil); showMenu(from: sender); return }
+        if !forcing, click == nil { return }
         if popover.isShown { popover.performClose(nil); return }
         // As tall as fits the display this icon is on, not the main display, which may be a larger one.
         let height = SoundPopoverView.height(on: sender.window?.screen)
@@ -118,11 +143,17 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
         host.sizingOptions = []
         popover.contentSize = NSSize(width: SoundPopoverView.width, height: height)
         popover.animates = true
-        popover.appearance = NSAppearance(named: .darkAqua)
+        switch SoundAppearance.resolve(UserDefaults.standard.string(forKey: "soundMixer.appearance")) {
+        case .dark: popover.appearance = NSAppearance(named: .darkAqua)
+        case .light: popover.appearance = NSAppearance(named: .aqua)
+        case .system: popover.appearance = nil
+        }
         // As the person left it: pinned open, or closing when they click elsewhere.
         popover.behavior = UserDefaults.standard.bool(forKey: SoundPopoverView.pinnedKey) ? .applicationDefined : .transient
         popover.contentViewController = host
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+        // Key, so the arrow keys and typing reach the mixer straight away.
+        popover.contentViewController?.view.window?.makeKey()
         if !viewing { viewing = true; engine.viewerAppeared() }
     }
 
@@ -130,7 +161,7 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
         if viewing { viewing = false; engine.viewerGone() }
     }
 
-    private func showMenu() {
+    private func showMenu(from button: NSStatusBarButton) {
         let menu = NSMenu()
         mixer.refresh()
         let header = NSMenuItem(title: "Play sound on", action: nil, keyEquivalent: "")
@@ -178,14 +209,14 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Sound Settings…", action: #selector(settings), keyEquivalent: "").target = self
-        // Opened by the menu bar itself and put away when it closes, so the next click comes back to the popover.
-        menu.delegate = self
-        item?.menu = menu
-        item?.button?.performClick(nil)
-    }
-
-    func menuDidClose(_ menu: NSMenu) {
-        DispatchQueue.main.async { [weak self] in self?.item?.menu = nil }
+        StatusMenu.add(popover.isShown ? "Hide the Mixer" : "Show the Mixer", symbol: "slider.vertical.3", to: menu) { [weak self] in
+            guard let self, let button = self.item?.button else { return }
+            self.clicked(button, forcing: true)
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit Kriya", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        // Opened directly under the icon; nothing stays attached, so the next left click still opens the mixer.
+        StatusMenu.popUp(menu, from: button)
     }
 
     @objc private func toggleAppMute(_ sender: NSMenuItem) {

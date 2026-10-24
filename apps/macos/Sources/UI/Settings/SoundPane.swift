@@ -10,6 +10,11 @@ struct SoundPane: View {
     @AppStorage(SoundStatusItem.showVolumeKey) private var showVolume = false
     @AppStorage(SoundStatusItem.showDeviceKey) private var showDevice = false
     @AppStorage("soundMixer.compact") private var compact = false
+    @AppStorage("soundMixer.density") private var density: String?
+    @AppStorage("soundMixer.appearance") private var appearance: String?
+    @AppStorage(SoundStatusItem.scrollKey) private var scrollVolume = true
+    @AppStorage("soundVolumeStep") private var volumeStep = VolumeStep.standard
+    @AppStorage("soundHoldToRamp") private var holdToRamp = true
     @AppStorage("soundVolumeFeedback") private var feedback = false
     @State private var keys = VolumeKeys.isEnabled {
         didSet { VolumeKeys.isEnabled = keys }
@@ -29,7 +34,17 @@ struct SoundPane: View {
                     Toggle("Show the volume beside it", isOn: $showVolume)
                     Toggle("Show the output's name beside it", isOn: $showDevice)
                 }
-                Toggle("Compact mixer", isOn: $compact)
+                Picker("Mixer rows", selection: Binding(get: { SoundDensity.resolve(stored: density, legacyCompact: compact).rawValue }, set: { density = $0; compact = $0 == SoundDensity.compact.rawValue })) {
+                    ForEach(SoundDensity.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                Picker("Mixer appearance", selection: Binding(get: { SoundAppearance.resolve(appearance).rawValue }, set: { appearance = $0 })) {
+                    ForEach(SoundAppearance.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                Toggle("Scrolling over the speaker or a slider changes the volume", isOn: $scrollVolume)
+                Picker("Arrow keys in the mixer move the volume by", selection: $volumeStep) {
+                    ForEach(VolumeStep.choices, id: \.self) { Text("\(Int($0 * 100))%").tag($0) }
+                }
+                Toggle("A held arrow key speeds up", isOn: $holdToRamp)
                 Toggle("Play a tick when the volume changes", isOn: $feedback)
                 Toggle("Keyboard volume keys work on outputs without a volume", isOn: $keys)
             } footer: { Text("Many monitors over HDMI or DisplayPort ignore the volume keys. With this on, the keys change Kriya’s “All sound” level instead, only while such an output is in use. Click the menu-bar speaker for this mixer; right-click it for outputs and mutes. Shortcuts has actions to set an app’s volume, mute an app, switch the output and set the Mac’s volume.") }
@@ -63,6 +78,16 @@ struct SoundPane: View {
                 SoundModesSection()
             } header: { Text("Sound modes") } footer: {
                 Text("A mode is several sound changes turned on together, such as headset, microphone and volume for a meeting. Turn it off to put the sound back how it was. The starting two only set the volume; edit them to add your own headset and microphone. Modes can also be run from shortcuts and workflows with the commands sound.mode.<id> (they are listed under Keyboard › Shortcuts).")
+            }
+            Section {
+                SoundDevicesSection()
+            } header: { Text("Devices") } footer: {
+                Text("Rank your outputs and inputs and Kriya keeps the sound on the best one still connected, moving it when a device is unplugged and back when a better one returns. Put a device in the menu bar to see whether it is in use, connected or gone, and to switch to it with a click. Headphone correction comes from AutoEq files you choose; nothing is downloaded.")
+            }
+            Section {
+                SoundHealthSection()
+            } header: { Text("Sound health") } footer: {
+                Text("The delay each output adds before sound reaches you, what Kriya's own processing adds for the apps it is changing, and anything that failed. Bluetooth always adds the most; a wired or USB output is the fix for lip-sync or playing along.")
             }
             Section {
                 DeviceExtrasSection()

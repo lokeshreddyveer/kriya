@@ -14,6 +14,12 @@ final class DeviceNames: ObservableObject {
         labels = (defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([String: DeviceLabel].self, from: $0) }) ?? [:]
     }
 
+    /// The hidden devices, read straight from the saved labels so it can be asked from any thread.
+    static func hiddenUIDs(defaults: UserDefaults = .standard) -> Set<String> {
+        let labels = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([String: DeviceLabel].self, from: $0) } ?? [:]
+        return DeviceNaming.hiddenUIDs(labels)
+    }
+
     func name(for device: AudioDevice) -> String { DeviceNaming.name(device.name, uid: device.uid, labels: labels) }
     func symbol(for device: AudioDevice, fallback: String) -> String { DeviceNaming.symbol(uid: device.uid, fallback: fallback, labels: labels) }
 

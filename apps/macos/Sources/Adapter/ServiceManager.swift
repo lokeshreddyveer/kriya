@@ -128,7 +128,7 @@ final class ServiceManager: ObservableObject {
     static let knownAuxiliaryIDs: Set<String> = [
         "clipboardMerge", "folderRules", "menuBarHider", "soundMixer", "soundRules", "midi", "mcpServer", "locationAudio", "volumeKeys",
         "capture", "workspaces", "displayTools", "pointerEffects", "systemMonitor", "safariInbox", "focusSession", "worldClock",
-        "sharedClipboard", "keyboardDevices",
+        "sharedClipboard", "keyboardDevices", "soundDevices", "autoEQ",
     ]
 
     func register(_ service: AuxiliaryService) {

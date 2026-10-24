@@ -694,6 +694,27 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   **Places** (needs Location Services) switch the output when you arrive somewhere you saved, with ordered fallbacks, a short dwell and a cooldown
   so it does not flap, and a manual override. Needs macOS 14.2 for per-app control; macOS asks
   once to allow it, and nothing is recorded. If Kriya quits, every app's sound goes back to normal at once.
+- **Sound menu bar and mixer (0.10.0):** one speaker icon that shows the volume level (slashed when muted, an optional waveform, the
+  percentage or the output's name), with a tooltip naming the output, its volume or mute, and how many apps are playing. **Click** opens the
+  mixer; **scroll over the icon** changes the volume (Option for finer steps); **right-click** (or Control-click) opens a menu that is shown
+  directly under the icon, not attached to it: the outputs to switch to, mute sound or the microphone, Quick Configs, running timed mutes,
+  Sound Settings, show or hide the mixer, Quit. The mixer's **⋯ menu** does the same, for when a right click does not reach the icon. The mixer
+  has a **search** box (apps and devices; `/` or ⌘F focuses it), **keyboard control** (↑↓ choose a row, ←→ change its volume by the step you chose
+  in Sound settings, a held key speeds up if you allow it, M mutes, E opens effects, F favorites, B boosts, ⏎ mutes), **scroll-wheel sliders**,
+  **compact, comfortable and spacious rows**, **light, dark or system appearance**, and a **⋯ menu on each app row** (favorite, menu-bar icon,
+  timed mute, reset, leave alone). An app can play on **several outputs at once**.
+  **Menu-bar icons for single apps** show the app's icon, faded and slashed when muted: click mutes it, **Option-click** opens its effects,
+  right-click opens its menu (volume, mute for a time, which output, bypass effects, reset, remove the icon, leave the app alone).
+  **Menu-bar icons for devices** (Settings › Sound › Devices) show whether a device is in use, connected, muted, being reconnected, gone, or
+  replaced by another: click uses it as the output or input (or mutes it if it already is, or connects a paired Bluetooth device); right-click
+  adds sound effects, mute, Bluetooth connect and disconnect, and details.
+  **Sound device order:** rank your outputs and inputs; when the one in use is unplugged or disconnects, the best one still connected takes
+  over, and (if you allow it) a better one that reconnects takes over again. It acts only when devices come or go, so a device you chose by hand is
+  left alone. **Device details** show how a device is connected, its sample rates, channels, buffer and delay, and whether its volume is the
+  device's own or Kriya's. **Headphone correction:** import an AutoEq ParametricEQ or GraphicEQ file for a device; Kriya fits it to its ten-band
+  equaliser (saying how far off the fit is), puts it on "All sound" when that device is the output and takes it off when another is. Nothing is
+  downloaded. **Sound health** lists each output's delay, what Kriya's processing adds for each app and anything that failed. New commands for
+  shortcuts and `kriya://run`: the front app's favorite, boost and menu-bar icon, the device order, and front-app volume in the step you chose.
 - **Menu-bar icons in the launcher:** type `mb wifi`, `menu bar battery` or `status bluetooth` to find another app's menu-bar icon by name
   and open it, even when it is hidden behind the arrow or squeezed out by the notch. Needs Accessibility; it reads icon names only.
 - **Open and Save dialogs:** the *Go to a folder in the Open or Save dialog* command (give it a shortcut, or use the Dialog Folders tile)

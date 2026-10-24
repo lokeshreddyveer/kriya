@@ -397,6 +397,9 @@ final class AppEnvironment {
         services.register(AuxiliaryService(id: "safariInbox", title: "Safari inbox", start: { [weak safariInbox] in safariInbox?.start() }, stop: { [weak safariInbox] in safariInbox?.stop() }))
         services.register(AuxiliaryService(id: "mcpServer", title: "MCP server", start: { MCPHTTPServer.shared.start() }, stop: { MCPHTTPServer.shared.stop() }, isActive: { MCPHTTPServer.shared.isActive }))
         services.register(AuxiliaryService(id: "locationAudio", title: "Sound by place", blockedWhenDenied: [.location], start: { LocationAudioRunner.shared.start() }, stop: { LocationAudioRunner.shared.stop() }, isActive: { LocationAudioRunner.shared.isActive }))
+        services.register(AuxiliaryService(id: "soundDevices", title: "Sound device order", start: { DevicePriorityRunner.shared.start() }, stop: { DevicePriorityRunner.shared.stop() }, isActive: { DevicePriorityRunner.shared.isActive }))
+        AutoEQRunner.shared.engine = appAudio
+        services.register(AuxiliaryService(id: "autoEQ", title: "Headphone correction", start: { AutoEQRunner.shared.start() }, stop: { AutoEQRunner.shared.stop() }, isActive: { AutoEQRunner.shared.isActive }))
         services.register(AuxiliaryService(id: "focusSession", title: "Focus sessions", start: { [weak self] in self?.focusSession.start() }, stop: { [weak self] in self?.focusSession.stop() }))
         worldClock.meetings = launcherTools.meetings
         services.register(AuxiliaryService(id: "worldClock", title: "World clock", start: { [weak self] in self?.worldClock.start() }, stop: { [weak self] in self?.worldClock.stop() }))
@@ -658,8 +661,14 @@ extension AppEnvironment {
         let fade = { UserDefaults.standard.object(forKey: "soundTimedFadeSeconds") as? Double ?? 2 }
         executor.registerCommand("sound.mixer.toggle") { NotificationCenter.default.post(name: SoundStatusItem.toggleNotification, object: nil) }
         executor.registerCommand("sound.front.mute", handler: onFront { e, k in e.update(k) { $0.muted.toggle() } })
-        executor.registerCommand("sound.front.volume_up", handler: onFront { e, k in e.update(k) { $0.volume = min($0.volume + 0.1, AppAudioSettings.maxVolume) } })
-        executor.registerCommand("sound.front.volume_down", handler: onFront { e, k in e.update(k) { $0.volume = max($0.volume - 0.1, 0) } })
+        // The step is the one chosen in Sound settings (5% unless changed), the same one the mixer's arrow keys use.
+        let step = { UserDefaults.standard.object(forKey: "soundVolumeStep") as? Double ?? VolumeStep.standard }
+        executor.registerCommand("sound.front.volume_up", handler: onFront { e, k in e.update(k) { $0.volume = VolumeStep.next($0.volume, up: true, step: step(), range: 0...AppAudioSettings.maxVolume) } })
+        executor.registerCommand("sound.front.volume_down", handler: onFront { e, k in e.update(k) { $0.volume = VolumeStep.next($0.volume, up: false, step: step(), range: 0...AppAudioSettings.maxVolume) } })
+        executor.registerCommand("sound.front.favorite", handler: onFront { e, k in e.setFavorite(k, !e.isFavorite(k)) })
+        executor.registerCommand("sound.front.boost", handler: onFront { e, k in e.setBoost(k, !e.isBoosted(k)) })
+        executor.registerCommand("sound.front.menubar_icon", handler: onFront { e, k in e.setMenuBarIcon(k, !e.menuBarApps.contains(k)) })
+        executor.registerCommand("sound.devices.priority_toggle") { DispatchQueue.main.async { DevicePriorityRunner.shared.enabled.toggle() } }
         executor.registerCommand("sound.front.bypass_effects", handler: onFront { e, k in e.update(k) { $0.effectsBypassed.toggle() } })
         executor.registerCommand("sound.front.reset_effects", handler: onFront { e, k in e.update(k) { $0.eq = EQPreset.flat.gains; $0.preamp = 0; $0.balance = 0; $0.effectsBypassed = false } })
         executor.registerCommand("sound.front.reset", handler: onFront { e, k in e.reset(k) })
@@ -685,8 +694,8 @@ extension AppEnvironment {
             self.favoriteAppCommands = []
             for id in favorites {
                 for (suffix, change) in [("mute", { (s: inout AppAudioSettings) in s.muted.toggle() }),
-                                         ("volume_up", { (s: inout AppAudioSettings) in s.volume = min(s.volume + 0.1, AppAudioSettings.maxVolume) }),
-                                         ("volume_down", { (s: inout AppAudioSettings) in s.volume = max(s.volume - 0.1, 0) })] as [(String, (inout AppAudioSettings) -> Void)] {
+                                         ("volume_up", { (s: inout AppAudioSettings) in s.volume = VolumeStep.next(s.volume, up: true, step: UserDefaults.standard.object(forKey: "soundVolumeStep") as? Double ?? VolumeStep.standard, range: 0...AppAudioSettings.maxVolume) }),
+                                         ("volume_down", { (s: inout AppAudioSettings) in s.volume = VolumeStep.next(s.volume, up: false, step: UserDefaults.standard.object(forKey: "soundVolumeStep") as? Double ?? VolumeStep.standard, range: 0...AppAudioSettings.maxVolume) })] as [(String, (inout AppAudioSettings) -> Void)] {
                     let command = "sound.app.\(suffix).\(id)"
                     self.favoriteAppCommands.insert(command)
                     self.executor.registerCommand(command) { DispatchQueue.main.async { engine.update(id, change) } }

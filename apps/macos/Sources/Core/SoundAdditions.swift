@@ -1,3 +1,4 @@
+import CoreAudio
 import Foundation
 
 /// A change to one app's loudness that ends by itself: muted or turned down for a while, with an optional fade out before it and
@@ -134,8 +135,10 @@ struct QuickConfig: Codable, Equatable, Identifiable {
 struct DeviceLabel: Codable, Equatable {
     var nickname: String?
     var symbol: String?
+    /// Left out of the mixer's device lists and menus (the device in use is always shown).
+    var hidden: Bool?
 
-    var isEmpty: Bool { (nickname ?? "").isEmpty && (symbol ?? "").isEmpty }
+    var isEmpty: Bool { (nickname ?? "").isEmpty && (symbol ?? "").isEmpty && hidden != true }
 
     static let symbols: [(symbol: String, title: String)] = [
         ("speaker.wave.2", "Speaker"), ("hifispeaker", "Hi-fi speaker"), ("headphones", "Headphones"), ("airpodspro", "Earbuds"),
@@ -148,6 +151,14 @@ enum DeviceNaming {
     static func name(_ device: String, uid: String, labels: [String: DeviceLabel]) -> String {
         let nick = labels[uid]?.nickname?.trimmingCharacters(in: .whitespaces) ?? ""
         return nick.isEmpty ? device : nick
+    }
+
+    /// The devices the person hid.
+    static func hiddenUIDs(_ labels: [String: DeviceLabel]) -> Set<String> { Set(labels.filter { $0.value.hidden == true }.keys) }
+
+    /// The devices to list: all but the hidden ones, and never the one in use, so the list always shows where the sound is going.
+    static func visible(_ devices: [AudioDevice], hidden: Set<String>, inUse: AudioDeviceID?) -> [AudioDevice] {
+        devices.filter { !hidden.contains($0.uid) || $0.id == inUse }
     }
 
     static func symbol(uid: String, fallback: String, labels: [String: DeviceLabel]) -> String {

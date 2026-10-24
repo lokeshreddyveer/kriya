@@ -556,6 +556,17 @@ final class AppAudioEngine: ObservableObject {
     }
 
     /// The app in front, as the mixer names it.
+    /// What Kriya's own processing adds for each app it is changing, in milliseconds (one buffer at the output's sample rate).
+    func processingDelays() -> [String: Double] {
+        let rate = AudioControl.shared.defaultDevice(input: false).flatMap { AudioControl.shared.sampleRate(of: $0) } ?? 48_000
+        var result: [String: Double] = [:]
+        guard #available(macOS 14.2, *) else { return result }
+        for (key, object) in sessions {
+            if let session = object as? AudioSession, let ms = SoundHealth.processingMilliseconds(bufferFrames: session.bufferFrames, sampleRate: rate) { result[key] = ms }
+        }
+        return result
+    }
+
     func frontAppKey() -> String? {
         guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return nil }
         let key = AudioProcessList.groupKey(forBundleID: id)

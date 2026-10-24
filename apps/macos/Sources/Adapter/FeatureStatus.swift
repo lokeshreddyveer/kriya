@@ -45,13 +45,14 @@ final class FeatureSwitchboard {
 
     /// A feature with its own on/off switch in the app.
     func isSwitchable(_ id: String) -> Bool {
-        ["midi", "locationAudio", "finderWindows", "clipboardSync", "semanticSearch", "mcpServer", "safariExtension"].contains(id)
+        ["midi", "locationAudio", "soundDevices", "finderWindows", "clipboardSync", "semanticSearch", "mcpServer", "safariExtension"].contains(id)
     }
 
     func isOn(_ id: String) -> Bool {
         switch id {
         case "midi": return MIDITriggerRunner.shared.enabled
         case "locationAudio": return LocationAudioRunner.shared.enabled
+        case "soundDevices": return DevicePriorityRunner.shared.enabled
         case "finderWindows": return FinderWindowTracker.shared.enabled
         case "clipboardSync": return ClipboardSyncService.shared.enabled
         case "semanticSearch": return AIIndexer.shared.enabled
@@ -68,6 +69,7 @@ final class FeatureSwitchboard {
         switch id {
         case "midi": MIDITriggerRunner.shared.enabled = on
         case "locationAudio": LocationAudioRunner.shared.enabled = on
+        case "soundDevices": DevicePriorityRunner.shared.enabled = on
         case "finderWindows": FinderWindowTracker.shared.enabled = on
         case "clipboardSync": ClipboardSyncService.shared.enabled = on
         case "semanticSearch": AIIndexer.shared.enabled = on

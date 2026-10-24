@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var monitorItem: MonitorStatusItem?
     private var soundItem: SoundStatusItem?
     private var appSoundItems: AppSoundStatusItems?
+    private var deviceSoundItems: DeviceStatusItems?
     private var clockItem: WorldClockStatusItem?
     private var settingsWindow: SettingsWindowController?
     private var setupGuide: SetupGuideController?
@@ -50,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         soundItem = SoundStatusItem(engine: env.appAudio, mixer: env.soundMixer, openSettings: { [weak self] in self?.showSettings(.sound) })
         soundItem?.quickConfigs = env.quickConfigs
         appSoundItems = AppSoundStatusItems(engine: env.appAudio, mixer: env.soundMixer, quick: env.quickConfigs)
+        deviceSoundItems = DeviceStatusItems(mixer: env.soundMixer, openSettings: { [weak self] in self?.showSettings(.sound) })
         monitorItem = MonitorStatusItem(monitor: env.systemMonitor, openSettings: { [weak self] in self?.showSettings(.system) })
 
         env.capture.openSettings = { [weak self] in self?.showSettings(.capture) }

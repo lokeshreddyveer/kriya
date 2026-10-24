@@ -153,6 +153,8 @@ enum WindowCommands {
         ("sound.front.bypass_effects", "Bypass or use the effects of the app in front"), ("sound.front.reset_effects", "Reset the effects of the app in front"),
         ("sound.front.reset", "Reset the sound of the app in front"), ("sound.front.mute_30", "Mute the app in front for 30 seconds"),
         ("sound.front.mute_60", "Mute the app in front for 1 minute"), ("sound.front.mute_120", "Mute the app in front for 2 minutes"),
+        ("sound.front.favorite", "Make the app in front a favorite, or not"), ("sound.front.boost", "Let the app in front go past 100%, or not"),
+        ("sound.front.menubar_icon", "Put the app in front in the menu bar, or take it out"), ("sound.devices.priority_toggle", "Turn the sound device order on or off"),
         ("sound.timer.cancel", "Cancel timed mutes"), ("sound.effects.toggle_all", "Bypass or use the effects on all sound"),
     ]
 
