@@ -129,5 +129,13 @@
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/lokeshreddyveer/kriya/releases/download/v0.10.2/Kriya-0.10.2.dmg" length="49568494" type="application/octet-stream" sparkle:edSignature="yzaP6VMOLaGRY9huKyFwbtceFLwjVqcYGNhbZ/c/tbg+LNtWtZPPl4LJDAFOVdElKOnZAp+Rbb0dHmrjUn+/DA=="/>
     </item>
+    <item>
+      <title>Kriya 0.10.3</title>
+      <pubDate>Sun, 25 Oct 2026 08:30:00 -0000</pubDate>
+      <sparkle:version>40</sparkle:version>
+      <sparkle:shortVersionString>0.10.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/lokeshreddyveer/kriya/releases/download/v0.10.3/Kriya-0.10.3.dmg" length="49782086" type="application/octet-stream" sparkle:edSignature="1JE7Zn2l+u+m7to4EsZ20RVaRnKu8tKzKV5qM+HyJVvtAoAALbmJWJle3euRGYz3UBOUc8xzEmQnP9hN52vACw=="/>
+    </item>
   </channel>
 </rss>
