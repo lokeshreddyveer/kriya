@@ -81,13 +81,20 @@ final class RingPool {
         CATransaction.commit()
         ring.panel.orderFrontRegardless()
 
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in
+        // The window is given back once, whichever comes first: the animation ending, or a moment after it should have (an animation in
+        // a window that is not on screen may never report, and a window that is never given back would end the rings after eight).
+        var finished = false
+        let finish = { [weak self] in
+            guard !finished else { return }
+            finished = true
             layer.removeAllAnimations()
             ring.panel.orderOut(nil)
             self?.inUse -= 1
             self?.idle.append(ring)
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(duration, 0.05) + 0.6, execute: finish)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(finish)
         let grow = CABasicAnimation(keyPath: "transform.scale")
         grow.fromValue = 0.25
         grow.toValue = 1

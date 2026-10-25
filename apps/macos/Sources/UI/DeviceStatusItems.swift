@@ -37,8 +37,11 @@ final class DeviceStatusItems: NSObject {
             .sink { [weak self] _ in self?.sync() }.store(in: &cancellables)
         // An icon follows the device at once when the output or volume changes, or when its name or icon is changed, not at the next
         // three-second look.
-        mixer.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }.store(in: &cancellables)
-        DeviceNames.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }.store(in: &cancellables)
+        // Throttled, because each look asks Core Audio on the main thread and the mixer publishes on every slider movement.
+        mixer.objectWillChange.throttle(for: .milliseconds(400), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }.store(in: &cancellables)
+        DeviceNames.shared.objectWillChange.throttle(for: .milliseconds(400), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }.store(in: &cancellables)
         sync()
     }
 

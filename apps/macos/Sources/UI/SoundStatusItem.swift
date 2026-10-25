@@ -71,10 +71,15 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate {
             mixer.viewerGone()
         } else if on {
             // A setting that changes how the icon looks (its style, the volume or name beside it) shows at once, not after the icon is
-            // switched off and on again.
-            refreshIcon()
+            // switched off and on again. Any saved setting in Kriya comes through here, so only a change to these four redraws it.
+            let defaults = UserDefaults.standard
+            let look = "\(defaults.string(forKey: Self.iconStyleKey) ?? "speaker")|\(defaults.bool(forKey: Self.showVolumeKey))|\(defaults.bool(forKey: Self.showDeviceKey))"
+            if look != lastLook { lastLook = look; refreshIcon() }
         }
     }
+
+    private var lastLook = ""
+
 
     /// The speaker (or waveform) for the current state, with the volume and the output's name beside it if those are switched on.
     private func refreshIcon() {
