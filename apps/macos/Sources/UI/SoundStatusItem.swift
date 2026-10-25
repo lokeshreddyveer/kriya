@@ -69,6 +69,10 @@ final class SoundStatusItem: NSObject, NSPopoverDelegate {
             NSStatusBar.system.removeStatusItem(existing)
             item = nil
             mixer.viewerGone()
+        } else if on {
+            // A setting that changes how the icon looks (its style, the volume or name beside it) shows at once, not after the icon is
+            // switched off and on again.
+            refreshIcon()
         }
     }
 

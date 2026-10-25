@@ -715,6 +715,11 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   equaliser (saying how far off the fit is), puts it on "All sound" when that device is the output and takes it off when another is. Nothing is
   downloaded. **Sound health** lists each output's delay, what Kriya's processing adds for each app and anything that failed. New commands for
   shortcuts and `kriya://run`: the front app's favorite, boost and menu-bar icon, the device order, and front-app volume in the step you chose.
+- **Fixes (0.10.2):** the **click rings** no longer make the whole screen flash dark when you press the mouse (for example on the sound
+  slider): they are drawn in a few windows that are reused, instead of a new window for every press. The **sound menu-bar icon** takes its
+  settings (icon style, the volume and the output's name beside it) as soon as you change them, and pinned device icons follow the output,
+  volume and name changes at once, with no need to switch them off and on. Exporting or importing Quick Configs, deleting an app's saved copy,
+  opening the notes folder, reading an AI provider's model list and importing AI providers or folder rules now say when they fail.
 - **Safer pop-up windows and fewer surprises (0.10.1):** every pop-up that shows your own content (the launcher, clipboard window, Notes, File Shelf,
   AI results, the window list and switcher, the Finder drawer, action launcher and folder chooser, the selection bar, snippet prompts, the dictation
   strip and search-by-meaning results) is now left out of screen sharing and other apps' screenshots, using the one switch in Settings › Clipboard ›

@@ -31,19 +31,75 @@ private struct HaloView: View {
     }
 }
 
-/// A ring that grows and fades, for clicks and for finding the pointer.
-private struct RippleView: View {
-    let color: Color
-    let duration: Double
-    @State private var grown = false
+/// The rings for clicks and for finding the pointer. Each is drawn with Core Animation in a small window that is made once and then
+/// used again, never a new window for every click: making and discarding a top-level window on every mouse press made the whole
+/// screen flash dark on some Macs, most visibly when a press landed on Kriya's own menu-bar windows.
+final class RingPool {
+    private final class Ring {
+        let panel: NSPanel
+        let layer = CAShapeLayer()
+        let shareable: Bool
+        init(shareable: Bool) {
+            self.shareable = shareable
+            panel = makeOverlay(size: 64, shareable: shareable)
+            let view = NSView(frame: NSRect(x: 0, y: 0, width: 64, height: 64))
+            view.wantsLayer = true
+            layer.opacity = 0
+            view.layer?.addSublayer(layer)
+            panel.contentView = view
+        }
+    }
 
-    var body: some View {
-        Circle()
-            .strokeBorder(color, lineWidth: 5)
-            .background(Circle().fill(color.opacity(0.18)))
-            .scaleEffect(grown ? 1 : 0.25)
-            .opacity(grown ? 0 : 0.95)
-            .onAppear { withAnimation(.easeOut(duration: duration)) { grown = true } }
+    /// The name of the animation on a ring's layer (an animation key, not a saved preference).
+    private static let animationName = "kriya.ring"
+    private var idle: [Ring] = []
+    private var inUse = 0
+    private static let limit = 8
+
+    /// Windows waiting to be used, for the tests.
+    var idleCount: Int { idle.count }
+    var activeCount: Int { inUse }
+
+    func show(at point: NSPoint, color: NSColor, side: CGFloat, duration: Double, shareable: Bool) {
+        guard inUse < Self.limit, side > 0 else { return }
+        // Windows made for the other sharing choice are let go: macOS only lets a window's sharing be tightened, not loosened.
+        idle.removeAll { $0.shareable != shareable }
+        let ring = idle.popLast() ?? Ring(shareable: shareable)
+        inUse += 1
+        ring.panel.setFrame(NSRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side), display: false)
+        ring.panel.contentView?.frame = NSRect(x: 0, y: 0, width: side, height: side)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let layer = ring.layer
+        layer.frame = NSRect(x: 0, y: 0, width: side, height: side)
+        let lineWidth: CGFloat = 5
+        layer.path = CGPath(ellipseIn: layer.bounds.insetBy(dx: lineWidth / 2, dy: lineWidth / 2), transform: nil)
+        layer.lineWidth = lineWidth
+        layer.strokeColor = color.cgColor
+        layer.fillColor = color.withAlphaComponent(0.18).cgColor
+        layer.opacity = 0
+        CATransaction.commit()
+        ring.panel.orderFrontRegardless()
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            layer.removeAllAnimations()
+            ring.panel.orderOut(nil)
+            self?.inUse -= 1
+            self?.idle.append(ring)
+        }
+        let grow = CABasicAnimation(keyPath: "transform.scale")
+        grow.fromValue = 0.25
+        grow.toValue = 1
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.95
+        fade.toValue = 0
+        let group = CAAnimationGroup()
+        group.animations = [grow, fade]
+        group.duration = max(duration, 0.05)
+        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(group, forKey: Self.animationName)
+        CATransaction.commit()
     }
 }
 
@@ -607,6 +663,7 @@ final class PointerEffects {
 
     private var halo: NSPanel?
     private var haloKey = ""
+    private let rings = RingPool()
     private var monitors: [Any] = []
     private var registered = Set<String>()
     private var cancellables = Set<AnyCancellable>()
@@ -941,12 +998,7 @@ final class PointerEffects {
     // MARK: Rings
 
     private func ripple(at point: NSPoint, color: String, size: Double, duration: Double, config: PointerEffectsConfig) {
-        let side = CGFloat(size)
-        let panel = makeOverlay(size: side, shareable: config.showWhenSharing)
-        panel.contentView = NSHostingView(rootView: RippleView(color: .fromHex(color), duration: duration))
-        panel.setFrameOrigin(NSPoint(x: point.x - side / 2, y: point.y - side / 2))
-        panel.orderFrontRegardless()
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.1) { panel.orderOut(nil) }
+        rings.show(at: point, color: NSColor(Color.fromHex(color)), side: CGFloat(size), duration: duration, shareable: config.showWhenSharing)
     }
 
     /// Three rings spreading out from the pointer, so it can be found at a glance.

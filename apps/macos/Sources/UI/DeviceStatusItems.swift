@@ -35,6 +35,10 @@ final class DeviceStatusItems: NSObject {
         super.init()
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.sync() }.store(in: &cancellables)
+        // An icon follows the device at once when the output or volume changes, or when its name or icon is changed, not at the next
+        // three-second look.
+        mixer.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }.store(in: &cancellables)
+        DeviceNames.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }.store(in: &cancellables)
         sync()
     }
 

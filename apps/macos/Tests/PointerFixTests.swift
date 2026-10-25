@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import Kriya
 
@@ -192,5 +193,48 @@ final class PointerFixTests: XCTestCase {
 
     func testThePositionDisplaysCanBeResetWithTheirOwnArea() {
         XCTAssertTrue(FeatureReset.areas.contains { $0.id == "pointer" && $0.keys.contains("pointer.positionDisplays.v1") })
+    }
+}
+
+
+/// Click rings reuse their windows: making a new top-level window for every press made the screen flash.
+final class RingPoolTests: XCTestCase {
+    func testARingWindowIsUsedAgainAfterItFinishes() {
+        let pool = RingPool()
+        pool.show(at: NSPoint(x: 100, y: 100), color: .red, side: 40, duration: 0.1, shareable: false)
+        XCTAssertEqual(pool.activeCount, 1)
+        let first = expectation(description: "first ring done")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { first.fulfill() }
+        wait(for: [first], timeout: 2)
+        XCTAssertEqual(pool.activeCount, 0)
+        XCTAssertEqual(pool.idleCount, 1, "the window is kept for the next press")
+        pool.show(at: NSPoint(x: 200, y: 200), color: .blue, side: 56, duration: 0.1, shareable: false)
+        XCTAssertEqual(pool.idleCount, 0, "the kept window was taken, not a new one made")
+        XCTAssertEqual(pool.activeCount, 1)
+        let second = expectation(description: "second ring done")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { second.fulfill() }
+        wait(for: [second], timeout: 2)
+        XCTAssertEqual(pool.idleCount, 1)
+    }
+
+    func testAChangeOfSharingLetsTheOldWindowsGo() {
+        let pool = RingPool()
+        pool.show(at: .zero, color: .red, side: 40, duration: 0.05, shareable: false)
+        let done = expectation(description: "done")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { done.fulfill() }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(pool.idleCount, 1)
+        pool.show(at: .zero, color: .red, side: 40, duration: 0.05, shareable: true)
+        XCTAssertEqual(pool.idleCount, 0, "a window made for the other sharing choice is not reused")
+    }
+
+    func testNoMoreThanEightRingsAtOnce() {
+        let pool = RingPool()
+        for _ in 0..<12 { pool.show(at: .zero, color: .red, side: 30, duration: 0.3, shareable: false) }
+        XCTAssertEqual(pool.activeCount, 8)
+        let done = expectation(description: "done")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { done.fulfill() }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(pool.activeCount, 0)
     }
 }
