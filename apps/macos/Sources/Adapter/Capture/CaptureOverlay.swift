@@ -448,8 +448,33 @@ final class QuickAccessStatusItem: NSObject {
         item?.length = NSStatusItem.variableLength
     }
 
+    private let popover = NSPopover()
+
     @objc private func clicked() {
         guard let overlay, let button = item?.button else { return }
+        // A plain click opens the launcher; a right-click or Control-click opens the full menu.
+        if (StatusClick.current ?? .secondary) == .primary {
+            if popover.isShown { popover.performClose(nil); return }
+            showLauncher(from: button, overlay: overlay)
+            return
+        }
+        popover.performClose(nil)
+        showMenu(from: button, overlay: overlay)
+    }
+
+    private func showLauncher(from button: NSStatusBarButton, overlay: CaptureOverlay) {
+        let view = CaptureLauncherView(
+            actions: overlay.actions, recents: CaptureHistory.read(folder: overlay.actions.captureFolder(), limit: 6), canRestore: overlay.canRestore,
+            run: { [weak self] command in self?.popover.performClose(nil); overlay.actions.runCommand(command) },
+            showRecent: { [weak self] entry in self?.popover.performClose(nil); overlay.showAgain(entry) },
+            restore: { [weak self] in self?.popover.performClose(nil); overlay.restoreLast() })
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: view)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+    }
+
+    private func showMenu(from button: NSStatusBarButton, overlay: CaptureOverlay) {
         // Laid out the way people expect a capture tool's menu: pictures first, then recordings, then the text and special tools,
         // then what was captured, then the settings. Every command shows its shortcut on the right, and each has an icon.
         let menu = NSMenu()

@@ -162,8 +162,8 @@ final class ScrollCaptureSession: ObservableObject {
 
     /// A small picture of the latest frame for the panel.
     nonisolated private static func thumbnail(of image: CGImage) -> NSImage {
-        let width = 360.0
-        let height = min(max(width * Double(image.height) / Double(max(image.width, 1)), 40), 150)
+        let width = 412.0
+        let height = min(max(width * Double(image.height) / Double(max(image.width, 1)), 40), 190)
         return NSImage(cgImage: image, size: NSSize(width: width, height: height))
     }
 
@@ -217,7 +217,7 @@ final class ScrollCaptureSession: ObservableObject {
     // MARK: The panel
 
     private func showPanel(near rect: CGRect) {
-        let size = NSSize(width: 400, height: mode == .manual ? 330 : 270)
+        let size = NSSize(width: 440, height: mode == .manual ? 440 : 380)
         let host = NSHostingView(rootView: HUD(session: self))
         host.frame = NSRect(origin: .zero, size: size)
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -253,7 +253,7 @@ final class ScrollCaptureSession: ObservableObject {
                     Text(session.mode == .automatic ? (session.paused ? "Paused" : "Scrolling for you…") : "Scroll the page yourself")
                         .font(.system(size: 13, weight: .semibold))
                     Spacer()
-                    Text("\(session.frames) picture\(session.frames == 1 ? "" : "s") · \(session.length) px")
+                    Text("\(session.frames) picture\(session.frames == 1 ? "" : "s") · \(session.length) px \(session.axis == .horizontal ? "wide" : "tall")")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
                 }
                 if let progress = session.progress {
@@ -261,7 +261,12 @@ final class ScrollCaptureSession: ObservableObject {
                 }
                 if let preview = session.preview {
                     ZStack(alignment: .bottom) {
-                        Image(nsImage: preview).resizable().scaledToFill().frame(width: 372, height: 84, alignment: .bottom).clipped()
+                        Image(nsImage: preview).resizable().scaledToFill().frame(width: 412, height: 190, alignment: .bottom).clipped()
+                        if session.mode == .automatic {
+                            Text("The latest picture taken")
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(.white).padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Color.black.opacity(0.55), in: Capsule()).padding(6).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        }
                         if session.mode == .manual {
                             // Where the next picture has to overlap: the bottom third of this one must still be in view.
                             Text("Keep this strip in view as you scroll")
@@ -269,7 +274,7 @@ final class ScrollCaptureSession: ObservableObject {
                                 .background(Color.accentColor.opacity(0.75))
                         }
                     }
-                    .frame(width: 372, height: 84).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(width: 412, height: 190).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.quaternary))
                 }
                 if session.needsOverlap {
@@ -295,7 +300,7 @@ final class ScrollCaptureSession: ObservableObject {
                 }
             }
             .controlSize(.small)
-            .padding(14).frame(width: 400, alignment: .topLeading)
+            .padding(14).frame(width: 440, alignment: .topLeading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
