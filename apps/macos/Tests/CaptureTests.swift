@@ -372,3 +372,35 @@ final class ScreenCaptureServiceTests: XCTestCase {
         XCTAssertTrue(text.lowercased().contains("hello"), text)
     }
 }
+
+
+final class CameraStyleTests: XCTestCase {
+    func testTheWindowSitsInTheChosenCornerWithAMargin() {
+        let area = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        var style = CameraStyle(); style.size = .small
+        style.corner = .bottomRight
+        XCTAssertEqual(style.origin(in: area), CGPoint(x: 1000 - 140 - 30, y: 30))
+        style.corner = .topLeft
+        XCTAssertEqual(style.origin(in: area), CGPoint(x: 30, y: 800 - 140 - 30))
+        style.corner = .bottomLeft
+        XCTAssertEqual(style.origin(in: area), CGPoint(x: 30, y: 30))
+        style.corner = .topRight
+        XCTAssertEqual(style.origin(in: area), CGPoint(x: 1000 - 140 - 30, y: 800 - 140 - 30))
+    }
+
+    func testShapesRoundTheCornersAsTheirNamesSay() {
+        var style = CameraStyle()
+        style.shape = .circle; XCTAssertEqual(style.cornerRadius(side: 200), 100)
+        style.shape = .square; XCTAssertEqual(style.cornerRadius(side: 200), 0)
+        style.shape = .rounded; XCTAssertEqual(style.cornerRadius(side: 200), 36, accuracy: 0.001)
+    }
+
+    func testSizesGrowAndOldSavedOptionsStillLoad() throws {
+        XCTAssertLessThan(CameraStyle.Size.small.side, CameraStyle.Size.medium.side)
+        XCTAssertLessThan(CameraStyle.Size.medium.side, CameraStyle.Size.large.side)
+        // Options saved before the camera had a style have no "cameraStyle" key and must still decode.
+        let old = #"{"source":"screen","systemAudio":true,"microphone":false,"hdr":false,"framesPerSecond":30,"showCursor":true,"showKeystrokes":false,"webcam":true,"cameraID":""}"#
+        let decoded = try JSONDecoder().decode(RecordingOptions.self, from: Data(old.utf8))
+        XCTAssertEqual(decoded.cameraStyle, CameraStyle())
+    }
+}

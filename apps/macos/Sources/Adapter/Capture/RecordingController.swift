@@ -76,7 +76,7 @@ final class RecordingController: ObservableObject {
             }
         }
         if options.webcam {
-            camera.show(cameraID: options.cameraID) { [weak self] problem in
+            camera.show(cameraID: options.cameraID, style: options.cameraStyle) { [weak self] problem in
                 if let problem { self?.toast.show(problem, isError: true) }
                 // The recording goes ahead without the camera rather than not at all.
                 begin()

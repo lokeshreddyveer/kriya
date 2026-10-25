@@ -349,7 +349,14 @@ private struct RecordingSection: View {
             if options.microphone { MediaPermissionNote(permission: .microphone) }
             Toggle("Show the keys I press", isOn: bind(\.showKeystrokes))
             Toggle("Show the camera in a small window", isOn: bind(\.webcam))
-            if options.webcam { MediaPermissionNote(permission: .camera) }
+            if options.webcam {
+                MediaPermissionNote(permission: .camera)
+                Picker("Camera shape", selection: bind(\.cameraStyle.shape)) { ForEach(CameraStyle.Shape.allCases) { Text($0.title).tag($0) } }
+                Picker("Camera size", selection: bind(\.cameraStyle.size)) { ForEach(CameraStyle.Size.allCases) { Text($0.title).tag($0) } }
+                Picker("Camera corner", selection: bind(\.cameraStyle.corner)) { ForEach(CameraStyle.Corner.allCases) { Text($0.title).tag($0) } }
+                Toggle("A white border around the camera", isOn: bind(\.cameraStyle.border))
+                Toggle("Mirror the camera, like a mirror", isOn: bind(\.cameraStyle.mirrored))
+            }
             Toggle("Show the pointer", isOn: bind(\.showCursor))
             Toggle("Record in HDR", isOn: bind(\.hdr)).disabled(!ScreenRecorder.hdrAvailable)
             Picker("Frame rate", selection: bind(\.framesPerSecond)) {

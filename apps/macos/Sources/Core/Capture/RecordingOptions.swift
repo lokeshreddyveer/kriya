@@ -19,6 +19,70 @@ enum RecordingSource: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// How the camera looks on screen while recording.
+struct CameraStyle: Codable, Equatable {
+    enum Shape: String, CaseIterable, Identifiable, Codable {
+        case circle, rounded, square
+        var id: String { rawValue }
+        var title: String { self == .circle ? "Circle" : self == .rounded ? "Rounded square" : "Square" }
+    }
+    enum Size: String, CaseIterable, Identifiable, Codable {
+        case small, medium, large
+        var id: String { rawValue }
+        var title: String { rawValue.capitalized }
+        /// The width and height of the window in points.
+        var side: Double { self == .small ? 140 : self == .medium ? 220 : 320 }
+    }
+    enum Corner: String, CaseIterable, Identifiable, Codable {
+        case bottomRight, bottomLeft, topRight, topLeft
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .bottomRight: return "Bottom right"
+            case .bottomLeft: return "Bottom left"
+            case .topRight: return "Top right"
+            case .topLeft: return "Top left"
+            }
+        }
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = CameraStyle()
+        shape = try c.decodeIfPresent(Shape.self, forKey: .shape) ?? d.shape
+        size = try c.decodeIfPresent(Size.self, forKey: .size) ?? d.size
+        corner = try c.decodeIfPresent(Corner.self, forKey: .corner) ?? d.corner
+        border = try c.decodeIfPresent(Bool.self, forKey: .border) ?? d.border
+        mirrored = try c.decodeIfPresent(Bool.self, forKey: .mirrored) ?? d.mirrored
+    }
+
+    var shape: Shape = .circle
+    var size: Size = .medium
+    var corner: Corner = .bottomRight
+    var border = true
+    /// Flips the picture left to right, like a mirror, as a camera preview usually is.
+    var mirrored = true
+
+    /// The corner radius for a window `side` points across.
+    func cornerRadius(side: Double) -> Double {
+        switch shape {
+        case .circle: return side / 2
+        case .rounded: return side * 0.18
+        case .square: return 0
+        }
+    }
+
+    /// Where the window's bottom-left corner goes inside `area` (AppKit coordinates), `margin` points from the chosen corner.
+    func origin(in area: CGRect, margin: Double = 30) -> CGPoint {
+        let s = size.side
+        let x = (corner == .bottomLeft || corner == .topLeft) ? area.minX + margin : area.maxX - s - margin
+        let y = (corner == .bottomLeft || corner == .bottomRight) ? area.minY + margin : area.maxY - s - margin
+        return CGPoint(x: x, y: y)
+    }
+}
+
 /// How a recording is made. Kept apart from the recorder so the choices can be checked without a screen.
 struct RecordingOptions: Codable, Equatable {
     var source: RecordingSource = .screen
@@ -34,6 +98,25 @@ struct RecordingOptions: Codable, Equatable {
     var webcam = false
     /// The camera's own id. Empty means the Mac's default one.
     var cameraID = ""
+    var cameraStyle = CameraStyle()
+
+    init() {}
+
+    /// Reads options saved by any earlier version: a key that is not there keeps its usual value, so an old file never fails to load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = RecordingOptions()
+        source = try c.decodeIfPresent(RecordingSource.self, forKey: .source) ?? d.source
+        systemAudio = try c.decodeIfPresent(Bool.self, forKey: .systemAudio) ?? d.systemAudio
+        microphone = try c.decodeIfPresent(Bool.self, forKey: .microphone) ?? d.microphone
+        hdr = try c.decodeIfPresent(Bool.self, forKey: .hdr) ?? d.hdr
+        framesPerSecond = try c.decodeIfPresent(Int.self, forKey: .framesPerSecond) ?? d.framesPerSecond
+        showCursor = try c.decodeIfPresent(Bool.self, forKey: .showCursor) ?? d.showCursor
+        showKeystrokes = try c.decodeIfPresent(Bool.self, forKey: .showKeystrokes) ?? d.showKeystrokes
+        webcam = try c.decodeIfPresent(Bool.self, forKey: .webcam) ?? d.webcam
+        cameraID = try c.decodeIfPresent(String.self, forKey: .cameraID) ?? d.cameraID
+        cameraStyle = try c.decodeIfPresent(CameraStyle.self, forKey: .cameraStyle) ?? d.cameraStyle
+    }
 
     static let allowedFrameRates = [15, 24, 30, 60]
 

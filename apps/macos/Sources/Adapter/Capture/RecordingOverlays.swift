@@ -117,7 +117,7 @@ final class WebcamBubble {
     private var session: AVCaptureSession?
 
     /// Shows the camera. Calls back with a reason if it cannot.
-    func show(cameraID: String, completion: @escaping (String?) -> Void) {
+    func show(cameraID: String, style: CameraStyle = CameraStyle(), completion: @escaping (String?) -> Void) {
         guard panel == nil else { return completion(nil) }
         AVCaptureDevice.requestAccess(for: .video) { granted in
             DispatchQueue.main.async {
@@ -129,7 +129,7 @@ final class WebcamBubble {
                 guard session.canAddInput(input) else { return completion("The camera could not be used.") }
                 session.addInput(input)
                 self.session = session
-                self.present(session)
+                self.present(session, style: style)
                 DispatchQueue.global(qos: .userInitiated).async { session.startRunning() }
                 completion(nil)
             }
@@ -144,8 +144,14 @@ final class WebcamBubble {
         panel = nil
     }
 
-    private func present(_ session: AVCaptureSession) {
-        let size = NSSize(width: 220, height: 220)
+    /// Moves the camera to another corner while it is showing.
+    func move(to style: CameraStyle) {
+        guard let panel, let screen = panel.screen ?? screenUnderPointer() else { return }
+        panel.setFrameOrigin(NSPoint(x: style.origin(in: screen.visibleFrame).x, y: style.origin(in: screen.visibleFrame).y))
+    }
+
+    private func present(_ session: AVCaptureSession, style: CameraStyle) {
+        let size = NSSize(width: style.size.side, height: style.size.side)
         let panel = makeFloatingPanel(size: size, clickThrough: false)
         panel.isMovableByWindowBackground = true
         let view = NSView(frame: NSRect(origin: .zero, size: size))
@@ -153,15 +159,15 @@ final class WebcamBubble {
         let preview = AVCaptureVideoPreviewLayer(session: session)
         preview.frame = view.bounds
         preview.videoGravity = .resizeAspectFill
-        preview.cornerRadius = size.width / 2
+        preview.cornerRadius = CGFloat(style.cornerRadius(side: style.size.side))
         preview.masksToBounds = true
-        preview.borderWidth = 3
+        preview.borderWidth = style.border ? 3 : 0
         preview.borderColor = NSColor.white.withAlphaComponent(0.85).cgColor
+        if style.mirrored { preview.connection?.automaticallyAdjustsVideoMirroring = false; preview.connection?.isVideoMirrored = true }
         view.layer?.addSublayer(preview)
         panel.contentView = view
         if let screen = screenUnderPointer() {
-            let frame = screen.visibleFrame
-            panel.setFrameOrigin(NSPoint(x: frame.maxX - size.width - 30, y: frame.minY + 30))
+            panel.setFrameOrigin(style.origin(in: screen.visibleFrame))
         }
         panel.orderFrontRegardless()
         self.panel = panel
