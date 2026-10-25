@@ -121,5 +121,13 @@
 <p>Many of these are new and have not yet been tried on every Mac. Tell us what misbehaves.</p>]]></description>
       <enclosure url="https://github.com/lokeshreddyveer/kriya/releases/download/v0.6.0/Kriya-0.6.0.dmg" length="43113258" type="application/octet-stream" sparkle:edSignature="mQb8fiEt/uvMKdz7OrtEsj7NA1OOT8GTgNALTfkb/bu6sUy03eBfI9sRf9nSveJfH24koy6PnMcfYZqrmlkfDQ=="/>
     </item>
+    <item>
+      <title>Kriya 0.10.2</title>
+      <pubDate>Sat, 24 Oct 2026 23:50:00 -0000</pubDate>
+      <sparkle:version>39</sparkle:version>
+      <sparkle:shortVersionString>0.10.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/lokeshreddyveer/kriya/releases/download/v0.10.2/Kriya-0.10.2.dmg" length="49568494" type="application/octet-stream" sparkle:edSignature="yzaP6VMOLaGRY9huKyFwbtceFLwjVqcYGNhbZ/c/tbg+LNtWtZPPl4LJDAFOVdElKOnZAp+Rbb0dHmrjUn+/DA=="/>
+    </item>
   </channel>
 </rss>

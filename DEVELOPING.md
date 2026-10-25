@@ -110,12 +110,12 @@ The code builds and its automated tests pass (see Status), but the features that
 - **IOHID matching without Input Monitoring:** the device registry opens `IOHIDManager` at launch; if macOS prompts for Input Monitoring just for listing mice, defer `start()` until the Mouse feature is on.
 - **Finder extension:** needs enabling in System Settings, and may need a Finder relaunch to show its menu.
 - There is no app icon yet (the menu bar uses an SF Symbol).
-- **Updates:** `SUFeedURL` in `project.yml` points at `lokeshreddyveer/kriya`, which is private for now, so updates do not reach other people until the repository is public or the feed moves.
+- **Updates:** `SUFeedURL` in `project.yml` points at `appcast.xml` in this public repository. After `scripts/release.sh`, sign the DMG with Sparkle's `sign_update`, add an `<item>` to `appcast.xml`, and upload the DMG to a GitHub release named `v<version>`.
 
 
 Notes added later:
 
 - **Finder extension:** a build registers its own copy of the extension; after building, `pluginkit -a /Applications/Kriya.app/Contents/PlugIns/KriyaFinder.appex` and unregister stray copies with `lsregister -u`, or macOS sends `kriya://` links to the wrong copy. Extension activity is logged under the `app.kriya.finder` subsystem.
 - **Force-quitting during testing** makes Kriya start in safe mode (three unexpected quits); delete `~/Library/Application Support/Kriya/session.json` and quit it gracefully.
-- **Updates:** `SUFeedURL` in `project.yml` points at a private repository, so updates reach no other Mac until the releases are public.
+- **Updates:** the feed is `appcast.xml` on `main`; a release is not offered to anyone until its DMG is uploaded and its item is in that file.
 - **Not built:** multi-finger trackpad gestures (private framework), Spaces and always-on-top (private APIs), Safari extension, Logitech-specific features, scrolling capture.
