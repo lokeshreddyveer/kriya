@@ -126,8 +126,15 @@ enum QuickAccessLayout {
 
 /// The line under a card's picture: what it is and when it was made.
 enum QuickAccessInfo {
-    static func line(width: Int?, height: Int?, bytes: Int?, format: String, date: Date, now: Date = Date()) -> String {
+    /// "1:05" or "0:07": a recording's length.
+    static func duration(_ seconds: Double) -> String {
+        let total = max(Int(seconds.rounded()), 0)
+        return total >= 3600 ? String(format: "%d:%02d:%02d", total / 3600, total % 3600 / 60, total % 60) : String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    static func line(width: Int?, height: Int?, bytes: Int?, format: String, date: Date, now: Date = Date(), seconds: Double? = nil) -> String {
         var parts: [String] = []
+        if let seconds, seconds > 0 { parts.append(duration(seconds)) }
         if let width, let height, width > 0, height > 0 { parts.append("\(width) × \(height)") }
         if !format.isEmpty { parts.append(format.uppercased()) }
         if let bytes { parts.append(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)) }

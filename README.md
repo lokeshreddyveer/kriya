@@ -715,6 +715,12 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   equaliser (saying how far off the fit is), puts it on "All sound" when that device is the output and takes it off when another is. Nothing is
   downloaded. **Sound health** lists each output's delay, what Kriya's processing adds for each app and anything that failed. New commands for
   shortcuts and `kriya://run`: the front app's favorite, boost and menu-bar icon, the device order, and front-app volume in the step you chose.
+- **Capture launcher, camera options and recording length (0.10.3):** a click on the capture icon in the menu bar now opens a launcher with every
+  capture in groups (Screenshot, Record, Text and tools) and each one's shortcut, the recording in progress with Pause and Stop, saved areas,
+  thumbnails of recent captures and links to History, the folder and Settings; right-click or Control-click still opens the full menu. The
+  scrolling capture window is wider and shows the latest picture taken at twice the height. The camera shown while recording can be a
+  circle, rounded square or square, small, medium or large, in any corner, with or without a border, and mirrored or not (Settings › Screen
+  Capture › Recording). A recording's card says how long it is. Settings saved by earlier versions still load.
 - **Fixes (0.10.2):** the **click rings** no longer make the whole screen flash dark when you press the mouse (for example on the sound
   slider): they are drawn in a few windows that are reused, instead of a new window for every press. The **sound menu-bar icon** takes its
   settings (icon style, the volume and the output's name beside it) as soon as you change them, and pinned device icons follow the output,

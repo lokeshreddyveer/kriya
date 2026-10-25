@@ -49,7 +49,9 @@ final class OverlayCard: ObservableObject, Identifiable {
     var infoLine: String {
         let bytes = file.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }
         let format = file?.pathExtension ?? (isRecording ? "mov" : "png")
-        return QuickAccessInfo.line(width: isRecording ? nil : image.width, height: isRecording ? nil : image.height, bytes: bytes, format: format, date: date)
+        // A recording's card says how long it is, which its first frame cannot.
+        let length: Double? = isRecording ? file.map { AVURLAsset(url: $0).duration.seconds }.flatMap { $0.isFinite ? $0 : nil } : nil
+        return QuickAccessInfo.line(width: isRecording ? nil : image.width, height: isRecording ? nil : image.height, bytes: bytes, format: format, date: date, seconds: length)
     }
 }
 

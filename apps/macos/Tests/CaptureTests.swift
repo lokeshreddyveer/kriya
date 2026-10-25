@@ -404,3 +404,19 @@ final class CameraStyleTests: XCTestCase {
         XCTAssertEqual(decoded.cameraStyle, CameraStyle())
     }
 }
+
+
+final class QuickAccessDurationTests: XCTestCase {
+    func testALengthReadsAsMinutesAndSeconds() {
+        XCTAssertEqual(QuickAccessInfo.duration(7), "0:07")
+        XCTAssertEqual(QuickAccessInfo.duration(65), "1:05")
+        XCTAssertEqual(QuickAccessInfo.duration(3725), "1:02:05")
+        XCTAssertEqual(QuickAccessInfo.duration(-3), "0:00")
+    }
+
+    func testARecordingLineStartsWithItsLength() {
+        let line = QuickAccessInfo.line(width: 1920, height: 1080, bytes: 1_000_000, format: "mov", date: Date(), seconds: 42)
+        XCTAssertTrue(line.hasPrefix("0:42 · 1920 × 1080"), line)
+        XCTAssertFalse(QuickAccessInfo.line(width: 10, height: 10, bytes: nil, format: "png", date: Date()).contains(":42"))
+    }
+}
