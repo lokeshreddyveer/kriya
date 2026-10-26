@@ -406,6 +406,8 @@ final class QuickAccessStatusItem: NSObject {
             let created = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
             created.button?.target = self
             created.button?.action = #selector(clicked)
+            // Right-click and Control-click open the full menu; without this only a left click reached the icon.
+            created.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
             item = created
         } else if !wanted, let item {
             NSStatusBar.system.removeStatusItem(item)
@@ -471,7 +473,10 @@ final class QuickAccessStatusItem: NSObject {
             showRecent: { [weak self] entry in self?.popover.performClose(nil); overlay.showAgain(entry) },
             restore: { [weak self] in self?.popover.performClose(nil); overlay.restoreLast() })
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: view)
+        // The window is as tall as its content, so nothing is cut off at the bottom.
+        let host = NSHostingController(rootView: view)
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
     }

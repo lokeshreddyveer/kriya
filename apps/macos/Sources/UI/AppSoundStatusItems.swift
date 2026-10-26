@@ -91,10 +91,10 @@ final class AppSoundStatusItems: NSObject, NSPopoverDelegate {
         popover.delegate = self
         let view = Form { AppMixerRow(key: key, name: AudioProcessList.name(for: key), symbol: "app", bundleID: key, isFavorite: engine.isFavorite(key)) }
             .formStyle(.grouped)
-            .frame(width: 380, height: 150)
+            .frame(width: 380, height: 340)   // tall enough for the effects; the form scrolls if there is more
             .environmentObject(engine).environmentObject(mixer).environmentObject(quick)
         popover.contentViewController = NSHostingController(rootView: view)
-        popover.contentSize = NSSize(width: 380, height: 150)
+        popover.contentSize = NSSize(width: 380, height: 340)
         popovers[key] = popover
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
         engine.viewerAppeared()

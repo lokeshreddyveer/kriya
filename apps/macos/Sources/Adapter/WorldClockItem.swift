@@ -92,7 +92,9 @@ final class WorldClockStatusItem: NSObject {
         self.model = model
         super.init()
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: WorldClockView(model: model))
+        let host = NSHostingController(rootView: WorldClockView(model: model))
+        host.sizingOptions = [.preferredContentSize]   // as tall as its places and events, not cut off
+        popover.contentViewController = host
         model.$showInMenuBar.receive(on: DispatchQueue.main).sink { [weak self] on in self?.setVisible(on) }.store(in: &cancellables)
         model.$now.combineLatest(model.$places, model.$twentyFourHour).receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refresh() }.store(in: &cancellables)
     }
