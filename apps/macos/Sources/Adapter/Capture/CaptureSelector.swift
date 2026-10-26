@@ -402,11 +402,14 @@ final class SelectorView: NSView {
     private struct Button { let symbol: String; let title: String; let action: SelectorResult.Action? ; var frame: CGRect }
 
     private var toolbarButtons: [Button] {
-        guard model.kind == .area, model.phase == .adjusting, model.showToolbar, isActive else { return [] }
-        let defs: [(String, String, SelectorResult.Action?)] = [
+        guard model.kind == .area, model.phase == .adjusting, isActive else { return [] }
+        // Without the full toolbar (a scrolling capture) the area still needs a visible way to go on, not only ⏎.
+        let defs: [(String, String, SelectorResult.Action?)] = model.showToolbar ? [
             ("camera.viewfinder", "Capture  ⏎", .capture), ("doc.on.doc", "Copy", .copy), ("square.and.arrow.down", "Save", .save),
             ("pencil.tip.crop.circle", "Annotate", .annotate), ("pin", "Pin", .pin), ("text.viewfinder", "Copy text", .text),
             ("eye.slash", "Hide private text", .redact), ("xmark", "Cancel  ⎋", nil),
+        ] : [
+            ("play.fill", "Start  ⏎", .capture), ("xmark", "Cancel  ⎋", nil),
         ]
         let size: CGFloat = 32, gap: CGFloat = 2, pad: CGFloat = 6
         let total = CGFloat(defs.count) * size + CGFloat(defs.count - 1) * gap + pad * 2
@@ -434,7 +437,7 @@ final class SelectorView: NSView {
         case .window: drawWindow(context)
         case .display: drawDisplay(context)
         }
-        if let hint = model.hint, !(model.kind == .area && model.phase != .idle) { drawPill(hint, at: CGPoint(x: bounds.midX, y: 44), center: true) }
+        if let hint = model.hint, !(model.kind == .area && model.phase != .idle && model.showToolbar) { drawPill(hint, at: CGPoint(x: bounds.midX, y: 44), center: true) }
     }
 
     /// The frozen picture across the whole screen. This view counts y from the top, so the picture is drawn with that in mind.

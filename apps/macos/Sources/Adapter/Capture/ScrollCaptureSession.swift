@@ -197,7 +197,10 @@ final class ScrollCaptureSession: ObservableObject {
         if let advice = world.advice { note = advice }
         let result = await engine.run()
         if result.cancelled { return (nil, "Scrolling capture cancelled.") }
-        guard let image = ScrollImage.assemble(frames: result.frames, plan: result.plan, axis: result.axis) else { return (nil, "Nothing was captured.") }
+        guard let image = ScrollImage.assemble(frames: result.frames, plan: result.plan, axis: result.axis) else {
+            let why = result.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (nil, why.isEmpty ? "Nothing was captured." : "Nothing was captured. \(why)")
+        }
         return (image, Self.summary(of: result))
     }
 

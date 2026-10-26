@@ -715,6 +715,9 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   equaliser (saying how far off the fit is), puts it on "All sound" when that device is the output and takes it off when another is. Nothing is
   downloaded. **Sound health** lists each output's delay, what Kriya's processing adds for each app and anything that failed. New commands for
   shortcuts and `kriya://run`: the front app's favorite, boost and menu-bar icon, the device order, and front-app volume in the step you chose.
+- **Scrolling capture starts visibly (0.10.5):** after you drag the area that scrolls, the screen now shows **Start ⏎** and **Cancel ⎋**
+  buttons and keeps its instruction line (before, only pressing ⏎ went on, with nothing saying so). If the first picture cannot be taken, the
+  message now says why.
 - **Menu-bar panels no longer cut off (0.10.4):** the capture launcher and the world clock size themselves to what they show, and the
   per-app effects panel is taller. Right-click on the capture icon opens its full menu again.
 - **Capture launcher, camera options and recording length (0.10.3):** a click on the capture icon in the menu bar now opens a launcher with every
