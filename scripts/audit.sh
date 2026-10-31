@@ -35,7 +35,7 @@ fi
 
 # 3. README claims that were found to be wrong. Add a line here whenever one is corrected, so it cannot come back.
 for phrase in "overwritten on disk" "Everything stays on your Mac" "back up all your settings"; do
-  if grep -q "$phrase" README.md; then bad "README.md still says “$phrase”, which is not true"; fi
+  if grep -q "$phrase" README.md docs/FEATURES.md; then bad "README.md or docs/FEATURES.md still says “$phrase”, which is not true"; fi
 done
 
 # 4. Every service id handed to the manager is one the evidence table knows.

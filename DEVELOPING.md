@@ -1,6 +1,6 @@
 # Developing Kriya
 
-Notes for building and changing the app. What the app does and how to use it is in README.md.
+Notes for building and changing the app. What the app does is in README.md; every setting is described in docs/FEATURES.md.
 
 ## Building and testing
 
