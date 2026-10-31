@@ -119,19 +119,66 @@ struct WindowAutomationSection: View {
     @Environment(\.paths) private var paths
     @State private var command = "window.left_half"
     @State private var copied: String?
+    @State private var enabled = RemoteAccess.isEnabled()
+    @State private var tokenState: RemoteTokenState = .neverCreated
+    @State private var confirming: TokenAction?
 
-    private var token: String { BridgeToken.loadOrCreate(in: paths.support) }
+    private enum TokenAction: Identifiable {
+        case rotate, revoke
+        var id: Int { self == .rotate ? 0 : 1 }
+    }
+
+    private var tokens: RemoteTokenStore { RemoteTokenStore(support: paths.support) }
+    /// The token for links, only while remote commands are on and a token exists.
+    private var token: String? { enabled ? tokenState.token : nil }
 
     var body: some View {
         Section {
-            Picker("Command", selection: $command) { ForEach(windowCommandChoices(store), id: \.command) { Text($0.title).tag($0.command) } }
-            copyRow("Terminal", "kriya run \(command)")
-            // The secret is in what is copied, not in what is shown.
-            copyRow("Web link", "kriya://run?command=\(command)&t=\(token)", shown: "kriya://run?command=\(command)&t=••••••••")
-            copyRow("AppleScript", "do shell script \"open 'kriya://run?command=\(command)&t=\(token)'\"", shown: "do shell script \"open 'kriya://run?command=\(command)&t=••••••••'\"")
-            copyRow("Shell", "open 'kriya://run?command=\(command)&t=\(token)'", shown: "open 'kriya://run?command=\(command)&t=••••••••'")
+            Toggle("Let other programs run Kriya commands", isOn: $enabled)
+                .onChange(of: enabled) { _, on in
+                    if let remote = RemoteCommands.shared { remote.setEnabled(on) } else { RemoteAccess.setEnabled(on); tokens.writeState(enabled: on) }
+                    tokenState = tokens.state
+                }
+            if enabled {
+                Picker("Command", selection: $command) { ForEach(windowCommandChoices(store), id: \.command) { Text($0.title).tag($0.command) } }
+                if let token {
+                    copyRow("Terminal", "kriya run \(command)")
+                    // The secret is in what is copied, not in what is shown.
+                    copyRow("Web link", "kriya://run?command=\(command)&t=\(token)", shown: "kriya://run?command=\(command)&t=••••••••")
+                    copyRow("AppleScript", "do shell script \"open 'kriya://run?command=\(command)&t=\(token)'\"", shown: "do shell script \"open 'kriya://run?command=\(command)&t=••••••••'\"")
+                    copyRow("Shell", "open 'kriya://run?command=\(command)&t=\(token)'", shown: "open 'kriya://run?command=\(command)&t=••••••••'")
+                } else {
+                    Text("The access token was revoked, so no link or command works. Create a new one to use them again.").font(.callout).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button("Create a new token…") { confirming = .rotate }.controlSize(.small)
+                    Button("Revoke the token…", role: .destructive) { confirming = .revoke }.controlSize(.small).disabled(tokenState.token == nil)
+                    Spacer()
+                }
+            } else {
+                Text("Off: links, the command-line tool, Shortcuts actions and the local web address are all turned away with a message, and nothing is run. The token stays saved but nothing that carries it is accepted.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         } header: { Text("Control from outside") } footer: {
-            Text("Every window command can be run from the Terminal (Settings › General › Command line and Shortcuts installs “kriya”), from a link, an AppleScript or the Shortcuts app (“Run a Kriya Command”). A command for the window under the pointer instead of the one in front is the same name with “window.pointer.” in front, such as window.pointer.left_half. The link carries a secret only your account can read; keep it to yourself.")
+            Text("Every window command can be run from the Terminal (Settings › General › Command line and Shortcuts installs “kriya”), from a link, an AppleScript or the Shortcuts app (“Run a Kriya Command”). A command for the window under the pointer instead of the one in front is the same name with “window.pointer.” in front, such as window.pointer.left_half. The link carries a secret only your account can read; keep it to yourself. A new token makes every link and script that carried the old one stop working at once; revoking it leaves no token until you create one. The browser extensions use a different secret and are not affected.")
+        }
+        .onAppear {
+            enabled = RemoteAccess.isEnabled()
+            tokens.tokenForUse()
+            tokenState = tokens.state
+        }
+        .confirmationDialog(confirming == .revoke ? "Revoke the token?" : "Create a new token?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), titleVisibility: .visible) {
+            Button(confirming == .revoke ? "Revoke" : "Create a New Token", role: .destructive) {
+                if confirming == .revoke {
+                    if let remote = RemoteCommands.shared { remote.revokeToken() } else { tokens.revoke() }
+                } else {
+                    if let remote = RemoteCommands.shared { remote.rotateToken() } else { tokens.rotate() }
+                }
+                tokenState = tokens.state
+                confirming = nil
+            }
+        } message: {
+            Text(confirming == .revoke ? "Every link, script and command-line call that carries the token stops working, and none will until you create a new one." : "Every link, script and command-line call that carries the old token stops working. Copy the new ones from here.")
         }
     }
 

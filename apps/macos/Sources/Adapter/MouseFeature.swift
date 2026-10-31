@@ -27,12 +27,17 @@ final class MouseFeature: FeatureModule {
     private let horizontalShaper: ScrollShaper
     private let smoother: SmoothScroller
     private let driver: SmoothScrollDriver
+    /// The trackpad-style engine, used only when it is switched on (off by default). The older smooth scrolling above is untouched.
+    private let physics = PhysicsScrollDriver()
+    private var physicsSettings = ScrollPhysicsSettings()      // guarded by physicsLock
+    private let physicsLock = NSLock()
     private let gestures = GestureEngine(config: GestureEngineConfig(activationButton: nil, threshold: 60, timeoutMs: 600, rocker: false))
     private let tuner = PointerTuner()
 
     // Touched only on the tap's thread: which settings the shapers and the gesture engine were last given.
     private var appliedKey: String?
     private var appliedRevision = -1
+    private var appliedCompensation = PointerCompensationStore().settings
 
     private let lock = NSLock()
     private var swallowedReleases = DeviceButtonSet()   // guarded by lock
@@ -68,6 +73,16 @@ final class MouseFeature: FeatureModule {
         .sink { [weak self] in self?.applyPointerSettings() }
         .store(in: &cancellables)
         applyPointerSettings()
+        loadPhysicsSettings()
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .debounce(for: .milliseconds(150), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.loadPhysicsSettings()
+                // A resolution entered or changed re-applies the pointer speed; other preference changes do not.
+                let latest = PointerCompensationStore().settings
+                if latest != self?.appliedCompensation { self?.appliedCompensation = latest; self?.applyPointerSettings() }
+            }
+            .store(in: &cancellables)
         registerPointerCommands(context)
         Log.info("Mouse", "Mouse and trackpad management started")
     }
@@ -78,6 +93,7 @@ final class MouseFeature: FeatureModule {
         token = nil
         cancellables.removeAll()
         driver.stop()
+        physics.cancel()
         smoother.clear()
         holds.cancel()
         gestures.reset()
@@ -151,10 +167,19 @@ final class MouseFeature: FeatureModule {
             return .passThrough
         }
         sync(compiled, deviceID: deviceID, revision: context.mouse.snapshotRevision())
+        // Whether Kriya would change the wheel with these settings, so the coexistence check can say who owns scrolling.
+        CoexistenceMonitor.shared.setKriyaChangesScrolling(physicsEnabled || !compiled.verticalIsNeutral || !compiled.horizontalIsNeutral)
 
         let now = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        // A click stops a glide or carry-on, as putting a finger on a trackpad does.
+        if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown, physicsEnabled { physics.cancel() }
         switch type {
         case .scrollWheel:
+            // Another tool that handles scrolling is open and Kriya has stepped aside: the wheel is left exactly as it arrived.
+            // A scroll event posted by another program (a real wheel has no sending process) is evidence that program is acting on scrolling.
+            let sender = pid_t(truncatingIfNeeded: event.getIntegerValueField(.eventSourceUnixProcessID))
+            if sender > 0 { CoexistenceMonitor.shared.noteScroll(fromProcess: sender) }
+            if CoexistenceMonitor.shared.yieldsScrolling { return .passThrough }
             return handleScroll(event, compiled, nowMs: now)
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             return handleButton(down: true, event, compiled, nowMs: now, device: deviceID ?? "")
@@ -179,13 +204,73 @@ final class MouseFeature: FeatureModule {
         appliedRevision = revision
     }
 
+    // MARK: Trackpad-style scrolling
+
+    private var physicsEnabled: Bool {
+        physicsLock.lock(); defer { physicsLock.unlock() }
+        return physicsSettings.enabled
+    }
+
+    /// Reads the engine's settings (not on the tap's thread) and gives the engine its numbers. Switching it off stops anything in flight.
+    private func loadPhysicsSettings() {
+        let loaded = ScrollPhysicsStore().settings
+        physicsLock.lock()
+        let was = physicsSettings.enabled
+        physicsSettings = loaded
+        physicsLock.unlock()
+        physics.update(loaded.config)
+        if was, !loaded.enabled { physics.cancel() }
+    }
+
+    /// With the engine on: a wheel movement becomes a trackpad-style gesture with momentum. Returns nil to leave the event to the
+    /// older path (engine off, a trackpad's own events, Kriya's own events, and a rotate, which macOS gives no way to post).
+    private func handlePhysics(_ event: CGEvent, settings: MouseSettings) -> EventDisposition? {
+        physicsLock.lock()
+        let current = physicsSettings
+        physicsLock.unlock()
+        guard current.enabled else { return nil }
+        let kind = ScrollInputKind.classify(isContinuous: event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0,
+                                            userData: event.getIntegerValueField(.eventSourceUserData), marker: EventMonitor.syntheticMarker)
+        let held = KeyModifiers.bits(from: event.flags)
+        switch kind {
+        case .syntheticMomentum:
+            return nil
+        case .continuous:
+            // A trackpad already has its own phases and momentum: only scroll-to-zoom applies to it.
+            let route = ScrollTransform.continuous(dx: event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2), dy: event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1), held: held, config: current.config)
+            if case .zoom(let amount) = route {
+                physics.zoom(amount, flags: event.flags.subtracting(KeyModifiers.flags(from: current.config.zoomModifier)), location: event.location)
+                return .drop
+            }
+            return nil
+        case .wheel:
+            let sideways = settings.horizontalScrollModifier != 0 && held & settings.horizontalScrollModifier == settings.horizontalScrollModifier
+            let route = ScrollTransform.route(lineX: event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2), lineY: event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1),
+                                              held: held, swapAxes: sideways, config: current.config)
+            // The keys that chose zoom, sideways or quick scrolling are not passed on with the movement.
+            let remove = KeyModifiers.flags(from: current.config.zoomModifier | current.config.quickModifier | current.config.preciseModifier | settings.horizontalScrollModifier)
+            switch route {
+            case .scroll(let dx, let dy, let precise):
+                physics.push(dx: dx, dy: dy, precise: precise, flags: event.flags.subtracting(remove), location: event.location)
+                return .drop
+            case .zoom(let amount):
+                physics.zoom(amount, flags: event.flags.subtracting(remove), location: event.location)
+                return .drop
+            case .rotate:
+                return nil
+            }
+        }
+    }
+
     // MARK: Scrolling
+
 
     private func handleScroll(_ event: CGEvent, _ compiled: CompiledMouse, nowMs: UInt64) -> EventDisposition {
         let settings = compiled.settings
         let held = KeyModifiers.bits(from: event.flags)
         // Holding the "plain scroll" keys leaves the scroll exactly as the mouse sent it.
         if settings.rawScrollModifier != 0, held & settings.rawScrollModifier == settings.rawScrollModifier { return .passThrough }
+        if let handled = handlePhysics(event, settings: settings) { return handled }
         // Holding the "sideways" keys turns up and down into left and right.
         let sideways = settings.horizontalScrollModifier != 0 && held & settings.horizontalScrollModifier == settings.horizontalScrollModifier
         if !sideways, compiled.verticalIsNeutral && compiled.horizontalIsNeutral { return .passThrough }
@@ -413,6 +498,7 @@ final class MouseFeature: FeatureModule {
         lock.lock()
         let precision = precisionActive
         lock.unlock()
+        let compensation = PointerCompensationStore().settings
         for device in context.devices.devices where device.isConnected {
             guard let compiled = context.mouse.compiled(forDevice: device.id) else {
                 tuner.apply(vendor: Int(device.record.vendorId), product: Int(device.record.productId), trackpad: device.record.kind == .trackpad, value: nil)
@@ -420,9 +506,11 @@ final class MouseFeature: FeatureModule {
             }
             let pointer = compiled.settings.pointer
             let value = precision ? pointerPrecisionTrackingValue(pointer: pointer) : pointerTrackingValue(pointer: pointer)
+            // A mouse whose resolution the person entered is brought towards the usual one. Kriya never changes the mouse itself.
+            let adjusted = value.map { PointerCompensation.adjusted($0, for: compensation[device.id]) }
             tuner.apply(
                 vendor: Int(device.record.vendorId), product: Int(device.record.productId),
-                trackpad: device.record.kind == .trackpad, value: value
+                trackpad: device.record.kind == .trackpad, value: adjusted
             )
         }
     }

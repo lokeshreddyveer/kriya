@@ -9,6 +9,8 @@ struct CaptureOverlayActions {
     var copyText: (CGImage) -> Void = { _ in }
     var pin: (CGImage) -> Void = { _ in }
     var save: (CGImage, CaptureFormat) -> URL? = { _, _ in nil }
+    /// Saves a picture in a folder of the person's choosing (a card's Save with another destination).
+    var saveInFolder: (CGImage, CaptureFormat, URL) -> URL? = { _, _, _ in nil }
     var message: (String, Bool) -> Void = { _, _ in }
     var sendToShelf: (URL) -> Void = { _ in }
     var openHistory: () -> Void = {}
@@ -83,7 +85,78 @@ final class CaptureOverlay {
     private var lastActivity = Date.distantPast
     private let statusItem = QuickAccessStatusItem()
 
+    /// Whether the cards on the screen are put away for now (they come back together, or when a new capture arrives).
+    private(set) var cardsHidden = false
+    /// How many cards are on the screen, hidden or not.
+    var cardCount: Int { shown.count }
+
     var canRestore: Bool { !closed.isEmpty }
+
+    /// Puts every card away, or brings them all back.
+    func toggleHidden() {
+        guard !shown.isEmpty else { return }
+        setCardsHidden(!cardsHidden)
+    }
+
+    private func setCardsHidden(_ hidden: Bool) {
+        cardsHidden = hidden
+        for entry in shown {
+            if hidden {
+                NSAnimationContext.runAnimationGroup({ $0.duration = 0.16; entry.panel.animator().alphaValue = 0 }, completionHandler: { [weak self] in
+                    if self?.cardsHidden == true { entry.panel.orderOut(nil) }
+                })
+            } else {
+                entry.panel.alphaValue = 0
+                entry.panel.orderFrontRegardless()
+                NSAnimationContext.runAnimationGroup { $0.duration = 0.18; entry.panel.animator().alphaValue = 1 }
+            }
+        }
+    }
+
+    /// Saves every card that is not saved yet, and says how it went.
+    func saveAll() {
+        var saved = 0, already = 0, failed = 0
+        for entry in shown {
+            let card = entry.card
+            // A recording is always saved already; a picture with a file that is still there needs nothing.
+            if card.isRecording || card.file.map({ FileManager.default.fileExists(atPath: $0.path) }) == true { already += 1; continue }
+            if let url = actions.save(card.image, CaptureExtraSettings.format) { card.file = url; saved += 1 } else { failed += 1 }
+        }
+        actions.message(CardBatch.summary(saved: saved, alreadySaved: already, failed: failed), failed > 0)
+    }
+
+    /// Uploads a file to the bucket and gives back the link, or why it failed. Nothing is put on the clipboard: what to do with the link is
+    /// for the caller to say.
+    func uploadReturningLink(_ file: URL, contentType: String? = nil) async -> UploadResult {
+        guard let data = try? Data(contentsOf: file) else { return .failed("The file could not be read to upload it.") }
+        let type = contentType ?? UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        return await withCheckedContinuation { continuation in
+            CaptureUploader.upload(data, fileName: file.lastPathComponent, contentType: type) { result in
+                switch result {
+                case .success(let uploaded): continuation.resume(returning: .uploaded(link: uploaded.link))
+                case .failure(let error): continuation.resume(returning: .failed(error.localizedDescription))
+                }
+            }
+        }
+    }
+
+    /// Uploads a saved file to the bucket and puts the link on the clipboard.
+    func uploadFile(_ file: URL) {
+        guard let data = try? Data(contentsOf: file) else { actions.message("The picture could not be read to upload it.", true); return }
+        let type = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        CaptureUploader.upload(data, fileName: file.lastPathComponent, contentType: type) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let uploaded):
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(uploaded.link, forType: .string)
+                    self?.actions.message("Uploaded. The link is on the clipboard", false)
+                    if CaptureUploadStore.shared.config.deleteLocalAfterUpload { try? FileManager.default.trashItem(at: file, resultingItemURL: nil) }
+                case .failure(let error): self?.actions.message(error.localizedDescription, true)
+                }
+            }
+        }
+    }
     var recentActivity: Bool { !shown.isEmpty || Date().timeIntervalSince(lastActivity) < 300 }
 
     /// Shows a card for a capture, if the settings say this kind of capture gets one.
@@ -100,6 +173,8 @@ final class CaptureOverlay {
     }
 
     private func present(_ card: OverlayCard, settings: QuickAccessSettings) {
+        // A new card brings the others back, so it does not appear beside cards that are out of sight.
+        if cardsHidden { setCardsHidden(false) }
         // The oldest card makes way when the stack is full.
         while shown.count >= settings.stackLimit { remove(shown[0].card, remember: true) }
         card.onClose = { [weak self, weak card] in if let card { self?.remove(card, remember: true) } }
@@ -185,6 +260,7 @@ final class CaptureOverlay {
 
     /// Brings back the capture that was closed last.
     func restoreLast() {
+        pruneHistory()
         guard let card = closed.popLast() else { actions.message("There is no closed capture to bring back.", false); return }
         present(card, settings: QuickAccessStore.settings)
         lastActivity = Date()
@@ -201,7 +277,16 @@ final class CaptureOverlay {
         refreshIcon()
     }
 
+    /// Forgets closed cards older than the history limit (the files themselves are not touched). Done by itself whenever the icon or
+    /// the list of closed cards is looked at.
+    func pruneHistory(now: Date = Date()) {
+        let retention = CaptureExtraSettings.delivery.retention
+        guard retention.captureHistoryDays > 0 else { return }
+        closed.removeAll { !retention.keepsInHistory($0.date, now: now) }
+    }
+
     private func refreshIcon() {
+        pruneHistory()
         // Not while the automated tests run, so they never add icons to the real menu bar.
         guard !Self.underTest else { return }
         // While anything is recording the icon is there (even if it is set to appear only when needed) and turns red.
@@ -238,9 +323,7 @@ final class CaptureOverlay {
                 NSPasteboard.general.clearContents(); NSPasteboard.general.setData(data, forType: .png); actions.message("Copied the picture", false)
             }
         case .save:
-            if let file = card.file, FileManager.default.fileExists(atPath: file.path) { NSWorkspace.shared.activateFileViewerSelecting([file]); actions.message("Already saved as \(file.lastPathComponent)", false) }
-            else if !card.isRecording, let url = actions.save(card.image, CaptureExtraSettings.format) { card.file = url; actions.message("Saved \(url.lastPathComponent)", false) }
-            else { actions.message("It could not be saved.", true) }
+            save(card)
         case .annotate:
             if card.isRecording, let file = card.file { NSWorkspace.shared.open(file) } else { actions.edit(card.image); remove(card, remember: false) }
         case .text:
@@ -269,6 +352,86 @@ final class CaptureOverlay {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([url as NSURL])
         actions.message("Copied the file", false)
+    }
+
+    // MARK: What happens to a card after it is used
+    //
+    // Every way of dragging, uploading or saving (the buttons, the keys, the menu) comes through these, and the rules are in
+    // `QuickAccessCard`, so a card behaves the same whichever way it is used.
+
+    /// The card's picture was dragged out and accepted: the card goes away if the settings say so (⌥ held keeps it).
+    func cardWasDragged(_ card: OverlayCard, optionHeld: Bool) {
+        if QuickAccessCard.afterDrag(QuickAccessStore.settings, optionHeld: optionHeld) == .close { remove(card, remember: true) }
+    }
+
+    /// The card's picture was uploaded: the card goes away if the settings say so.
+    func cardWasUploaded(_ card: OverlayCard) {
+        if QuickAccessCard.afterUpload(QuickAccessStore.settings) == .close { remove(card, remember: true) }
+    }
+
+    /// Saves the card's picture where the settings say: the default destination, or the alternate one when ⌥ is held.
+    func save(_ card: OverlayCard, format: CaptureFormat = CaptureExtraSettings.format, optionHeld: Bool = NSEvent.modifierFlags.contains(.option)) {
+        let destination = QuickAccessCard.destination(QuickAccessStore.settings, optionHeld: optionHeld)
+        let capture = actions.captureFolder()
+        let place = destination.place(captureFolder: capture, home: FileManager.default.homeDirectoryForCurrentUser)
+        // Saving to the capture folder is what it always was: a capture that is already there is shown, not saved again.
+        if place == .folder(capture), let file = card.file, FileManager.default.fileExists(atPath: file.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+            actions.message("Already saved as \(file.lastPathComponent)", false)
+            return
+        }
+        switch place {
+        case .folder(let folder): saveInto(card, format: format, folder: folder)
+        case .ask: askWhereToSave(card, format: format, start: capture)
+        }
+    }
+
+    private func saveInto(_ card: OverlayCard, format: CaptureFormat, folder: URL) {
+        if card.isRecording {
+            guard let file = card.file else { actions.message("It could not be saved.", true); return }
+            copyRecording(file, into: folder)
+        } else if let url = actions.saveInFolder(card.image, format, folder) {
+            card.file = url
+            actions.message("Saved \(url.lastPathComponent) in \(folder.lastPathComponent)", false)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            actions.message("It could not be saved in \(folder.lastPathComponent).", true)
+        }
+    }
+
+    private func copyRecording(_ file: URL, into folder: URL) {
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var target = folder.appendingPathComponent(file.lastPathComponent)
+            var n = 2
+            while FileManager.default.fileExists(atPath: target.path) {
+                target = folder.appendingPathComponent(file.deletingPathExtension().lastPathComponent + " \(n)." + file.pathExtension)
+                n += 1
+            }
+            try FileManager.default.copyItem(at: file, to: target)
+            actions.message("Saved \(target.lastPathComponent) in \(folder.lastPathComponent)", false)
+            NSWorkspace.shared.activateFileViewerSelecting([target])
+        } catch {
+            actions.message("It could not be saved in \(folder.lastPathComponent): \(error.localizedDescription)", true)
+        }
+    }
+
+    private func askWhereToSave(_ card: OverlayCard, format: CaptureFormat, start: URL) {
+        let panel = NSSavePanel()
+        panel.directoryURL = start
+        panel.nameFieldStringValue = card.isRecording ? (card.file?.lastPathComponent ?? "Recording.mov") : "Capture.\(format.fileExtension)"
+        panel.canCreateDirectories = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if card.isRecording, let file = card.file {
+            do { try? FileManager.default.removeItem(at: url); try FileManager.default.copyItem(at: file, to: url); actions.message("Saved \(url.lastPathComponent)", false) }
+            catch { actions.message("It could not be saved: \(error.localizedDescription)", true) }
+        } else if let data = card.image.data(as: format), (try? data.write(to: url, options: .atomic)) != nil {
+            card.file = url
+            actions.message("Saved \(url.lastPathComponent)", false)
+        } else {
+            actions.message("It could not be saved.", true)
+        }
     }
 
     /// The saved file, or a temporary PNG written for a picture that was not saved.
@@ -360,15 +523,26 @@ struct CaptureOverlayView: View {
         return list.map { (key: $0.0, symbol: $0.1) }
     }
 
-    private func dragProvider() -> NSItemProvider { CaptureOverlay.shared.fileForDrag(card).flatMap { NSItemProvider(contentsOf: $0) } ?? NSItemProvider() }
+    /// What is dragged out of the card. The card is told when the picture is actually taken by what it was dropped on, so "close after
+    /// dragging" waits for a drop and never closes a card whose drag was cancelled.
+    private func dragProvider() -> NSItemProvider {
+        guard let url = CaptureOverlay.shared.fileForDrag(card), let provider = NSItemProvider(contentsOf: url) else { return NSItemProvider() }
+        let type = UTType(filenameExtension: url.pathExtension)?.identifier ?? UTType.data.identifier
+        provider.registerFileRepresentation(forTypeIdentifier: type, fileOptions: [.openInPlace], visibility: .all) { completion in
+            completion(url, true, nil)
+            // Read at the moment of the drop: ⌥ held then keeps the card open.
+            let option = NSEvent.modifierFlags.contains(.option)
+            DispatchQueue.main.async { CaptureOverlay.shared.cardWasDragged(card, optionHeld: option) }
+            return nil
+        }
+        return provider
+    }
 
     private func copy(_ text: String, _ done: String) {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string); actions.message(done, false)
     }
 
-    private func saveAs(_ format: CaptureFormat) {
-        if let url = actions.save(card.image, format) { actions.message("Saved \(url.lastPathComponent)", false); NSWorkspace.shared.activateFileViewerSelecting([url]) } else { actions.message("It could not be saved.", true) }
-    }
+    private func saveAs(_ format: CaptureFormat) { CaptureOverlay.shared.save(card, format: format) }
 
     /// Uploads first when a bucket is set up (the link must point somewhere), otherwise links to the file on this Mac.
     private func copyLink(_ format: @escaping (String) -> String) {
@@ -385,6 +559,8 @@ struct CaptureOverlayView: View {
                 case .success(let uploaded):
                     if let done { done(uploaded.link) } else { copy(uploaded.link, "Uploaded. The link is on the clipboard") }
                     if CaptureUploadStore.shared.config.deleteLocalAfterUpload, card.file != nil { try? FileManager.default.trashItem(at: file, resultingItemURL: nil) }
+                    // Whether the card goes away is decided in one place, not here.
+                    CaptureOverlay.shared.cardWasUploaded(card)
                 case .failure(let error): actions.message(error.localizedDescription, true)
                 }
             }

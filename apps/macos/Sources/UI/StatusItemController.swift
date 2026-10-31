@@ -22,6 +22,16 @@ final class StatusItemController: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] safe in self?.updateIcon(safeMode: safe) }
             .store(in: &cancellables)
+        // And while every mouse rule is paused.
+        env.events.$mouseRulesPaused
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] paused in self?.updateIcon(safeMode: self?.env.crashGuard.isSafeMode ?? false, paused: paused) }
+            .store(in: &cancellables)
+        // The icon also shows while left and right button replacement is on, so it is never on without being seen.
+        env.buttonReplacement.$status
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in self?.updateIcon(safeMode: self?.env.crashGuard.isSafeMode ?? false, armed: status == .armed) }
+            .store(in: &cancellables)
     }
 
     private func configureButton() {
@@ -36,8 +46,10 @@ final class StatusItemController: NSObject {
         updateIcon(safeMode: env.crashGuard.isSafeMode)
     }
 
-    private func updateIcon(safeMode: Bool) {
-        let name = safeMode ? "exclamationmark.triangle" : "cursorarrow.click.2"
+    private func updateIcon(safeMode: Bool, armed: Bool? = nil, paused: Bool? = nil) {
+        var name = safeMode ? "exclamationmark.triangle" : "cursorarrow.click.2"
+        if !safeMode, armed ?? (env.buttonReplacement.status == .armed) { name = "arrow.left.arrow.right.circle.fill" }
+        if !safeMode, paused ?? env.events.mouseRulesPaused { name = "pause.circle" }
         let image = NSImage(systemSymbolName: name, accessibilityDescription: "Kriya")
         image?.isTemplate = true
         statusItem.button?.image = image
@@ -101,6 +113,23 @@ final class StatusItemController: NSObject {
 
     private func showMenu(from button: NSStatusBarButton) {
         let menu = NSMenu()
+        // The one-click way to leave the mouse alone, and to take the rules up again.
+        let pauseAll = menu.addItem(withTitle: env.events.mouseRulesPaused ? "Resume Mouse Rules" : "Pause Mouse Rules", action: #selector(menuPauseMouseRules), keyEquivalent: "")
+        pauseAll.target = self
+        menu.addItem(.separator())
+        // Always first when replacement is running: the visible way to pause it.
+        switch env.buttonReplacement.status {
+        case .armed, .countdown:
+            let pause = menu.addItem(withTitle: "Pause Button Replacement", action: #selector(menuPauseReplacement), keyEquivalent: "")
+            pause.target = self
+            menu.addItem(.separator())
+        case .paused:
+            let resume = menu.addItem(withTitle: "Resume Button Replacement…", action: #selector(menuPauseReplacement), keyEquivalent: "")
+            resume.target = self
+            menu.addItem(.separator())
+        default:
+            break
+        }
         let settings = menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(.separator())
@@ -109,6 +138,10 @@ final class StatusItemController: NSObject {
     }
 
     @objc private func menuSettings() { openSettings(nil) }
+
+    @objc private func menuPauseReplacement() { env.buttonReplacement.togglePause() }
+
+    @objc private func menuPauseMouseRules() { env.toggleMouseRulesPause() }
 }
 
 extension StatusItemController: NSPopoverDelegate {

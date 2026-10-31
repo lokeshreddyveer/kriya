@@ -78,7 +78,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 if cancelStart { throw Cancelled() }
                 let content = try await Self.shareableContent()
                 if cancelStart { throw Cancelled() }
-                let filter = try Self.filter(for: options.source, in: content, excluding: hidden, target: target)
+                let filter = try Self.filter(for: options.source, in: content, excluding: hidden, target: target, selection: options.remembersLastSelection ? options.lastSelection : nil)
                 let configuration = Self.configuration(for: filter, options: options)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 let name = fileName ?? RecordingFileName.make(for: Date()) { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
@@ -244,14 +244,17 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
     /// `target` is the app that was in front when the recording was asked for. Finding the screen and the windows takes a moment, and the
     /// person may switch apps meanwhile; the recording is of the app they asked about, not whichever is in front by then.
-    static func filter(for source: RecordingSource, in content: SCShareableContent, excluding hidden: [Int], target: NSRunningApplication? = nil) throws -> SCContentFilter {
-        guard let display = pointerDisplay(in: content) else { throw Failure("There is no screen to record.") }
+    static func filter(for source: RecordingSource, in content: SCShareableContent, excluding hidden: [Int], target: NSRunningApplication? = nil, selection: RecordingSelection? = nil) throws -> SCContentFilter {
+        // The display chosen last time, when remembering is on and it is still connected; otherwise the one the pointer is on.
+        let remembered = selection?.displayUUID.flatMap { DisplayIdentity.id(forUUID: $0) }.flatMap { id in content.displays.first { $0.displayID == id } }
+        guard let display = remembered ?? pointerDisplay(in: content) else { throw Failure("There is no screen to record.") }
         let own = content.windows.filter { hidden.contains(Int($0.windowID)) }
         switch source {
         case .screen:
             return SCContentFilter(display: display, excludingWindows: own)
         case .window:
-            guard let window = frontWindow(in: content, app: target) else { throw Failure("There is no window in front to record.") }
+            let again = selection?.window.flatMap { saved in content.windows.first { $0.windowLayer == 0 && $0.owningApplication?.bundleIdentifier == saved.bundleID && $0.title == saved.title } }
+            guard let window = again ?? frontWindow(in: content, app: target) else { throw Failure("There is no window in front to record.") }
             return SCContentFilter(desktopIndependentWindow: window)
         case .app:
             guard let pid = (target ?? NSWorkspace.shared.frontmostApplication)?.processIdentifier,
@@ -278,16 +281,18 @@ final class ScreenRecorder: NSObject, ObservableObject {
         let configuration = SCStreamConfiguration()
         let info = SCShareableContent.info(for: filter)
         let scale = CGFloat(info.pointPixelScale)
-        // Even sizes: video encoders need them.
-        configuration.width = max(2, Int(info.contentRect.width * scale) / 2 * 2)
-        configuration.height = max(2, Int(info.contentRect.height * scale) / 2 * 2)
+        // The size the video is recorded at: at its size in points on a Retina screen if asked, no larger than the chosen resolution or what
+        // the encoder can write, never larger than the display, and even (encoders need it).
+        let size = options.recordedSize(pixels: CGSize(width: info.contentRect.width * scale, height: info.contentRect.height * scale), backingScale: scale)
+        configuration.width = Int(size.width)
+        configuration.height = Int(size.height)
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(options.framesPerSecond))
         configuration.showsCursor = options.showCursor
         configuration.queueDepth = 6
         configuration.capturesAudio = options.systemAudio
         configuration.excludesCurrentProcessAudio = true
         configuration.sampleRate = 48_000
-        configuration.channelCount = 2
+        configuration.channelCount = options.systemAudioChannels     // one when mixed down to mono
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         if options.hdr, #available(macOS 15.0, *) {
             configuration.captureDynamicRange = .hdrLocalDisplay
@@ -331,7 +336,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
         videoInput = video
 
         if options.systemAudio {
-            let input = Self.audioInput(channels: 2)
+            let input = Self.audioInput(channels: options.systemAudioChannels)
             if writer.canAdd(input) { writer.add(input); systemAudioInput = input }
         }
         if options.microphone {

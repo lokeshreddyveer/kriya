@@ -5,13 +5,15 @@ import Foundation
 /// and the presentation settings. The original is never changed by editing.
 struct CaptureProject: Codable, Equatable {
     struct Mark: Codable, Equatable {
-        /// box, arrow, highlight, hide, blur, text, line, ellipse, number, pen
+        /// box, arrow, highlight, hide, blur, text, line, ellipse, number, pen, spotlight, filledBox
         var kind: String
         var text: String?
         var number: Int?
         /// Fractions of the picture from the top left: start and end, or every point of a pen stroke.
         var points: [[Double]]
         var color: String
+        /// The shadow under the mark. Missing in projects saved before marks had one, which means none.
+        var shadow: AnnotationShadow?
     }
 
     static let fileExtension = "kriyashot"
@@ -25,6 +27,10 @@ struct CaptureProject: Codable, Equatable {
     var beautify = CaptureBeautify()
     /// The part kept, as x, y, width, height fractions from the top left; nil keeps the whole picture.
     var crop: [Double]? = nil
+    /// Marks may lie outside the picture (the canvas grows to hold them). The picture's own bounds are never changed by this.
+    var canvasExpanded: Bool? = nil
+    /// The width in pixels the finished picture is brought to; nil keeps its size.
+    var resizeWidth: Int? = nil
 
     func encoded() -> Data? {
         let e = JSONEncoder()
@@ -40,11 +46,13 @@ struct CaptureProject: Codable, Equatable {
         // Points are fractions; anything outside the picture is brought back in.
         clean.marks = project.marks.map { mark in
             var m = mark
-            m.points = mark.points.prefix(5000).map { $0.prefix(2).map { min(max($0, 0), 1) } }.filter { $0.count == 2 }
+            let low = project.canvasExpanded == true ? -CanvasExpansion.reach : 0, high = project.canvasExpanded == true ? 1 + CanvasExpansion.reach : 1
+            m.points = mark.points.prefix(5000).map { $0.prefix(2).map { $0.isNaN ? 0 : min(max($0, Double(low)), Double(high)) } }.filter { $0.count == 2 }
             if m.text.map({ $0.count > 500 }) == true { m.text = String(m.text!.prefix(500)) }
             return m
         }
         if let c = clean.crop { clean.crop = c.count == 4 && c.allSatisfy({ $0.isFinite }) && c[2] > 0.001 && c[3] > 0.001 ? [min(max(c[0], 0), 1), min(max(c[1], 0), 1), min(c[2], 1), min(c[3], 1)] : nil }
+        if let w = clean.resizeWidth, !ResizeRules.widthRange.contains(w) { clean.resizeWidth = min(max(w, ResizeRules.widthRange.lowerBound), ResizeRules.widthRange.upperBound) }
         clean.beautify.padding = min(max(clean.beautify.padding, 0), 0.5)
         clean.beautify.corners = min(max(clean.beautify.corners, 0), 0.1)
         return clean

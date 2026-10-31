@@ -24,28 +24,116 @@ enum GIFExporter {
         return CGImageDestinationFinalize(destination)
     }
 
-    /// Takes frames from a movie at `fps`, no wider than `maxWidth`, and at most `limit` of them.
-    static func frames(of movie: URL, fps: Double = 10, maxWidth: CGFloat = 720, limit: Int = 300) async -> [CGImage] {
-        let asset = AVURLAsset(url: movie)
-        guard let duration = try? await asset.load(.duration).seconds, duration > 0 else { return [] }
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: maxWidth, height: maxWidth * 4)
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = .zero
-        let count = min(Int(duration * fps) + 1, limit)
-        let step = count > 1 ? duration / Double(count) : 0
-        var out: [CGImage] = []
-        for i in 0..<count {
-            let time = CMTime(seconds: Double(i) * step, preferredTimescale: 600)
-            if let image = try? await generator.image(at: time).image { out.append(image) }
+    /// A picture's pixel size and its colours reduced to `levels` of each channel, using a table (see `GIFColour`). A new picture; the one
+    /// given is not changed.
+    static func posterized(_ image: CGImage, levels: Int) -> CGImage {
+        guard levels < 256, let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                                     space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = context.data else { return image }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let table = GIFColour.table(levels: levels)
+        let bytes = data.assumingMemoryBound(to: UInt8.self)
+        for i in stride(from: 0, to: image.width * image.height * 4, by: 4) {
+            bytes[i] = table[Int(bytes[i])]; bytes[i + 1] = table[Int(bytes[i + 1])]; bytes[i + 2] = table[Int(bytes[i + 2])]
         }
-        return out
+        return context.makeImage() ?? image
     }
 
-    static func convert(movie: URL, to gif: URL, fps: Double = 10) async -> Bool {
-        let frames = await frames(of: movie, fps: fps)
-        return write(frames: frames, delay: 1 / fps, to: gif)
+    /// A small grey picture of a frame, for telling whether two frames are the same.
+    static func signature(of image: CGImage) -> [UInt8] {
+        let w = GIFFrameSignature.width, h = GIFFrameSignature.height
+        var bytes = [UInt8](repeating: 0, count: w * h)
+        bytes.withUnsafeMutableBytes { raw in
+            guard let context = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
+            context.interpolationQuality = .medium
+            context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
+        return bytes
+    }
+
+    /// Makes a GIF from a recording with the options given: the frame rate, size, colours and length they ask for, with pictures that
+    /// repeat merged when asked. `progress` is told how far along it is (0 to 1); `isCancelled` is asked before each picture, and when
+    /// it says yes nothing is left behind. It stops, and removes what it wrote, if the disk is nearly full. Before starting it says if
+    /// there may not be room.
+    static func convert(movie: URL, to gif: URL, options: GIFOptions = GIFOptions(), progress: @escaping (Double) -> Void = { _ in },
+                        isCancelled: @escaping () -> Bool = { false }, freeBytes: @escaping (URL) -> Int64? = { RecordingDisk.freeBytes(at: $0) }) async -> GIFOutcome {
+        let options = options.sanitized()
+        let asset = AVURLAsset(url: movie)
+        guard let duration = try? await asset.load(.duration).seconds, duration > 0, duration.isFinite else {
+            return .failed("The recording could not be read, so no GIF was made.")
+        }
+        // The size the pictures come out at.
+        var source = CGSize(width: 1280, height: 720)
+        if let track = try? await asset.loadTracks(withMediaType: .video).first, let natural = try? await track.load(.naturalSize) {
+            let transformed = natural.applying((try? await track.load(.preferredTransform)) ?? .identity)
+            source = CGSize(width: abs(transformed.width), height: abs(transformed.height))
+        }
+        let size = options.resolution.outputSize(for: source)
+        // Which moments, kept to what memory can hold: the GIF holds every picture until it is written.
+        var times = GIFPlan.frameTimes(duration: duration, options: options)
+        let memoryLimit = GIFPlan.memoryFrameLimit(for: size)
+        var note: String?
+        if times.count > memoryLimit {
+            times = Array(times.prefix(memoryLimit))
+            note = "It was limited to the first \(Int((Double(memoryLimit) / Double(options.frameRate)).rounded())) seconds to keep memory in check. Use a smaller size or a lower frame rate for longer."
+        }
+        guard !times.isEmpty else { return .failed("The recording is too short to make a GIF from.") }
+        let folder = gif.deletingLastPathComponent()
+        if let problem = GIFDisk.problem(estimated: GIFPlan.estimatedBytes(frames: times.count, size: size, options: options), free: freeBytes(folder)) { return .failed(problem) }
+
+        func generator(maximum: CGSize) -> AVAssetImageGenerator {
+            let g = AVAssetImageGenerator(asset: asset)
+            g.appliesPreferredTrackTransform = true
+            g.maximumSize = maximum
+            g.requestedTimeToleranceBefore = .zero
+            g.requestedTimeToleranceAfter = .zero
+            return g
+        }
+        func at(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 600) }
+
+        // Pass one, only when merging: small pictures, to see which frames repeat the one before.
+        var plan = GIFPlan.all(count: times.count, delay: options.frameDelay)
+        let share = options.optimize ? 0.25 : 0
+        if options.optimize {
+            let small = generator(maximum: CGSize(width: 96, height: 96))
+            var signatures: [[UInt8]] = []
+            for (n, time) in times.enumerated() {
+                if isCancelled() { return .cancelled }
+                if let image = try? await small.image(at: at(time)).image { signatures.append(signature(of: image)) } else { signatures.append([]) }
+                progress(share * Double(n + 1) / Double(times.count))
+            }
+            let repeats = signatures.enumerated().map { n, s in n > 0 && GIFFrameSignature.same(s, signatures[n - 1]) }
+            plan = GIFPlan.collapse(repeats: repeats, delay: options.frameDelay)
+        }
+
+        guard let destination = CGImageDestinationCreateWithURL(gif as CFURL, UTType.gif.identifier as CFString, plan.count, nil) else {
+            return .failed("The GIF file could not be created in \(folder.lastPathComponent).")
+        }
+        CGImageDestinationSetProperties(destination, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        func abandon(_ outcome: GIFOutcome) -> GIFOutcome { try? FileManager.default.removeItem(at: gif); return outcome }
+
+        // Pass two: the pictures that stay, at the size and colours asked for.
+        let full = generator(maximum: size)
+        var previous: CGImage?
+        let levels = options.colourLevels
+        for (n, item) in plan.enumerated() {
+            if isCancelled() { return abandon(.cancelled) }
+            if n % 20 == 0, GIFDisk.isTooLow(free: freeBytes(folder)) {
+                return abandon(.failed("The disk is nearly full, so the GIF was stopped and nothing was kept. Free some space and try again."))
+            }
+            var image = (try? await full.image(at: at(times[item.index])).image) ?? previous
+            if let made = image, levels < 256, previous == nil || made !== previous { image = posterized(made, levels: levels) }
+            guard let image else { return abandon(.failed("A picture of the recording could not be read, so no GIF was made.")) }
+            previous = image
+            let properties = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: max(item.delay, 0.02)]] as CFDictionary
+            CGImageDestinationAddImage(destination, image, properties)
+            progress(share + (1 - share) * 0.95 * Double(n + 1) / Double(plan.count))
+        }
+        if isCancelled() { return abandon(.cancelled) }
+        guard CGImageDestinationFinalize(destination) else { return abandon(.failed("The GIF could not be written. Check that there is room in \(folder.lastPathComponent).")) }
+        progress(1)
+        let bytes = Int64((try? gif.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        return .saved(frames: plan.count, bytes: bytes, note: note)
     }
 }
 

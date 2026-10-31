@@ -22,6 +22,9 @@ extension ScreenCaptureService {
         var image: CGImage?
         var action: SelectorResult.Action = .capture
         var all = false
+        /// For a chosen window: what it belongs to and is called, so it can be offered first next time.
+        var windowBundleID: String?
+        var windowTitle: String?
     }
 
     func nativeCapture(_ mode: CaptureMode, action: CaptureAction, settings current: CaptureSettings) {
@@ -45,13 +48,14 @@ extension ScreenCaptureService {
             let outcome = await selector.select(.area, shape: modes.shape, hint: "Drag to choose an area   ·   ⏎ capture   ·   ⎋ cancel   ·   R changes the shape")
             return unpack(outcome)
         case .window:
-            let outcome = await selector.select(.window, hint: "Click the window to capture   ·   ⎋ cancel")
+            // The window chosen last time is marked first, if it is still open.
+            let outcome = await selector.select(.window, hint: "Click the window to capture   ·   ⎋ cancel", preferredWindow: preferredWindow())
             return unpack(outcome)
         case .screen:
             switch modes.display {
             case .ask:
                 if NSScreen.screens.count > 1 {
-                    return unpack(await selector.select(.display, hint: "Click the display to capture   ·   ⎋ cancel"))
+                    return unpack(await selector.select(.display, hint: "Click the display to capture   ·   ⎋ cancel", preferredDisplay: preferredDisplayID()))
                 }
                 return displayTarget(CGMainDisplayID())
             case .pointer:
@@ -74,7 +78,8 @@ extension ScreenCaptureService {
     private func unpack(_ outcome: (result: SelectorResult?, problem: String?)) -> Target? {
         if let problem = outcome.problem { toast.show(problem, isError: true); return nil }
         guard let r = outcome.result else { return nil }
-        return Target(kind: r.kind, rect: r.rect, displayID: r.displayID, windowID: r.windowID, image: r.image, action: r.action)
+        return Target(kind: r.kind, rect: r.rect, displayID: r.displayID, windowID: r.windowID, image: r.image, action: r.action,
+                      windowBundleID: r.windowBundleID, windowTitle: r.windowTitle)
     }
 
     // MARK: Taking the picture
@@ -84,16 +89,37 @@ extension ScreenCaptureService {
         var settings = current
         var action = action
         var pin = false
-        switch target.action {
-        case .capture: break
-        case .copy: settings.saveToFolder = false; settings.copyImage = true
-        case .save: settings.copyImage = false; settings.saveToFolder = true
+        // A command that starts from an area (capture and copy, save, upload, mark up, pin) decides for itself what happens.
+        var chosen = target.action
+        let forcedDelivery = consumeForcedDelivery()
+        if chosen == .capture, let forced = forcedDelivery {
+            switch forced {
+            case .copy: chosen = .copy
+            case .save: chosen = .save
+            case .upload: chosen = .upload
+            case .annotate: chosen = .annotate
+            case .pin: chosen = .pin
+            }
+        }
+        switch chosen {
+        case .capture, .scrollAuto, .scrollManual: break
+        case .copy:
+            settings.saveToFolder = false; settings.copyImage = true
+            deliveryAdjustment = { $0.copy = true; $0.save = false; $0.upload = false; $0.copyLink = false }
+        case .save:
+            settings.copyImage = false; settings.saveToFolder = true
+            deliveryAdjustment = { $0.copy = false; $0.save = true; $0.upload = false; $0.copyLink = false }
+        case .upload:
+            settings.copyImage = false; settings.saveToFolder = true
+            deliveryAdjustment = { $0.copy = false; $0.save = true; $0.upload = true; $0.copyLink = true }
         case .annotate: settings.openEditor = true
         case .pin: pin = true
         case .text: action = .text
         case .redact: action = .redacted
         }
         if target.kind == .area, let area = PreviousArea(rect: target.rect, layout: AreaPicker.currentLayout) { previousArea = area }
+        // The display (and window) just chosen are offered first next time, if remembering is on.
+        rememberSelection(displayID: target.displayID, windowBundleID: target.windowBundleID, windowTitle: target.kind == .window ? target.windowTitle : nil)
 
         if seconds > 0 {
             let title = target.kind == .window ? "Capturing the window in" : "Capturing in"
@@ -113,10 +139,15 @@ extension ScreenCaptureService {
             case .window:
                 guard let id = target.windowID else { return finishCapture() }
                 image = try await ScreenGrabber.windowImage(id, look: modes.windowLook, options: options)
-                image = CaptureLooks.apply(modes.windowLook, to: image)
+                // Shift held when the window was clicked turns the transparent background on or off for this capture.
+                image = CaptureLooks.apply(modes.windowShot, shiftHeld: CaptureModifiers.current.contains(.shift), to: image)
             case .display:
                 image = target.all ? try await ScreenGrabber.allDisplaysImage(options: options) : try await ScreenGrabber.displayImage(target.displayID, options: options)
             }
+            // Which display it came from says whether this is a Retina picture, for keeping it at 1x and for an "@2x" name.
+            noteBackingScale(of: target.displayID)
+            // The sound, now the picture is taken (Kriya's own selector makes none by itself).
+            playCaptureSound(current)
             if pin {
                 PinnedShots.shared.pin(NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height)))
                 return finishCapture()
@@ -137,13 +168,14 @@ extension ScreenCaptureService {
     @MainActor
     func showChooser() {
         let modes = CaptureExtraSettings.modes
-        chooser.show(last: modes.lastChoice, timerSeconds: modes.timer.seconds, previousAvailable: previousArea?.valid(for: AreaPicker.currentLayout) != nil) { [weak self] choice, timer in
+        chooser.show(last: modes.chooserStart, timerSeconds: modes.timer.seconds, previousAvailable: previousArea?.valid(for: AreaPicker.currentLayout) != nil) { [weak self] choice, timer in
             guard let self else { return }
             var remembered = CaptureExtraSettings.modes
-            remembered.lastChoice = choice
+            remembered.rememberChoice(choice)
             CaptureExtraSettings.modes = remembered
             self.oneShotTimer = timer
-            if !self.run(command: choice.command) { self.oneShotTimer = nil }
+            // "Record" starts the kind of recording started last, when remembering is on.
+            if !self.run(command: remembered.command(for: choice)) { self.oneShotTimer = nil }
         }
     }
 
@@ -245,13 +277,20 @@ extension ScreenCaptureService {
         let modes = CaptureExtraSettings.modes
         let seconds = timerSeconds(for: current)
         Task { @MainActor in
-            let outcome = await selector.select(.area, toolbar: false, hint: "Select the area that scrolls   ·   ⏎ start   ·   ⎋ cancel")
+            let outcome = await selector.select(.area, toolbar: false, hint: "Select the area that scrolls   ·   ↕ button: Kriya scrolls   ·   ✋ button: you scroll   ·   ⏎ the way you scrolled last   ·   ⎋ cancel")
             guard let target = unpack(outcome) else { return finishCapture() }
             if seconds > 0, !(await CaptureCountdown().run(seconds: seconds, title: "Scrolling capture in", on: screen(for: target.displayID))) {
                 toast.show("Capture cancelled.")
                 return finishCapture()
             }
             var mode = modes.scrollMode
+            // The buttons under the area choose for this capture, and the choice is remembered; ⏎ uses the one used last.
+            if target.action == .scrollAuto { mode = .automatic } else if target.action == .scrollManual { mode = .manual }
+            if target.action == .scrollAuto || target.action == .scrollManual {
+                var remembered = CaptureExtraSettings.modes
+                remembered.rememberScrollMode(mode)
+                if remembered != CaptureExtraSettings.modes { CaptureExtraSettings.modes = remembered }
+            }
             if mode == .automatic, !AXIsProcessTrusted() {
                 // Scrolling for you needs Accessibility. Without it, you scroll and Kriya watches.
                 mode = .manual
@@ -292,12 +331,30 @@ extension ScreenCaptureService {
     // MARK: Recording with a timer
 
     /// Starts Kriya's recorder after the self-timer, with the app that was in front when it was asked for.
-    func startRecordingAfterTimer(_ options: RecordingOptions, settings current: CaptureSettings, seconds: Int, target: NSRunningApplication?) {
+    func startRecordingAfterTimer(_ requested: RecordingOptions, settings current: CaptureSettings, seconds: Int, target: NSRunningApplication?) {
+        // Starting on the display and window used last time: what is gone by now is dropped, and what this recording is of is remembered.
+        var chosen = requested
+        chosen.lastSelection = validRecordingSelection(requested)
+        if chosen.remembersLastSelection {
+            let pointerScreen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
+            let pointerDisplay = (pointerScreen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+            let shownDisplay = chosen.lastSelection?.displayUUID.flatMap { DisplayIdentity.id(forUUID: $0) } ?? pointerDisplay
+            let bundle = target?.bundleIdentifier
+            let window = chosen.source == .window ? LiveWindows.current()?.first { $0.bundleID == bundle } : nil
+            let remembered = rememberRecordingSelection(chosen, display: shownDisplay, window: window)
+            chosen.lastSelection = remembered.lastSelection
+            let selection = remembered.lastSelection
+            settings.update { $0.recording.lastSelection = selection }
+        }
+        let options = chosen
+        // A countdown asked for in the recording options counts at least 3 seconds, or the self-timer's longer time.
+        let wait = options.countdown(selfTimer: seconds)
         Task { @MainActor in
-            if seconds > 0 {
+            if wait > 0 {
                 let point = NSEvent.mouseLocation
                 let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
-                guard await CaptureCountdown().run(seconds: seconds, title: "Recording in", on: screen) else {
+                // Cancelling here ends it before anything has changed on the screen: the dimming starts only once recording has.
+                guard await CaptureCountdown().run(seconds: wait, title: "Recording in", on: screen) else {
                     toast.show("Recording cancelled.")
                     return finishCapture()
                 }
@@ -312,14 +369,26 @@ extension ScreenCaptureService {
 enum CaptureLooks {
     /// The captured window made to look the way chosen. `system` and `windowOnly` are as captured; the shadow and the backdrop are put on.
     static func apply(_ look: WindowLook, to image: CGImage) -> CGImage {
-        switch look {
-        case .windowOnly, .system: return image
-        case .kriyaShadow: return withShadow(image) ?? image
-        case .background:
-            // The backdrop set under Style, or a plain one if none is set; if one is set for every capture, delivery adds it.
-            guard !CaptureExtraSettings.beautify.isOn else { return image }
+        apply(WindowShotOptions(look: look), shiftHeld: false, to: image)
+    }
+
+    /// The captured window made into what the options say. `shiftHeld` flips transparent and backdrop for this one picture of a framed
+    /// window. `globalBackdropOn` is whether a backdrop is already set for every capture, in which case delivery adds it and a framed
+    /// window gets none here (so there are never two).
+    static func apply(_ options: WindowShotOptions, shiftHeld: Bool, globalBackdropOn: Bool = CaptureExtraSettings.beautify.isOn, to image: CGImage) -> CGImage {
+        let shot = options.effective(shiftHeld: shiftHeld)
+        switch shot.style {
+        case .system:
+            return image
+        case .window:
+            return shot.shadow ? (withShadow(image) ?? image) : image
+        case .framed:
+            // On a transparent canvas the space around is only the shadow's; on a backdrop it is the backdrop's padding.
+            if shot.transparentBackground { return shot.shadow ? (withShadow(image) ?? image) : image }
+            guard !globalBackdropOn else { return image }
             var style = CaptureBeautify()
-            style.background = .graphite
+            style.background = shot.backdrop == .none ? .graphite : shot.backdrop
+            style.shadow = shot.shadow
             return CaptureRenderer.beautified(image, style) ?? image
         }
     }

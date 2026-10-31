@@ -407,6 +407,8 @@ private struct DiagnosticsOverviewTab: View {
                 Text("Off by default. These are Kriya's own clock readings for a few of its recurring jobs, kept in memory only and never written down or sent. They leave out time the system spends for Kriya, and they are not a substitute for Activity Monitor.")
             }
 
+            WarningsSection()
+
             Section {
                 ForEach(FeatureReset.areas) { area in
                     HStack {

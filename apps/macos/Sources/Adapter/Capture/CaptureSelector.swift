@@ -5,7 +5,7 @@ import ScreenCaptureKit
 struct SelectorResult {
     enum Kind { case area, window, display }
     /// What to do with it, picked on the toolbar that appears under a chosen area (or ⏎ for the usual).
-    enum Action { case capture, copy, save, annotate, pin, text, redact }
+    enum Action { case capture, copy, save, annotate, pin, text, redact, scrollAuto, scrollManual, upload }
 
     var kind: Kind
     var action: Action
@@ -16,6 +16,8 @@ struct SelectorResult {
     var windowTitle: String?
     /// The part of the frozen still inside `rect`, for an area (so what is captured is exactly what was seen).
     var image: CGImage?
+    /// The app a chosen window belongs to, so the window can be found again next time.
+    var windowBundleID: String?
 }
 
 /// Freezes every display and lets the person choose an area, a window or a display on the frozen picture: crosshair and a magnifier,
@@ -42,7 +44,10 @@ final class CaptureSelector {
     var isShowing: Bool { !windows.isEmpty }
 
     /// Shows the selector. Returns nil if the person cancelled, or if nothing could be shown (with the reason in `problem`).
-    func select(_ kind: SelectorResult.Kind, shape: SelectionGeometry.Shape = SelectionGeometry.shapes[0], toolbar: Bool = true, hint: String? = nil) async -> (result: SelectorResult?, problem: String?) {
+    /// `aids` are the crosshair pointer and the magnifier (the saved ones when not given). `preferredDisplay` and `preferredWindow` are what was
+    /// chosen last time, marked first when they are still there; moving the pointer chooses as usual.
+    func select(_ kind: SelectorResult.Kind, shape: SelectionGeometry.Shape = SelectionGeometry.shapes[0], toolbar: Bool = true, hint: String? = nil,
+                aids: SelectorAids? = nil, preferredDisplay: CGDirectDisplayID? = nil, preferredWindow: RememberedWindow? = nil) async -> (result: SelectorResult?, problem: String?) {
         guard !isShowing else { return (nil, nil) }
         let stills: [Still]
         let list: [ScreenGrabber.WindowInfo]
@@ -61,12 +66,21 @@ final class CaptureSelector {
         }
         guard !stills.isEmpty else { return (nil, "There is no display to choose on.") }
 
-        let model = SelectorModel(kind: kind, stills: stills, windows: Self.inFrontToBackOrder(list), shape: shape, showToolbar: toolbar, hint: hint)
+        let model = SelectorModel(kind: kind, stills: stills, windows: Self.inFrontToBackOrder(list), shape: shape, showToolbar: toolbar, hint: hint,
+                                  aids: aids ?? CaptureExtraSettings.modes.aids)
         self.model = model
         // The pointer is where it is before it has moved, so the magnifier starts there and not in the corner.
         let pointer = NSEvent.mouseLocation
         model.cursor = CGPoint(x: pointer.x, y: (NSScreen.screens.first?.frame.height ?? 0) - pointer.y)
-        if kind == .display { model.hoverDisplay = stills.first { $0.bounds.contains(model.cursor) }?.displayID ?? stills.first?.displayID }
+        if kind == .display {
+            // The display chosen last time is marked first, if it is still connected; otherwise the one the pointer is on.
+            let remembered = preferredDisplay.flatMap { id in stills.first { $0.displayID == id }?.displayID }
+            model.hoverDisplay = remembered ?? stills.first { $0.bounds.contains(model.cursor) }?.displayID ?? stills.first?.displayID
+        }
+        // The window chosen last time is marked first, if it is still open; the pointer choosing another replaces it.
+        if kind == .window, let preferredWindow {
+            model.hoverWindow = model.windows.first { $0.bundleID == preferredWindow.bundleID && $0.title == preferredWindow.title }
+        }
         let result: SelectorResult? = await withCheckedContinuation { continuation in
             self.continuation = continuation
             model.finish = { [weak self] result in self?.end(result) }
@@ -136,7 +150,11 @@ final class SelectorModel {
     var hoverDisplay: CGDirectDisplayID?
     var modifiers: NSEvent.ModifierFlags = []
 
-    init(kind: SelectorResult.Kind, stills: [CaptureSelector.Still], windows: [ScreenGrabber.WindowInfo], shape: SelectionGeometry.Shape, showToolbar: Bool, hint: String?) {
+    /// The crosshair pointer and the magnifier, each on or off. Only Kriya's selector reads these; the pixel ruler has its own.
+    let aids: SelectorAids
+
+    init(kind: SelectorResult.Kind, stills: [CaptureSelector.Still], windows: [ScreenGrabber.WindowInfo], shape: SelectionGeometry.Shape, showToolbar: Bool, hint: String?, aids: SelectorAids = .both) {
+        self.aids = aids
         self.kind = kind
         self.stills = stills
         self.windows = windows
@@ -168,7 +186,7 @@ final class SelectorModel {
             finish(SelectorResult(kind: .area, action: action, rect: selection, displayID: id, windowID: nil, windowTitle: nil, image: croppedImage(of: selection, on: still)))
         case .window:
             guard let window = hoverWindow, let still = still(at: CGPoint(x: window.frame.midX, y: window.frame.midY)) ?? stills.first else { return }
-            finish(SelectorResult(kind: .window, action: action, rect: window.frame, displayID: still.displayID, windowID: window.id, windowTitle: window.title, image: nil))
+            finish(SelectorResult(kind: .window, action: action, rect: window.frame, displayID: still.displayID, windowID: window.id, windowTitle: window.title, image: nil, windowBundleID: window.bundleID))
         case .display:
             guard let id = hoverDisplay ?? stills.first?.displayID, let still = still(id) else { return }
             finish(SelectorResult(kind: .display, action: action, rect: still.bounds, displayID: id, windowID: nil, windowTitle: nil, image: nil))
@@ -223,8 +241,11 @@ final class SelectorView: NSView {
         tracking = area
     }
 
-    override func resetCursorRects() { addCursorRect(bounds, cursor: model.kind == .area ? .crosshair : .arrow) }
-    override func cursorUpdate(with event: NSEvent) { (model.kind == .area ? NSCursor.crosshair : NSCursor.arrow).set() }
+    /// The crosshair for choosing an area when it is on, otherwise the usual arrow.
+    private var pointerCursor: NSCursor { model.aids.pointer(choosingArea: model.kind == .area) == .crosshair ? .crosshair : .arrow }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: pointerCursor) }
+    override func cursorUpdate(with event: NSEvent) { pointerCursor.set() }
 
     // MARK: Coordinates
 
@@ -409,7 +430,7 @@ final class SelectorView: NSView {
             ("pencil.tip.crop.circle", "Annotate", .annotate), ("pin", "Pin", .pin), ("text.viewfinder", "Copy text", .text),
             ("eye.slash", "Hide private text", .redact), ("xmark", "Cancel  ⎋", nil),
         ] : [
-            ("play.fill", "Start  ⏎", .capture), ("xmark", "Cancel  ⎋", nil),
+            ("arrow.up.and.down.circle.fill", "Kriya scrolls for you", .scrollAuto), ("hand.draw", "You scroll, Kriya takes the pictures", .scrollManual), ("xmark", "Cancel  ⎋", nil),
         ]
         let size: CGFloat = 32, gap: CGFloat = 2, pad: CGFloat = 6
         let total = CGFloat(defs.count) * size + CGFloat(defs.count - 1) * gap + pad * 2
@@ -482,7 +503,7 @@ final class SelectorView: NSView {
         } else {
             dim(context, except: nil)
         }
-        if model.phase != .adjusting, still.bounds.contains(model.cursor) { drawLoupe(context) }
+        if model.aids.magnifier(adjusting: model.phase == .adjusting, pointerOnThisDisplay: still.bounds.contains(model.cursor)) { drawLoupe(context) }
     }
 
     private func drawHandles(_ context: CGContext, _ r: CGRect) {

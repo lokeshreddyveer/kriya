@@ -83,6 +83,48 @@ struct CameraStyle: Codable, Equatable {
     }
 }
 
+/// The largest a recording may be, by its shorter side: "1080p" is 1080 pixels high for a landscape screen.
+enum ResolutionLimit: String, Codable, CaseIterable, Identifiable {
+    case original, p2160, p1440, p1080, p720, p480
+    var id: String { rawValue }
+
+    var title: String { self == .original ? "Original" : "\(shorterSide ?? 0)p" }
+
+    var shorterSide: Int? {
+        switch self {
+        case .original: return nil
+        case .p2160: return 2160
+        case .p1440: return 1440
+        case .p1080: return 1080
+        case .p720: return 720
+        case .p480: return 480
+        }
+    }
+
+    /// The size shrunk to fit, keeping its shape; never enlarged.
+    func fit(_ size: CGSize) -> CGSize {
+        guard let limit = shorterSide.map(CGFloat.init), size.width > 0, size.height > 0 else { return size }
+        let shorter = min(size.width, size.height)
+        guard shorter > limit else { return size }
+        let factor = limit / shorter
+        return CGSize(width: (size.width * factor).rounded(), height: (size.height * factor).rounded())
+    }
+}
+
+/// What no video encoder Kriya can use will go beyond: H.264 stops at 4096 pixels on a side, HEVC (used for HDR) at 8192.
+enum EncoderLimit {
+    static func largestSide(hevc: Bool) -> CGFloat { hevc ? 8192 : 4096 }
+
+    /// The size shrunk to fit the encoder, keeping its shape. Never enlarged.
+    static func fit(_ size: CGSize, hevc: Bool) -> CGSize {
+        let limit = largestSide(hevc: hevc)
+        let longest = max(size.width, size.height)
+        guard longest > limit, longest > 0 else { return size }
+        let factor = limit / longest
+        return CGSize(width: (size.width * factor).rounded(.down), height: (size.height * factor).rounded(.down))
+    }
+}
+
 /// How a recording is made. Kept apart from the recorder so the choices can be checked without a screen.
 struct RecordingOptions: Codable, Equatable {
     var source: RecordingSource = .screen
@@ -99,6 +141,26 @@ struct RecordingOptions: Codable, Equatable {
     /// The camera's own id. Empty means the Mac's default one.
     var cameraID = ""
     var cameraStyle = CameraStyle()
+    /// Darkens the displays that are not being recorded (when there is more than one), so attention stays on the one that is.
+    var dimScreen = false
+    /// A countdown before the recording starts.
+    var showCountdown = false
+    /// Silences notifications while recording.
+    var doNotDisturb = false
+    /// One audio channel instead of two.
+    var monoAudio = false
+    /// The largest the video may be, by its shorter side. Never larger than the display, and never past what the encoder can do.
+    var maximumResolution: ResolutionLimit = .original
+    /// `.oneX` records a Retina screen at its size in points: half the pixels in each direction.
+    var outputScale: OutputScale = .native
+    /// The Mac's sound and the microphone in tracks of their own (what Kriya has always written), or mixed into one.
+    var audioTrackMode: AudioTrackMode = .separate
+    /// Starts the next recording on the display and window chosen last time, when they are still there.
+    var remembersLastSelection = false
+    var lastSelection: RecordingSelection?
+    var clickHighlight = ClickHighlightOptions()
+    var keystrokeOptions = KeystrokeOptions()
+    var gif = GIFOptions()
 
     init() {}
 
@@ -116,9 +178,39 @@ struct RecordingOptions: Codable, Equatable {
         webcam = try c.decodeIfPresent(Bool.self, forKey: .webcam) ?? d.webcam
         cameraID = try c.decodeIfPresent(String.self, forKey: .cameraID) ?? d.cameraID
         cameraStyle = try c.decodeIfPresent(CameraStyle.self, forKey: .cameraStyle) ?? d.cameraStyle
+        dimScreen = c.value(.dimScreen, d.dimScreen); showCountdown = c.value(.showCountdown, d.showCountdown)
+        doNotDisturb = c.value(.doNotDisturb, d.doNotDisturb); monoAudio = c.value(.monoAudio, d.monoAudio)
+        maximumResolution = c.value(.maximumResolution, d.maximumResolution); outputScale = c.value(.outputScale, d.outputScale)
+        audioTrackMode = c.value(.audioTrackMode, d.audioTrackMode)
+        remembersLastSelection = c.value(.remembersLastSelection, d.remembersLastSelection)
+        lastSelection = try? c.decodeIfPresent(RecordingSelection.self, forKey: .lastSelection)
+        clickHighlight = c.value(.clickHighlight, d.clickHighlight); keystrokeOptions = c.value(.keystrokeOptions, d.keystrokeOptions)
+        gif = c.value(.gif, d.gif).sanitized()
     }
 
     static let allowedFrameRates = [15, 24, 30, 60]
+
+    /// The size to record a screen of `pixels` at. In order: brought down to points on a Retina screen when 1x is asked for, no larger
+    /// than the chosen resolution, and no larger than the encoder can write. Never larger than the display itself. Both sides stay even
+    /// (video needs it) and within the encoder's limit.
+    func recordedSize(pixels: CGSize, backingScale: CGFloat) -> CGSize {
+        guard pixels.width > 0, pixels.height > 0 else { return CGSize(width: 2, height: 2) }
+        var size = pixels
+        if outputScale == .oneX, backingScale > 1 { size = CGSize(width: size.width / backingScale, height: size.height / backingScale) }
+        size = maximumResolution.fit(size)
+        let hevc = hdr
+        size = EncoderLimit.fit(size, hevc: hevc)
+        let limit = EncoderLimit.largestSide(hevc: hevc)
+        func even(_ v: CGFloat) -> CGFloat { min(max((v / 2).rounded() * 2, 2), limit) }
+        return CGSize(width: even(size.width), height: even(size.height))
+    }
+
+    /// Channels in the Mac's sound: one when it is mixed down to mono, otherwise two. (The microphone is one channel either way.)
+    var systemAudioChannels: Int { monoAudio ? 1 : 2 }
+
+    /// How many seconds to count down before the recording starts: the self-timer's, or at least 3 when the countdown is asked for.
+    static let countdownSeconds = 3
+    func countdown(selfTimer seconds: Int) -> Int { showCountdown ? max(seconds, Self.countdownSeconds) : seconds }
 
     /// The same options with anything unusable put right, given what this Mac can do.
     func sanitized(hdrAvailable: Bool) -> RecordingOptions {
@@ -127,11 +219,12 @@ struct RecordingOptions: Codable, Equatable {
             next.framesPerSecond = Self.allowedFrameRates.min { abs($0 - framesPerSecond) < abs($1 - framesPerSecond) } ?? 30
         }
         if !hdrAvailable { next.hdr = false }
+        next.gif = gif.sanitized()
         return next
     }
 
     /// Whether two audio tracks are written (the Mac's sound and the microphone), which matters for the file's layout.
-    var audioTrackCount: Int { (systemAudio ? 1 : 0) + (microphone ? 1 : 0) }
+    var audioTrackCount: Int { audioTrackMode == .mixed ? ((systemAudio || microphone) ? 1 : 0) : (systemAudio ? 1 : 0) + (microphone ? 1 : 0) }
 }
 
 /// Keeps time for a recording that can be paused: the paused stretch is cut out, so what follows picks up straight after what

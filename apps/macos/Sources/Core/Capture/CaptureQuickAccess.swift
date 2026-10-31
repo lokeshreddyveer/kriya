@@ -71,6 +71,30 @@ struct QuickAccessSettings: Codable, Equatable {
     var stackLimit: Int = 4
     /// Do not show a card for a screenshot while a recording is running.
     var holdWhileRecording = true
+    /// The card goes away once its picture has been dragged somewhere. ⌥ held while dragging keeps it, when `optionDragKeepsOpen`.
+    var closeAfterDragging = false
+    var optionDragKeepsOpen = true
+    /// The card goes away once its picture has been uploaded.
+    var closeAfterUpload = false
+    /// Where Save puts a picture, and where it goes when ⌥ is held while pressing it.
+    var defaultSaveDestination = SaveDestination(kind: .captureFolder)
+    var alternateSaveDestination = SaveDestination(kind: .ask)
+
+    init() {}
+
+    /// Reads settings saved by any earlier version: a key that is not there keeps its usual value, so nothing set before is lost.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = QuickAccessSettings()
+        icon = c.value(.icon, d.icon); scope = c.value(.scope, d.scope); position = c.value(.position, d.position)
+        display = c.value(.display, d.display); size = c.value(.size, d.size); margin = c.value(.margin, d.margin)
+        autoCloseSeconds = c.value(.autoCloseSeconds, d.autoCloseSeconds); stackLimit = c.value(.stackLimit, d.stackLimit)
+        holdWhileRecording = c.value(.holdWhileRecording, d.holdWhileRecording)
+        closeAfterDragging = c.value(.closeAfterDragging, d.closeAfterDragging); optionDragKeepsOpen = c.value(.optionDragKeepsOpen, d.optionDragKeepsOpen)
+        closeAfterUpload = c.value(.closeAfterUpload, d.closeAfterUpload)
+        defaultSaveDestination = c.value(.defaultSaveDestination, d.defaultSaveDestination)
+        alternateSaveDestination = c.value(.alternateSaveDestination, d.alternateSaveDestination)
+    }
 
     func shows(recording: Bool) -> Bool {
         switch scope {
@@ -88,6 +112,70 @@ struct QuickAccessSettings: Codable, Equatable {
         s.autoCloseSeconds = min(max(autoCloseSeconds, 0), 120)
         s.stackLimit = min(max(stackLimit, 1), 6)
         return s
+    }
+}
+
+/// Where a card's Save puts a picture.
+struct SaveDestination: Codable, Equatable {
+    enum Kind: String, Codable, CaseIterable, Identifiable {
+        case captureFolder, desktop, downloads, ask, custom
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .captureFolder: return "The capture folder"
+            case .desktop: return "The Desktop"
+            case .downloads: return "Downloads"
+            case .ask: return "Ask each time"
+            case .custom: return "A folder I choose…"
+            }
+        }
+    }
+
+    var kind: Kind = .captureFolder
+    /// The folder for `.custom`.
+    var path = ""
+
+    init(kind: Kind = .captureFolder, path: String = "") { self.kind = kind; self.path = path }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = c.value(.kind, Kind.captureFolder); path = c.value(.path, "")
+    }
+
+    /// Somewhere to save, or a question to ask.
+    enum Place: Equatable {
+        case folder(URL)
+        case ask
+    }
+
+    /// Where this puts a picture. A custom folder that was never chosen falls back to the capture folder rather than failing.
+    func place(captureFolder: URL, home: URL) -> Place {
+        switch kind {
+        case .captureFolder: return .folder(captureFolder)
+        case .desktop: return .folder(home.appendingPathComponent("Desktop", isDirectory: true))
+        case .downloads: return .folder(home.appendingPathComponent("Downloads", isDirectory: true))
+        case .ask: return .ask
+        case .custom: return path.isEmpty ? .folder(captureFolder) : .folder(URL(fileURLWithPath: path, isDirectory: true))
+        }
+    }
+}
+
+/// The rules for what a Quick Access card does with its picture, in one place. Every way of dragging, uploading or saving (a button, a
+/// key, a menu) asks here, so a card behaves the same whichever way it is used.
+enum QuickAccessCard {
+    enum After: Equatable { case close, keepOpen }
+
+    /// What happens to the card after its picture was dragged out. ⌥ held keeps it open when that is allowed.
+    static func afterDrag(_ settings: QuickAccessSettings, optionHeld: Bool) -> After {
+        guard settings.closeAfterDragging else { return .keepOpen }
+        return optionHeld && settings.optionDragKeepsOpen ? .keepOpen : .close
+    }
+
+    static func afterUpload(_ settings: QuickAccessSettings) -> After { settings.closeAfterUpload ? .close : .keepOpen }
+
+    /// The destination for a Save: the default one, or the alternate one when ⌥ is held.
+    static func destination(_ settings: QuickAccessSettings, optionHeld: Bool) -> SaveDestination {
+        optionHeld ? settings.alternateSaveDestination : settings.defaultSaveDestination
     }
 }
 

@@ -48,6 +48,15 @@ final class EventMonitor: ObservableObject {
     }
 
     @Published private(set) var state: State = .stopped
+    /// Pass-through for every mouse event: no Kriya rule sees or changes a click, move or scroll, whatever is switched on. Keys are not
+    /// affected. Set by the person (menu bar, a bound key) or automatically when the tap keeps being switched off for being slow.
+    @Published private(set) var mouseRulesPaused = false
+    private var passThroughMouse = false              // the tap thread's copy, guarded by lock
+    private var recentTimeouts: [UInt64] = []         // guarded by lock
+    /// Set when the pause was automatic, so the interface can say why.
+    @Published private(set) var pausedAutomatically = false
+    /// Why, in words, when it was automatic.
+    @Published private(set) var pauseReason: String?
 
     private let lock = NSLock()
     private var subscriptions: [Subscription] = []   // guarded by lock
@@ -251,6 +260,10 @@ final class EventMonitor: ObservableObject {
         if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticMarker {
             return Unmanaged.passUnretained(event)
         }
+        lock.lock()
+        let skip = passThroughMouse
+        lock.unlock()
+        if skip, Self.isMouseEvent(type) { return Unmanaged.passUnretained(event) }
 
         lock.lock()
         let subs = subscriptions
@@ -291,6 +304,35 @@ final class EventMonitor: ObservableObject {
         return result
     }
 
+    /// Clicks, drags, moves and scrolls.
+    static func isMouseEvent(_ type: CGEventType) -> Bool {
+        switch type {
+        case .leftMouseDown, .leftMouseUp, .leftMouseDragged, .rightMouseDown, .rightMouseUp, .rightMouseDragged,
+             .otherMouseDown, .otherMouseUp, .otherMouseDragged, .mouseMoved, .scrollWheel: return true
+        default: return false
+        }
+    }
+
+    /// Whether the system has switched the tap off for being slow this often in this time, which means something is wrong badly enough
+    /// that the mouse should be left alone. Pure, so it can be tested.
+    static let timeoutWindowNs: UInt64 = 10_000_000_000
+    static func tooManyTimeouts(_ times: [UInt64], now: UInt64, count: Int = 3, windowNs: UInt64 = timeoutWindowNs) -> Bool {
+        times.filter { now &- $0 <= windowNs }.count >= count
+    }
+
+    /// Pauses or resumes every mouse rule at once.
+    func setMouseRulesPaused(_ paused: Bool, automatically: Bool = false) {
+        lock.lock()
+        passThroughMouse = paused
+        if !paused { recentTimeouts = [] }
+        lock.unlock()
+        DispatchQueue.main.async {
+            self.mouseRulesPaused = paused
+            self.pausedAutomatically = paused && automatically
+            if !paused || !automatically { self.pauseReason = nil }
+        }
+    }
+
     static func endsInteraction(_ type: CGEventType) -> Bool {
         switch type {
         case .leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp, .flagsChanged: return true
@@ -310,16 +352,48 @@ final class EventMonitor: ObservableObject {
         lock.unlock()
     }
 
+    /// Called on the main thread, before the tap is switched back on after a pause forced by repeated timeouts: puts every mouse rule
+    /// back (held buttons let go, the pointer free, nothing waiting). Set by the app.
+    var cleanUpBeforeResuming: (() -> Void)?
+
+    /// The system switched the tap off. A timeout is it saying a handler took too long. The tap is switched back on, except when this is
+    /// the third timeout in ten seconds: then mouse events are passed straight through at once, everything is cleaned up, and only then
+    /// is the tap switched back on, so keyboard features keep working and nothing is left held. Only the number of timeouts and the time
+    /// are kept, never what was typed or clicked.
     private func recoverTap(reason: String) {
         lock.lock()
         let port = tapPort
         stats.tapRecoveries += 1
         let now = DispatchTime.now().uptimeNanoseconds
+        var pausing = false
+        var count = 0
+        if reason == "timeout" {
+            recentTimeouts.append(now)
+            recentTimeouts.removeAll { now &- $0 > Self.timeoutWindowNs }
+            count = recentTimeouts.count
+            pausing = Self.tooManyTimeouts(recentTimeouts, now: now) && !passThroughMouse
+            // Set here, under the lock, so the very next mouse event already passes through untouched.
+            if pausing { passThroughMouse = true }
+        }
         let shouldLog = now - lastRecoveryLog > 1_000_000_000
         if shouldLog { lastRecoveryLog = now }
         lock.unlock()
-        if let port { CGEvent.tapEnable(tap: port, enable: true) }
-        if shouldLog { Log.warning("Events", "The system switched the event tap off (\(reason)); switched it back on") }
+
+        guard pausing else {
+            if let port { CGEvent.tapEnable(tap: port, enable: true) }
+            if shouldLog { Log.warning("Events", "The system switched the event tap off (\(reason)); switched it back on") }
+            return
+        }
+        Log.warning("Events", "The event tap was switched off for being slow \(count) times in ten seconds; mouse rules are paused")
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pausedAutomatically = true
+            self.pauseReason = "macOS switched Kriya’s mouse hold off for being too slow \(count) times in ten seconds."
+            self.mouseRulesPaused = true
+            self.cleanUpBeforeResuming?()
+            // Only now, with everything let go, is the tap switched back on.
+            if let port { CGEvent.tapEnable(tap: port, enable: true) }
+        }
     }
 }
 

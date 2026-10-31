@@ -126,6 +126,9 @@ struct DragToolsTab: View {
             if let error = store.lastError {
                 Section { Text(error).font(.callout).foregroundStyle(Theme.danger) }
             }
+            NavigateDragSection()
+            ButtonChordSection()
+            PrimaryButtonReplacementSection()
         }
         .formStyle(.grouped)
         .animation(.smooth(duration: 0.25), value: config)

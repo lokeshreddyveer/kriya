@@ -78,7 +78,12 @@ final class AppEnvironment {
     private var remapCancellable: AnyCancellable?
     private var keyboardCancellable: AnyCancellable?
     let dragTools: DragTools
+    let navigateDrag: NavigateDragController
+    let buttonChords: ButtonChordController
+    let buttonReplacement: PrimaryButtonReplacementController
+    let trackpadGestures = TrackpadGestureService(emitter: SystemTrackpadEmitter(), recognizer: GestureRecognizer(mapping: [:]))
     private var dragCancellable: AnyCancellable?
+    private var pauseCancellable: AnyCancellable?
     private var dragFeatureCancellable: AnyCancellable?
     private var pointerMenuCancellable: AnyCancellable?
     let pointerEffects: PointerEffects
@@ -134,6 +139,8 @@ final class AppEnvironment {
         let bridge = BrowserBridge(support: paths.support)
         let safariInbox = SafariInboxWatcher(support: paths.support)
         let capture = ScreenCaptureService(settings: CaptureSettingsStore())
+        // A link found in text read from a picture goes through the person's link rules when they choose to route it.
+        capture.routeLink = { [links] url in links.open(url, sourceAppID: nil) }
         let intelligence = IntelligenceCoordinator(service: AppleIntelligence(model: GatewayTextModel(gateway: .shared)))
         let workspaceStore = WorkspaceStore(core: core)
         let pointerStore = PointerEffectsStore(core: core)
@@ -177,6 +184,19 @@ final class AppEnvironment {
             mouseClaims: { [weak mouse, weak activity] button, modifiers in
                 mouse?.claims(button: button, modifiers: modifiers, device: activity?.currentDeviceID()) ?? ButtonClaims()
             })
+        let navigateDrag = NavigateDragController(events: events, mouseClaims: { [weak mouse, weak activity] button, modifiers in
+            mouse?.claims(button: button, modifiers: modifiers, device: activity?.currentDeviceID()) ?? ButtonClaims()
+        })
+        let buttonChords = ButtonChordController(events: events, run: { [weak library, weak executor] id in
+            guard let executor, let saved = library?.actions.first(where: { $0.id == id }) else { return }
+            Task { _ = await executor.perform(saved.action) }
+        }, mouseClaims: { [weak mouse, weak activity] button, modifiers in
+            mouse?.claims(button: button, modifiers: modifiers, device: activity?.currentDeviceID()) ?? ButtonClaims()
+        })
+        let buttonReplacement = PrimaryButtonReplacementController(events: events, run: { [weak library, weak executor] id in
+            guard let executor, let saved = library?.actions.first(where: { $0.id == id }) else { return }
+            Task { _ = await executor.perform(saved.action) }
+        })
         let workspaces = WorkspaceController(
             store: workspaceStore, windowController: windowController, windows: windows, executor: executor,
             isEnabled: { [weak config] in config?.isEnabled(.windowManagement) == true }
@@ -287,6 +307,9 @@ final class AppEnvironment {
         self.remap = remap
         self.keyboardDevices = keyboardDevices
         self.dragTools = dragTools
+        self.navigateDrag = navigateDrag
+        self.buttonChords = buttonChords
+        self.buttonReplacement = buttonReplacement
         self.clipboard = clipboard
         self.approvals = approvals
         self.selection = selection
@@ -328,7 +351,8 @@ final class AppEnvironment {
             return spaces + spots + underPointer + screens + captures
         }
         for entry in CaptureSettings.commands {
-            executor.registerCommand(entry.command) { [weak capture] in DispatchQueue.main.async { capture?.capture(entry.mode, action: entry.action) } }
+            // By name, so the commands that are not a plain capture (history, pins, cards, the camera) do what their name says.
+            executor.registerCommand(entry.command) { [weak capture] in capture?.run(command: entry.command) }
         }
         // Each saved area is a command of its own, kept in step with the list.
         let areaCommands = AreaCommandRegistry(executor: executor)
@@ -337,17 +361,16 @@ final class AppEnvironment {
         syncAreas()
         capture.showEditor = { [captureEditor, weak capture] image, done in
             guard let capture else { done(image); return }
-            captureEditor.show(image, service: capture, completion: done)
+            captureEditor.show(image, service: capture, startingStyle: capture.editorStartStyle, completion: done)
         }
         capture.sendToShelf = { [weak fileShelf] url in fileShelf?.add(file: url) }
-        executor.registerCommand("capture.restore") { DispatchQueue.main.async { CaptureOverlay.shared.restoreLast() } }
         // Owned by the service manager like the other background services: stopped in safe mode, started again when it ends.
         // (Screen Recording is asked for when a capture is taken, so a refusal does not stop the shortcuts that explain it.)
         services.register(AuxiliaryService(id: "capture", title: "Screen capture shortcuts", start: { [weak capture] in capture?.start() }, stop: { [weak capture] in capture?.stop() }))
         timeline.start(events: events)
         keyboard.palette.addProvider { [weak capture] in
             CaptureSettings.commands.map { entry in
-                PaletteEntry(id: entry.command, title: entry.title, subtitle: "Screen capture", symbol: entry.mode.symbol, category: .command) { capture?.capture(entry.mode, action: entry.action) }
+                PaletteEntry(id: entry.command, title: entry.title, subtitle: "Screen capture", symbol: entry.mode.symbol, category: .command) { capture?.run(command: entry.command) }
             }
         }
         services.register(AuxiliaryService(id: "workspaces", title: "Workspaces", start: { [weak workspaces] in workspaces?.start() }, stop: { [weak workspaces] in workspaces?.stop() }))
@@ -372,6 +395,17 @@ final class AppEnvironment {
         executor.registerCommand("display.dim_more") { [weak displayTools] in DispatchQueue.main.async { displayTools?.dim(by: 0.1) } }
         executor.registerCommand("display.dim_less") { [weak displayTools] in DispatchQueue.main.async { displayTools?.dim(by: -0.1) } }
         executor.registerCommand("shelf.toggle") { [weak fileShelf] in DispatchQueue.main.async { fileShelf?.toggle() } }
+        // One command to leave every mouse rule alone, or take them up again: the way out when something is wrong with the mouse.
+        executor.registerCommand("mouse.rules.pause_toggle") { [weak self] in DispatchQueue.main.async { self?.toggleMouseRulesPause() } }
+        // The backup input path for button replacement: pause it, or start the confirmation again, from any key bound to this.
+        executor.registerCommand("mouse.replacement.pause") { [weak self] in DispatchQueue.main.async { self?.buttonReplacement.togglePause() } }
+        // Trackpad gestures by name, so any shortcut, button rule, chord or hold can run them.
+        for entry in TrackpadGestureCommands.all {
+            executor.registerCommand(entry.command) { [weak self] in
+                let at = CGEvent(source: nil)?.location ?? .zero
+                self?.trackpadGestures.run(entry.kind, at: at)
+            }
+        }
         screenCancellable = screenStore.$config.receive(on: DispatchQueue.main).sink { [weak self] _ in
             self?.hotCorners.apply()
             self?.fileShelf.apply()
@@ -448,6 +482,17 @@ final class AppEnvironment {
             guard let self else { return }
             self.updateDragTools(config)
         }
+        // Pausing the mouse rules puts everything back at once: held buttons let go, the pointer free, nothing waiting.
+        // When macOS keeps switching the mouse hold off, this runs before the hold is switched back on.
+        events.cleanUpBeforeResuming = { [weak self] in self?.releaseMouseHolds() }
+        pauseCancellable = events.$mouseRulesPaused.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] paused in
+            guard let self else { return }
+            if paused {
+                self.releaseMouseHolds()
+            } else {
+                self.updateDragTools(self.dragStore.config)
+            }
+        }
         // Switching Mouse & Trackpad on or off starts and stops the drag tools with it.
         dragFeatureCancellable = self.config.$settings.map { $0.enabledFeatures.contains(.mouse) }.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in
             guard let self else { return }
@@ -508,6 +553,9 @@ final class AppEnvironment {
         sources.intelligence = intelligence
         sources.tools = launcherTools
         devices.activeDeviceID = { [weak activity] in activity?.currentDeviceID() }
+        devices.rateSampler = { [weak activity] id, seconds, done in
+            if let activity { activity.sampleMovement(of: id, seconds: seconds, completion: done) } else { done([]) }
+        }
         devices.activeAttribution = { [weak activity] in activity?.attribution(maxAgeNs: DeviceActivityTracker.testWindowNs) ?? .none }
         devices.lastUsedProvider = { [weak activity] id in activity?.lastUsed(id) }
         clipboard.quick.extraMenuActions = { [weak intelligence, weak clipboard] item in
@@ -565,6 +613,8 @@ extension View {
         self
             .environmentObject(env.config)
             .environmentObject(env.crashGuard)
+            .environmentObject(env.buttonReplacement)
+            .environmentObject(CoexistenceMonitor.shared)
             .environmentObject(env.permissions)
             .environmentObject(env.events)
             .environmentObject(env.devices)
@@ -677,6 +727,31 @@ extension AppEnvironment {
         } else {
             dragTools.stop()
         }
+        updateNavigateDrag()
+    }
+
+    /// Kriya’s own held state is cleared and its own synthetic gestures cancelled. Nothing is posted that could press or release a
+    /// button: a click held back is forgotten, not replayed, and no release is sent for a press that belongs to another app or device.
+    /// The one exception is a press Kriya itself made by replacing a button, which is released once its physical button is let go.
+    /// Safe to call at any time, and more than once.
+    func releaseMouseHolds() {
+        navigateDrag.stop()
+        buttonChords.stop(replayPending: false)
+        buttonReplacement.stop(.switchedOff)
+        dragTools.reset()
+        dragTools.stop()
+        trackpadGestures.cancel()
+    }
+
+    /// Pauses every mouse rule, or resumes them.
+    func toggleMouseRulesPause() { events.setMouseRulesPaused(!events.mouseRulesPaused) }
+
+    /// Click-and-drag navigation listens only while it is switched on, Input Monitoring is allowed, safe mode is off and Mouse & Trackpad is on.
+    fileprivate func updateNavigateDrag() {
+        let allowed = permissions.isGranted(.inputMonitoring) && !crashGuard.isSafeMode && config.isEnabled(.mouse)
+        navigateDrag.refresh(allowed: allowed)
+        buttonChords.refresh(allowed: allowed)
+        buttonReplacement.refresh(allowed: allowed, denial: crashGuard.isSafeMode ? .safeMode : .permissionLost)
     }
 
     fileprivate func registerSoundCommands() {

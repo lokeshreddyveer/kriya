@@ -8,6 +8,9 @@ final class RecordingController: ObservableObject {
     let mirror = LiveMirror()
 
     private let keystrokes = KeystrokeOverlay()
+    private let dim = ScreenDim()
+    private let clicks = ClickHighlightOverlay()
+    private let focus = RecordingFocus()
     private let camera = WebcamBubble()
     private var hud: RecordingHUD?
     private var pausedSub: AnyCancellable?
@@ -19,6 +22,12 @@ final class RecordingController: ObservableObject {
     var onSaved: (URL) -> Void = { _ in }
 
     var isRecording: Bool { recorder.isActive }
+
+    /// Whether the camera is showing in its window.
+    var cameraShown: Bool { camera.isShown }
+
+    /// The camera over the whole screen, or back to its small window.
+    func toggleCameraFullscreen() { camera.toggleFullscreen() }
 
     init() {
         recorder.onFinish = { [weak self] result in self?.finished(result) }
@@ -52,14 +61,28 @@ final class RecordingController: ObservableObject {
                                onRestart: { [weak self] in self?.startOver() }, onCancel: { [weak self] in self?.cancel() })
         self.hud = hud
         hud.show()
-        if options.showKeystrokes { keystrokes.show() }
+        if options.showKeystrokes { keystrokes.show(options: options.keystrokeOptions) }
         watchDisk(folder: folder, status: info)
         let begin = {
             let fileName = CaptureNaming.fileName(pattern: namePattern.map { $0.replacingOccurrences(of: "Capture", with: "Recording") } ?? "Kriya Recording {date} {time}", date: Date(), app: app, mode: mode, ext: "mov") {
                 FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
             }
             self.recorder.start(options: options, into: folder, excluding: [hud.windowNumber], fileName: fileName, target: target) { [weak self] error in
-                guard let self, let error else { return }
+                guard let self else { return }
+                guard let error else {
+                    // Recording: the displays that are not being recorded are darkened, if asked. It is taken away in `tearDown`, which every
+                    // way the recording can end (stopped, cancelled, failed, started over) goes through.
+                    // Clicks are drawn on screen, so they are in the video (a window-only recording leaves them out unless asked).
+                    self.clicks.show(options: options.clickHighlight, source: options.source)
+                    // Notifications off for the length of the recording; every way it ends puts them back.
+                    if options.doNotDisturb, let problem = self.focus.begin() { self.toast.show(problem, isError: true) }
+                    if options.dimScreen {
+                        let all = ScreenDim.connectedDisplays()
+                        let recorded = ScreenDim.recordedDisplay(for: options.source, target: target)
+                        self.dim.show(on: RecordingDim.displaysToDim(all: all.map { UInt32($0) }, recorded: recorded.map { UInt32($0) }).map { CGDirectDisplayID($0) })
+                    }
+                    return
+                }
                 self.tearDown()
                 if error is ScreenRecorder.Cancelled {
                     // Stop or cancel pressed during the start is not a failure; a start-over begins again.
@@ -139,16 +162,39 @@ final class RecordingController: ObservableObject {
         }
         switch result {
         case .success(let url):
-            toast.show("Recording saved as \(url.lastPathComponent)")
-            // With the card turned off for recordings, the file is shown in Finder instead.
-            if QuickAccessStore.settings.shows(recording: true) { onSaved(url) } else { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            let mixed = last?.options.audioTrackMode == .mixed && last?.options.systemAudio == true && last?.options.microphone == true
+            let channels = last?.options.systemAudioChannels ?? 2
+            guard mixed else { saved(url); return }
+            // Both sources in one track: the movie is copied with its sound mixed, and the copy replaces it only once complete. If that
+            // fails the recording is kept as it was, with its separate tracks, and the person is told.
+            toast.show("Mixing the sound into one track…")
+            Task { @MainActor in
+                do { try await RecordingAudioMixer.mix(url, channels: channels) }
+                catch { self.toast.show("The sound could not be mixed into one track, so the recording keeps its separate tracks.", isError: true) }
+                self.saved(url)
+            }
+            return
         case .failure(let error):
             toast.show(error.localizedDescription, isError: true)
         }
         onEnd()
     }
 
+    /// A recording is saved and ready: say so and give it its card (or show it in Finder when cards are off for recordings).
+    private func saved(_ url: URL) {
+        toast.show("Recording saved as \(url.lastPathComponent)")
+        if QuickAccessStore.settings.shows(recording: true) { onSaved(url) } else { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        onEnd()
+    }
+
+    /// At launch: puts Do Not Disturb back if the last run ended in the middle of a recording.
+    func recoverAfterQuit() { focus.recover() }
+
     private func tearDown() {
+        // Whatever ended the recording (stop, cancel, an error, a refused permission), the screens and notifications go back to how they were.
+        dim.hide()
+        clicks.hide()
+        focus.restore()
         diskTimer?.invalidate()
         diskTimer = nil
         hud?.hide()

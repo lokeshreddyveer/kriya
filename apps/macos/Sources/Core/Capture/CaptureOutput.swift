@@ -120,15 +120,49 @@ struct CaptureBeautify: Codable, Equatable {
     var corners: Double = 0.02
     var shadow = true
     var aspect: Aspect = .free
+    /// An outline around the picture, in the ring just outside it. The canvas always has room for it.
+    var borderEnabled = false
+    /// Its width in pixels.
+    var borderWidth = 1.0
+    var borderColor = CodableColor.border
 
+    init(background: Background = .none, padding: Double = 0.08, corners: Double = 0.02, shadow: Bool = true, aspect: Aspect = .free,
+         borderEnabled: Bool = false, borderWidth: Double = 1, borderColor: CodableColor = .border) {
+        self.background = background; self.padding = padding; self.corners = corners
+        self.shadow = shadow; self.aspect = aspect
+        self.borderEnabled = borderEnabled; self.borderWidth = borderWidth; self.borderColor = borderColor
+    }
+
+    /// Reads a style saved by any earlier version: a key that is not there keeps its usual value.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = CaptureBeautify()
+        background = c.value(.background, d.background); padding = c.value(.padding, d.padding); corners = c.value(.corners, d.corners)
+        shadow = c.value(.shadow, d.shadow); aspect = c.value(.aspect, d.aspect)
+        borderEnabled = c.value(.borderEnabled, d.borderEnabled); borderWidth = c.value(.borderWidth, d.borderWidth); borderColor = c.value(.borderColor, d.borderColor)
+    }
+
+    /// The border as one value, for drawing and for the plain-screenshot setting that uses the same one.
+    var border: CaptureBorder {
+        get { CaptureBorder(enabled: borderEnabled, width: borderWidth, color: borderColor) }
+        set { borderEnabled = newValue.enabled; borderWidth = newValue.width; borderColor = newValue.color }
+    }
+
+    /// Whether a backdrop is put behind the picture.
     var isOn: Bool { background != .none }
 
-    /// The size of the finished canvas and where the picture sits on it (top-left origin). The picture is never scaled.
+    /// Whether the picture needs a bigger canvas: for a backdrop, or only to hold a border.
+    var needsCanvas: Bool { isOn || border.reserved > 0 }
+
+    /// The size of the finished canvas and where the picture sits on it (top-left origin). The picture is never scaled. The space around
+    /// it is at least as wide as the border, so the border is never cut off, and with no backdrop the canvas is just the picture and its
+    /// border.
     func layout(for size: CGSize) -> (canvas: CGSize, picture: CGRect) {
-        guard isOn, size.width > 0, size.height > 0 else { return (size, CGRect(origin: .zero, size: size)) }
-        let pad = (min(size.width, size.height) * CGFloat(min(max(padding, 0), 0.5))).rounded()
+        guard needsCanvas, size.width > 0, size.height > 0 else { return (size, CGRect(origin: .zero, size: size)) }
+        let spaced = isOn ? (min(size.width, size.height) * CGFloat(min(max(padding, 0), 0.5))).rounded() : 0
+        let pad = max(spaced, CGFloat(border.reserved))
         var canvas = CGSize(width: size.width + pad * 2, height: size.height + pad * 2)
-        if let ratio = aspect.ratio {
+        if isOn, let ratio = aspect.ratio {
             if canvas.width / canvas.height < ratio { canvas.width = (canvas.height * ratio).rounded() } else { canvas.height = (canvas.width / ratio).rounded() }
         }
         let origin = CGPoint(x: ((canvas.width - size.width) / 2).rounded(), y: ((canvas.height - size.height) / 2).rounded())

@@ -32,6 +32,12 @@ enum CaptureExtraSettings {
         set { if let data = try? JSONEncoder().encode(newValue) { UserDefaults.standard.set(data, forKey: beautifyKey) } }
     }
 
+    /// What happens after a capture, for screenshots, recordings, GIFs, text and uploads, and how pictures are written.
+    static var delivery: CaptureDeliveryPolicy {
+        get { CaptureDeliveryStore().policy }
+        set { CaptureDeliveryStore().policy = newValue }
+    }
+
     /// Apps a capture refuses to photograph. Password managers to start with.
     static var excludedApps: [String] {
         get { UserDefaults.standard.stringArray(forKey: excludedAppsKey) ?? CaptureExclusions.defaults }

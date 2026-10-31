@@ -168,6 +168,8 @@ enum WindowCommands {
             (command: "mouse.previous_display", title: "Move pointer to previous display"),
             (command: "menu.pointer", title: "Open the pointer menu"),
             (command: "menu.app", title: "Open the app's menu at the pointer"),
+            (command: "mouse.replacement.pause", title: "Pause or resume left and right button replacement"),
+            (command: "mouse.rules.pause_toggle", title: "Pause or resume all mouse rules"),
         ]
         list += WorkspaceController.commands.map { (command: $0.command, title: $0.title) }
         list += PointerEffects.commands.map { (command: $0.command, title: $0.title) }
@@ -181,6 +183,7 @@ enum WindowCommands {
         list.append((command: "clipboard.paste_as_file", title: "Paste the clipboard as a file in the front folder"))
         list.append((command: "focus.session", title: "Start or end a focus session"))
         list.append((command: "color.pick", title: "Pick a colour from the screen"))
+        list += TrackpadGestureCommands.all.map { (command: $0.command, title: $0.title) }
         list += AudioControl.commands.map { (command: $0.command, title: $0.title) }
         list += CaptureSettings.commands.map { (command: $0.command, title: $0.title) }
         list += more.map { (command: $0.0, title: $0.1) }

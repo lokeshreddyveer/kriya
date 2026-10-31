@@ -10,7 +10,12 @@
 # It talks to the Kriya that is running on this Mac, using a secret only your account can read. Nothing goes over the network.
 set -eu
 
-TOKEN_FILE="$HOME/Library/Application Support/Kriya/browser-bridge-token"
+SUPPORT="$HOME/Library/Application Support/Kriya"
+# Remote commands have a secret of their own. Older copies of Kriya used the browser extensions' secret for this, so it is the one to use
+# until Kriya has made its own.
+TOKEN_FILE="$SUPPORT/remote-commands-token"
+OLD_TOKEN_FILE="$SUPPORT/browser-bridge-token"
+STATE_FILE="$SUPPORT/remote-commands-state"
 
 usage() {
   sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
@@ -28,11 +33,23 @@ case "$verb" in
   help|-h|--help) usage; exit 0 ;;
 esac
 
-if [ ! -r "$TOKEN_FILE" ]; then
+if [ -r "$STATE_FILE" ] && [ "$(tr -d '[:space:]' < "$STATE_FILE")" = "disabled" ]; then
+  echo "kriya: remote commands are turned off in Kriya, so nothing was run. Turn them on in Kriya's settings, under Control from outside." >&2
+  exit 3
+fi
+if [ -e "$TOKEN_FILE" ]; then
+  if [ ! -s "$TOKEN_FILE" ]; then
+    echo "kriya: the access token was revoked, so nothing was run. Create a new one in Kriya's settings, under Control from outside." >&2
+    exit 4
+  fi
+  secret_file="$TOKEN_FILE"
+elif [ -r "$OLD_TOKEN_FILE" ]; then
+  secret_file="$OLD_TOKEN_FILE"
+else
   echo "kriya: open Kriya once first, so it can create its secret." >&2
   exit 1
 fi
-token=$(tr -d '[:space:]' < "$TOKEN_FILE")
+token=$(tr -d '[:space:]' < "$secret_file")
 
 case "$verb" in
   run)

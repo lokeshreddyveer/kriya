@@ -37,12 +37,30 @@ struct CaptureModesSection: View {
                 }
                 Toggle("Leave the desktop's icons out", isOn: bind(\.hideDesktopIcons))
                 Toggle("Cut the camera notch's strip off the top", isOn: bind(\.cropNotch))
-                Picker("Window captures", selection: bind(\.windowLook)) {
-                    ForEach(WindowLook.allCases) { Text($0.title).tag($0) }
+                Picker("Window captures", selection: bind(\.windowShot.style)) {
+                    ForEach(WindowShotStyle.allCases) { Text($0.title).tag($0) }
                 }
-                Text(modes.windowLook.detail).font(.caption).foregroundStyle(.secondary)
+                Toggle("Transparent background around the window", isOn: bind(\.windowShot.transparentBackground))
+                    .disabled(modes.windowShot.style != .framed)
+                Toggle("A soft shadow (Kriya's own)", isOn: bind(\.windowShot.shadow))
+                    .disabled(modes.windowShot.style == .system)
+                Picker("Backdrop", selection: bind(\.windowShot.backdrop)) {
+                    ForEach(CaptureBeautify.Background.allCases.filter { $0 != .none }) { Text($0.title).tag($0) }
+                }
+                .disabled(modes.windowShot.style != .framed || modes.windowShot.transparentBackground)
+                Text(modes.windowShot.detail).font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Reset Defaults") { modes.windowShot.resetToDefaults(); CaptureExtraSettings.modes = modes }.controlSize(.small)
+                    Spacer()
+                }
+                Toggle("Show the crosshair pointer when choosing an area", isOn: bind(\.showCrosshair))
+                Toggle("Show the magnifier", isOn: bind(\.showMagnifier))
+                Toggle("Remember my last choices (capture type, recording type, scrolling mode, display and window)", isOn: Binding(
+                    get: { modes.memory.remembers },
+                    set: { modes.memory.remembers = $0; CaptureExtraSettings.modes = modes }
+                ))
             } header: { Text("How capturing works") } footer: {
-                Text("Kriya's selector freezes the screen so what you choose is exactly what you saw: crosshair and magnifier, the size beside the area, edges that snap to the screen and to windows, ⇧ for a fixed shape (R changes the shape), ⌥ to grow from the centre, Space to move the area while dragging, the arrow keys to nudge it (⌥ to resize, ⇧ for ten), ⏎ to capture and ⎋ to cancel. The self-timer counts down on screen with a Cancel, for areas, windows, full screens, menus and recordings. Use macOS's tool if you prefer its look.")
+                Text("Kriya's selector freezes the screen so what you choose is exactly what you saw: crosshair and magnifier, the size beside the area, edges that snap to the screen and to windows, ⇧ for a fixed shape (R changes the shape), ⌥ to grow from the centre, Space to move the area while dragging, the arrow keys to nudge it (⌥ to resize, ⇧ for ten), ⏎ to capture and ⎋ to cancel. The self-timer counts down on screen with a Cancel, for areas, windows, full screens, menus and recordings. Use macOS's tool if you prefer its look. The crosshair and the magnifier can each be switched off by itself (both off gives a plain arrow and no magnifier); they belong to this selector, and the Pixel Ruler keeps its own. Remembering marks the display and the window you chose last time first when they are still there, and forgets one that is no longer connected or open.")
             }
 
             Section {

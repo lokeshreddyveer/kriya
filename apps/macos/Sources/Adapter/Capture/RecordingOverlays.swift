@@ -38,17 +38,28 @@ final class KeystrokeOverlay: ObservableObject {
     private var timer: Timer?
     private var panel: NSPanel?
 
-    func show() {
+    @Published fileprivate var options = KeystrokeOptions()
+
+    func show(options: KeystrokeOptions = KeystrokeOptions()) {
         guard panel == nil else { return }
         guard let screen = screenUnderPointer() else { return }
+        self.options = options
         let size = NSSize(width: 640, height: 90)
         let panel = makeFloatingPanel(size: size, clickThrough: true)
         panel.contentView = NSHostingView(rootView: KeystrokePill(overlay: self))
         let frame = screen.visibleFrame
-        panel.setFrame(NSRect(x: frame.midX - size.width / 2, y: frame.minY + 60, width: size.width, height: size.height), display: true)
+        let x: CGFloat
+        switch options.position {
+        case .bottomLeft: x = frame.minX + 24
+        case .bottomRight: x = frame.maxX - size.width - 24
+        default: x = frame.midX - size.width / 2
+        }
+        let y = options.position == .topCenter ? frame.maxY - size.height - 40 : frame.minY + 60
+        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         panel.orderFrontRegardless()
         self.panel = panel
         strip = KeystrokeStrip()
+        strip.lifetime = options.fade
         monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in self?.keyDown(event) }
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
     }
@@ -73,8 +84,8 @@ final class KeystrokeOverlay: ObservableObject {
         if flags.contains(.option) { modifiers.insert(.option) }
         if flags.contains(.shift) { modifiers.insert(.shift) }
         if flags.contains(.command) { modifiers.insert(.command) }
-        // Typing into a password field is never shown.
-        let label = KeystrokeLabel.label(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: modifiers, secureInput: IsSecureEventInputEnabled())
+        // Typing into a password field is not shown (unless that was turned off).
+        let label = options.label(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: modifiers, secureInput: IsSecureEventInputEnabled())
         guard let label else { return }
         strip.add(label, at: ProcessInfo.processInfo.systemUptime)
         text = strip.text(at: ProcessInfo.processInfo.systemUptime)
@@ -95,12 +106,12 @@ private struct KeystrokePill: View {
         ZStack {
             if !overlay.text.isEmpty {
                 Text(overlay.text)
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(.system(size: overlay.options.size.fontSize, weight: .semibold, design: .rounded))
+                    .foregroundStyle(overlay.options.theme == .light ? Color.black : Color.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
                     .padding(.horizontal, 22).padding(.vertical, 10)
-                    .background(Capsule().fill(Color.black.opacity(0.72)))
+                    .background(Capsule().fill(overlay.options.theme == .light ? Color.white.opacity(0.9) : overlay.options.theme == .accent ? Color.accentColor.opacity(0.9) : Color.black.opacity(0.72)))
                     .transition(.opacity)
             }
         }
@@ -115,6 +126,37 @@ private struct KeystrokePill: View {
 final class WebcamBubble {
     private var panel: NSPanel?
     private var session: AVCaptureSession?
+    private var preview: AVCaptureVideoPreviewLayer?
+    private var style = CameraStyle()
+    /// Where the window was before it went full screen.
+    private var smallFrame: NSRect?
+
+    var isShown: Bool { panel != nil }
+    var isFullscreen: Bool { smallFrame != nil }
+
+    /// Fills the screen the camera is on with the picture, or puts the small window back where it was.
+    func toggleFullscreen() {
+        guard let panel, let preview else { return }
+        let radius: CGFloat
+        let frame: NSRect
+        if let back = smallFrame {
+            frame = back
+            smallFrame = nil
+            radius = CGFloat(style.cornerRadius(side: style.size.side))
+        } else {
+            guard let screen = panel.screen ?? screenUnderPointer() else { return }
+            smallFrame = panel.frame
+            frame = screen.frame
+            radius = 0
+        }
+        panel.setFrame(frame, display: true, animate: true)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        preview.frame = NSRect(origin: .zero, size: frame.size)
+        preview.cornerRadius = radius
+        preview.borderWidth = radius == 0 ? 0 : (style.border ? 3 : 0)
+        CATransaction.commit()
+    }
 
     /// Shows the camera. Calls back with a reason if it cannot.
     func show(cameraID: String, style: CameraStyle = CameraStyle(), completion: @escaping (String?) -> Void) {
@@ -142,15 +184,18 @@ final class WebcamBubble {
         DispatchQueue.global(qos: .userInitiated).async { running?.stopRunning() }
         panel?.orderOut(nil)
         panel = nil
+        preview = nil
+        smallFrame = nil
     }
 
     /// Moves the camera to another corner while it is showing.
     func move(to style: CameraStyle) {
-        guard let panel, let screen = panel.screen ?? screenUnderPointer() else { return }
+        guard smallFrame == nil, let panel, let screen = panel.screen ?? screenUnderPointer() else { return }
         panel.setFrameOrigin(NSPoint(x: style.origin(in: screen.visibleFrame).x, y: style.origin(in: screen.visibleFrame).y))
     }
 
     private func present(_ session: AVCaptureSession, style: CameraStyle) {
+        self.style = style
         let size = NSSize(width: style.size.side, height: style.size.side)
         let panel = makeFloatingPanel(size: size, clickThrough: false)
         panel.isMovableByWindowBackground = true
@@ -165,6 +210,7 @@ final class WebcamBubble {
         preview.borderColor = NSColor.white.withAlphaComponent(0.85).cgColor
         if style.mirrored { preview.connection?.automaticallyAdjustsVideoMirroring = false; preview.connection?.isVideoMirrored = true }
         view.layer?.addSublayer(preview)
+        self.preview = preview
         panel.contentView = view
         if let screen = screenUnderPointer() {
             panel.setFrameOrigin(style.origin(in: screen.visibleFrame))

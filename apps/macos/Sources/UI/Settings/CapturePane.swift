@@ -60,6 +60,11 @@ struct CapturePane: View {
             RecordingSection(store: store)
 
             CaptureHistorySection()
+            CaptureRetentionSection()
+            AfterCaptureSection()
+            BackgroundsSection()
+            PinStyleSection()
+            EditorPreferencesSection()
 
             Section {
                 let supported = TextRecognizer.supportedLanguages
@@ -81,13 +86,16 @@ struct CapturePane: View {
                     HStack {
                         Text(profile.name)
                         Spacer()
-                        Button("Use") { store.update { $0 = profile.applied(to: $0) } }.controlSize(.small)
+                        Button("Use") {
+                            store.update { $0 = profile.applied(to: $0) }
+                            CaptureExtraSettings.delivery = profile.applied(to: CaptureExtraSettings.delivery)
+                        }.controlSize(.small)
                         Button(role: .destructive) { profiles.profiles.removeAll { $0.id == profile.id } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).accessibilityLabel("Delete \(profile.name)")
                     }
                 }
                 HStack {
                     TextField("Name for the current settings", text: $profileName)
-                    Button("Save") { profiles.profiles.append(CaptureProfile.from(settings, named: profileName.trimmingCharacters(in: .whitespaces))); profileName = "" }
+                    Button("Save") { profiles.profiles.append(CaptureProfile.from(settings, policy: CaptureExtraSettings.delivery, legacyBackdrop: CaptureExtraSettings.beautify, named: profileName.trimmingCharacters(in: .whitespaces))); profileName = "" }
                         .disabled(profileName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: { Text("Capture profiles") } footer: { Text("A profile sets where the picture goes and what happens to it. Your shortcuts, hidden words and recording options stay as they are.") }
@@ -109,7 +117,8 @@ struct CapturePane: View {
                 Picker("Wait before capturing", selection: Binding(get: { settings.delaySeconds }, set: { v in store.update { $0.delaySeconds = v } })) {
                     Text("No wait").tag(0); Text("3 seconds").tag(3); Text("5 seconds").tag(5); Text("10 seconds").tag(10)
                 }
-                Toggle("Play the camera sound", isOn: bind(\.playSound))
+                Toggle("Play a sound when a capture is taken", isOn: bind(\.playSound))
+                CaptureSoundRows(enabled: settings.playSound)
                 Toggle("Include the pointer in screenshots", isOn: Binding(get: { settings.includeCursor ?? false }, set: { v in store.update { $0.includeCursor = v } }))
                 VStack(alignment: .leading, spacing: 4) {
                     TextField("File name", text: Binding(get: { settings.namePattern ?? CaptureNaming.defaultPattern }, set: { value in store.update { $0.namePattern = value == CaptureNaming.defaultPattern ? nil : value } }))
@@ -177,9 +186,13 @@ struct CapturePane: View {
 
     /// Said when a saved shortcut was refused, with the reason: macOS's own screenshot keys are the usual one.
     private func problem(for command: String) -> String? {
-        guard let saved = store.shortcut(for: command) else { return nil }
-        let entry = registry.entries.first { $0.owner == "Screen capture" && $0.command == command }
-        guard entry?.status == .refused else { return nil }
+        guard let saved = store.shortcut(for: command) else { return CaptureCommandCatalog.setupProblem(of: command, in: capture.commandState()) }
+        // The same keys held by another part of Kriya: said first, with whose they are.
+        if let other = CaptureCommandCatalog.clashes(command: command, keyCode: saved.keyCode, modifiers: saved.modifiers, among: registry.entries).first {
+            return "These keys are also used by “\(other.title)” (\(other.owner)). Choose other keys."
+        }
+        let entry = registry.entries.first { $0.owner == CaptureCommandCatalog.owner && $0.command == command }
+        guard entry?.status == .refused else { return CaptureCommandCatalog.setupProblem(of: command, in: capture.commandState()) }
         if let known = SystemScreenshotKeys.occupant(keyCode: saved.keyCode, modifiers: saved.modifiers, states: systemStates) {
             return "macOS uses these keys for “\(known.name)”. Use “Let Kriya use ⌘⇧3, ⌘⇧4 and ⌘⇧5” above, or choose other keys."
         }
@@ -260,6 +273,76 @@ struct CapturePane: View {
     }
 }
 
+/// How long captures are kept: how far back the history reaches, and when old pictures and recordings are offered for the Trash.
+/// Nothing is deleted without asking, and nothing is deleted outright.
+struct CaptureRetentionSection: View {
+    @EnvironmentObject private var capture: ScreenCaptureService
+    @State private var retention = CaptureExtraSettings.delivery.retention
+    @State private var expired: [CaptureCleanup.File] = []
+    @State private var message: String?
+
+    private func length(_ days: Int, none: String) -> String { days == 0 ? none : days == 1 ? "1 day" : "\(days) days" }
+
+    var body: some View {
+        Section {
+            Picker("Show in the history", selection: $retention.captureHistoryDays) {
+                ForEach(CaptureRetention.choices, id: \.self) { Text(length($0, none: "Everything")).tag($0) }
+            }
+            Picker("Offer to clean up pictures older than", selection: $retention.screenshotFileDays) {
+                ForEach(CaptureRetention.choices, id: \.self) { Text(length($0, none: "Never")).tag($0) }
+            }
+            Picker("Offer to clean up recordings older than", selection: $retention.recordingFileDays) {
+                ForEach(CaptureRetention.choices, id: \.self) { Text(length($0, none: "Never")).tag($0) }
+            }
+            if !expired.isEmpty {
+                LabeledContent {
+                    Button("Move to the Trash…") { cleanUp() }.controlSize(.small)
+                } label: {
+                    Text(CaptureCleanup.summary(expired)).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        } header: { Text("How long captures are kept") } footer: {
+            Text("The history list and the closed cards Kriya remembers drop entries older than the first limit by themselves; the files stay where they are. The other two limits only say which files are old: Kriya never moves one to the Trash without showing you how many and asking first, and it never deletes outright. GIFs count as recordings.")
+        }
+        .onChange(of: retention) { _, value in
+            var policy = CaptureExtraSettings.delivery
+            policy.retention = value.sanitized()
+            CaptureExtraSettings.delivery = policy
+            message = nil
+            scan()
+        }
+        .onAppear(perform: scan)
+    }
+
+    /// Looks at the capture folder off the main thread, so a big folder does not hold the window up.
+    private func scan() {
+        let folder = capture.settings.settings.folder
+        let limits = retention.sanitized()
+        DispatchQueue.global(qos: .utility).async {
+            let found = CaptureCleanup.expired(CaptureCleanup.files(in: folder), retention: limits)
+            DispatchQueue.main.async { expired = found }
+        }
+    }
+
+    private func cleanUp() {
+        let result = CaptureCleanup.run(expired, confirm: { files in
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Move \(files.count) old capture\(files.count == 1 ? "" : "s") to the Trash?"
+            alert.informativeText = CaptureCleanup.summary(files) + " They stay in the Trash until you empty it."
+            // Cancel is the default, so a stray Return never moves files.
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Move to Trash")
+            return alert.runModal() == .alertSecondButtonReturn
+        }, trash: { path in
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        })
+        message = result.message
+        scan()
+    }
+}
+
 /// The last pictures and recordings in the capture folder, to pin, copy or find again.
 struct CaptureHistorySection: View {
     @EnvironmentObject private var capture: ScreenCaptureService
@@ -337,12 +420,127 @@ private struct RecordingSection: View {
     @ObservedObject var store: CaptureSettingsStore
 
     private var options: RecordingOptions { store.settings.recording }
+    /// Whether the two Do Not Disturb Shortcuts exist, found off the main thread because asking Shortcuts takes a moment.
+    @State private var shortcutsReady: Bool?
 
     private func bind<T>(_ path: WritableKeyPath<RecordingOptions, T>) -> Binding<T> {
         Binding(get: { store.settings.recording[keyPath: path] }, set: { value in store.update { $0.recording[keyPath: path] = value } })
     }
 
+    /// How a recording becomes a GIF: size, speed, colours, merging and length.
+    @ViewBuilder private var gifSection: some View {
+        let gif = options.gif
+        Section {
+            Picker("Size", selection: bind(\.gif.resolution)) { ForEach(GIFResolution.allCases) { Text($0.title).tag($0) } }
+            Picker("Frame rate", selection: bind(\.gif.frameRate)) { ForEach(GIFOptions.frameRates, id: \.self) { Text("\($0) per second").tag($0) } }
+            LabeledContent("Quality") {
+                HStack(spacing: 8) {
+                    Text("Smaller").font(.caption).foregroundStyle(.secondary)
+                    Slider(value: bind(\.gif.quality), in: GIFOptions.qualityRange).frame(width: 140)
+                    Text("Best").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Toggle("Merge pictures that repeat the one before", isOn: bind(\.gif.optimize))
+            Toggle("Use only the first part of the recording", isOn: Binding(
+                get: { gif.maximumDuration != nil },
+                set: { on in store.update { $0.recording.gif.maximumDuration = on ? 30 : nil } }
+            ))
+            if let seconds = gif.maximumDuration {
+                Stepper("Length: \(Int(seconds)) seconds", value: Binding(
+                    get: { Int(seconds) },
+                    set: { value in store.update { $0.recording.gif.maximumDuration = Double(value) } }
+                ), in: Int(GIFOptions.durationRange.lowerBound)...Int(GIFOptions.durationRange.upperBound))
+            }
+            HStack {
+                Button("Reset GIF Settings") { store.update { $0.recording.gif = GIFOptions() } }.controlSize(.small)
+                Spacer()
+            }
+        } header: { Text("GIFs") } footer: {
+            Text("“Record GIF” records with the system recorder and then turns the movie into a GIF on this Mac, with a progress window you can cancel. Lower quality uses fewer colours for a smaller file; merging joins pictures that repeat so a still screen costs nothing. Kriya checks there is room first, and stops and removes the GIF if the disk is nearly full. A GIF holds every picture in memory, so a large size or a high frame rate is limited to a shorter length; the message says so. The recording is kept if the GIF is cancelled or fails.")
+        }
+    }
+
+    private func colour(_ path: WritableKeyPath<RecordingOptions, CodableColor>) -> Binding<Color> {
+        Binding(get: { store.settings.recording[keyPath: path].swiftUIColor }, set: { value in store.update { $0.recording[keyPath: path] = CodableColor(value) } })
+    }
+
+    /// Clicks drawn on the screen while recording, so they are in the movie.
+    @ViewBuilder private var clickSection: some View {
+        Section {
+            Toggle("Show clicks", isOn: bind(\.clickHighlight.enabled))
+            if options.clickHighlight.enabled {
+                Toggle("Keep a ring while the button is held", isOn: bind(\.clickHighlight.showHold))
+                Toggle("Left and right clicks in different colours", isOn: bind(\.clickHighlight.distinguishButtons))
+                ColorPicker(options.clickHighlight.distinguishButtons ? "Left click" : "Click", selection: colour(\.clickHighlight.leftColour), supportsOpacity: true)
+                if options.clickHighlight.distinguishButtons {
+                    ColorPicker("Right click", selection: colour(\.clickHighlight.rightColour), supportsOpacity: true)
+                }
+                Toggle("A soft glow around the pointer", isOn: bind(\.clickHighlight.cursorHalo))
+                Toggle("Include in window recordings", isOn: bind(\.clickHighlight.includeInWindowRecording))
+                HStack {
+                    Button("Reset Click Settings") { store.update { $0.recording.clickHighlight = ClickHighlightOptions() } }.controlSize(.small)
+                    Spacer()
+                }
+            }
+        } header: { Text("Clicks") } footer: {
+            Text("A ring appears where you click. It is drawn on the screen, so it is in a screen or app recording; a window recording leaves it out unless “Include in window recordings” is on, since the ring is not part of the window.")
+        }
+    }
+
+    /// The keys pressed, shown on the screen while recording.
+    @ViewBuilder private var keystrokeSection: some View {
+        if options.showKeystrokes {
+            Section {
+                Picker("Position", selection: bind(\.keystrokeOptions.position)) { ForEach(KeystrokeOptions.Position.allCases) { Text($0.title).tag($0) } }
+                Picker("Style", selection: bind(\.keystrokeOptions.theme)) { ForEach(KeystrokeOptions.Theme.allCases) { Text($0.title).tag($0) } }
+                Picker("Size", selection: bind(\.keystrokeOptions.size)) { ForEach(KeystrokeOptions.Size.allCases) { Text($0.title).tag($0) } }
+                Picker("Modifier keys", selection: bind(\.keystrokeOptions.modifierLabels)) { ForEach(KeystrokeOptions.ModifierLabels.allCases) { Text($0.title).tag($0) } }
+                LabeledContent("Stays on screen") {
+                    HStack(spacing: 8) {
+                        Slider(value: bind(\.keystrokeOptions.fadeSeconds), in: KeystrokeOptions.fadeRange).frame(width: 140)
+                        Text(String(format: "%.1f s", options.keystrokeOptions.fade)).monospacedDigit().frame(width: 48, alignment: .trailing)
+                    }
+                }
+                Toggle("Never show keys typed in a password field", isOn: bind(\.keystrokeOptions.hidePasswordFields))
+                HStack {
+                    Button("Reset Key Settings") { store.update { $0.recording.keystrokeOptions = KeystrokeOptions() } }.controlSize(.small)
+                    Spacer()
+                }
+            } header: { Text("Keys on screen") } footer: {
+                Text("These apply when “Show the keys I press” is on. A bare modifier key is not shown by itself.")
+            }
+        }
+    }
+
+    /// What happens around a recording: notifications, sound tracks and where the next one starts.
+    @ViewBuilder private var aroundSection: some View {
+        Section {
+            Toggle("Turn on Do Not Disturb while recording", isOn: bind(\.doNotDisturb))
+            if options.doNotDisturb {
+                if shortcutsReady == nil {
+                    Text("Looking for the two Shortcuts…").foregroundStyle(.secondary).font(.callout)
+                } else if shortcutsReady == true {
+                    Label("The two Shortcuts were found.", systemImage: "checkmark.circle.fill").foregroundStyle(.secondary).font(.callout)
+                } else {
+                    Label("Make two Shortcuts named “\(ShortcutsFocusController.onName)” and “\(ShortcutsFocusController.offName)” that turn Do Not Disturb on and off. macOS gives apps no other way.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange).font(.callout)
+                }
+            }
+            Picker("Sound and microphone", selection: bind(\.audioTrackMode)) { ForEach(AudioTrackMode.allCases) { Text($0.title).tag($0) } }
+                .disabled(!(options.systemAudio && options.microphone))
+            Toggle("Start on the same screen and window as last time", isOn: bind(\.remembersLastSelection))
+                .onChange(of: options.remembersLastSelection) { _, on in if !on { store.update { $0.recording.lastSelection = nil } } }
+        } header: { Text("Around a recording") } footer: {
+            Text("Do Not Disturb is turned on when recording starts and put back however it ends, including if Kriya quits or is restarted. Separate tracks keep the Mac's sound and the microphone apart so they can be edited apart; one mixed track joins them, and applies only when both are recorded. Remembering starts the next recording on the screen, and for a window recording the window, used last time, if they are still there; otherwise it uses the screen the pointer is on and the window in front.")
+        }
+        .task(id: options.doNotDisturb) {
+            guard options.doNotDisturb else { return }
+            shortcutsReady = await Task.detached { ShortcutsFocusController.isSetUp() }.value
+        }
+    }
+
     var body: some View {
+        gifSection
         Section {
             Toggle("Record the Mac's sound", isOn: bind(\.systemAudio))
             Toggle("Record the microphone", isOn: bind(\.microphone))
@@ -362,8 +560,16 @@ private struct RecordingSection: View {
             Picker("Frame rate", selection: bind(\.framesPerSecond)) {
                 ForEach(RecordingOptions.allowedFrameRates, id: \.self) { Text("\($0) per second").tag($0) }
             }
+            Picker("Largest size", selection: bind(\.maximumResolution)) { ForEach(ResolutionLimit.allCases) { Text($0.title).tag($0) } }
+            Picker("Retina screens", selection: bind(\.outputScale)) { ForEach(OutputScale.allCases) { Text($0.title).tag($0) } }
+            Toggle("Mix the Mac's sound down to mono", isOn: bind(\.monoAudio))
+            Toggle("Count down before recording", isOn: bind(\.showCountdown))
+            Toggle("Darken the displays that are not being recorded", isOn: bind(\.dimScreen))
         } header: { Text("Recording") } footer: {
             Text("Record Screen, Record Window and Record App use Kriya's own recorder, which saves a movie in the capture folder. The Mac's sound and the microphone go on separate audio tracks. Pause cuts the paused time out, so the movie has no gap. The keys and the camera are shown in windows on screen, so they are in a screen or app recording but not a window recording. A password field never shows its keys. HDR needs macOS 15 and a screen that supports it, and is untested on some displays. The first time Screen Recording is allowed, quit and open Kriya again.")
         }
+        clickSection
+        keystrokeSection
+        aroundSection
     }
 }

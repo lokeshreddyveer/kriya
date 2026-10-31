@@ -132,6 +132,16 @@ final class FocusSessionController: ObservableObject {
     /// Desktop icons are shown unless the setting says otherwise.
     static func desktopIconsShown() -> Bool { output("/usr/bin/defaults", ["read", "com.apple.finder", "CreateDesktop"]).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "0" }
 
+    /// Shows the desktop icons if they are hidden, hides them if they are shown. The change needs Finder to start again, which it does.
+    /// Takes a moment; call it off the main thread. Returns whether the icons are shown now.
+    @discardableResult
+    static func toggleDesktopIcons() -> Bool {
+        let next = !desktopIconsShown()
+        defaultsWrite("com.apple.finder", "CreateDesktop", next)
+        run("/usr/bin/killall", ["Finder"])
+        return next
+    }
+
     @discardableResult
     private static func run(_ path: String, _ args: [String]) -> Int32 {
         let task = Process()

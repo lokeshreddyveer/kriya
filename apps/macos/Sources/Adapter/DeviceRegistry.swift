@@ -19,6 +19,13 @@ final class DeviceRegistry: ObservableObject {
     @Published private(set) var devices: [InputDevice] = []
     /// What the Devices pane shows beyond the name: battery, last use and reconnection, by device id.
     @Published private(set) var statuses: [String: DeviceStatus] = [:]
+    /// What each device says it can do, read from the system. Kept after a device is unplugged, so the Devices tab can still describe it.
+    @Published private(set) var capabilities: [String: DeviceCapabilities] = [:]
+    /// The state of a polling-rate measurement, by device id. Only when asked for.
+    @Published private(set) var rateStates: [String: PollingRateState] = [:]
+    /// Records when one device's movement reports arrive, for a number of seconds. Set by the app from the activity tracker.
+    var rateSampler: ((String, Double, @escaping ([UInt64]) -> Void) -> Void)?
+    private var hardwareInfo: [String: HIDDeviceInfo] = [:]
 
     /// Where battery readings come from. A test replaces it, so no hardware is needed.
     var batteryReader: () -> [BatteryReading] = DeviceBattery.readSystem
@@ -180,6 +187,8 @@ final class DeviceRegistry: ObservableObject {
         publish()
     }
 
+    fileprivate func setRateState(_ state: PollingRateState, for id: String) { rateStates[id] = state }
+
     private func publish() {
         devices = records.values
             .map { InputDevice(record: $0, isConnected: (liveCounts[$0.id] ?? 0) > 0) }
@@ -200,6 +209,10 @@ final class DeviceRegistry: ObservableObject {
         guard liveInterfaces[pointer] == nil, let described = Self.describe(device) else { return }
         liveInterfaces[pointer] = described.id
         liveCounts[described.id, default: 0] += 1
+        // What the device says about itself is read here, once for each interface it has, and described together.
+        let read = DeviceCapabilityReader.info(of: device)
+        if hardwareInfo[described.id] != nil { hardwareInfo[described.id]?.merge(read) } else { hardwareInfo[described.id] = read }
+        capabilities[described.id] = hardwareInfo[described.id].map(DeviceCapabilityAnalyzer.analyze)
 
         let now = SystemInfo.nowSeconds
         let known = records[described.id]
@@ -237,6 +250,7 @@ final class DeviceRegistry: ObservableObject {
         guard let id = liveInterfaces.removeValue(forKey: pointer) else { return }
         let remaining = (liveCounts[id] ?? 1) - 1
         liveCounts[id] = remaining > 0 ? remaining : nil
+        if remaining <= 0 { hardwareInfo[id] = nil }
         if remaining <= 0 {
             let now = SystemInfo.nowSeconds
             try? core.touchDevice(id: id, lastSeen: now)
@@ -344,4 +358,26 @@ final class DeviceTimelineStore: ObservableObject {
     }
 
     func clear() { timeline = DeviceTimeline(); UserDefaults.standard.removeObject(forKey: key) }
+}
+
+/// Where a polling-rate measurement is.
+enum PollingRateState: Equatable {
+    case measuring
+    case measured(hz: Int)
+    /// Not enough movement in the time to tell.
+    case notEnoughMovement
+}
+
+extension DeviceRegistry {
+    /// Measures how often a device reports. The person is asked to move the mouse steadily for a few seconds. Nothing is kept but the
+    /// number, and the device is not opened for exclusive use.
+    func measurePollingRate(for id: String, seconds: Double = 4) {
+        guard let rateSampler, rateStates[id] != .measuring else { return }
+        setRateState(.measuring, for: id)
+        rateSampler(id, seconds) { [weak self] times in
+            var estimator = PollingRateEstimator()
+            times.forEach { estimator.record(nanoseconds: $0) }
+            self?.setRateState(estimator.estimate().map { .measured(hz: $0) } ?? .notEnoughMovement, for: id)
+        }
+    }
 }

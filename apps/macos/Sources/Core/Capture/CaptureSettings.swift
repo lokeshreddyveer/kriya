@@ -93,7 +93,12 @@ struct CaptureSettings: Codable, Equatable {
     }
 
     /// The commands that start a capture, by name. The same names work from mouse rules, workflows and the launcher.
-    static let commands: [(command: String, title: String, mode: CaptureMode, action: CaptureAction)] = [
+    static let commands: [(command: String, title: String, mode: CaptureMode, action: CaptureAction)] = base + CaptureCommandCatalog.added.map {
+        // Found by name: `run(command:)` handles these before it looks at the mode and action, which only stand in here.
+        (command: $0.id, title: $0.title, mode: CaptureMode.region, action: CaptureAction.area)
+    }
+
+    private static let base: [(command: String, title: String, mode: CaptureMode, action: CaptureAction)] = [
         ("capture.region", "Capture a region", .region, .normal),
         ("capture.window", "Capture a window", .window, .normal),
         ("capture.screen", "Capture the whole screen", .screen, .normal),

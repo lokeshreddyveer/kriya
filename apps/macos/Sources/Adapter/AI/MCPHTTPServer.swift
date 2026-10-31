@@ -158,7 +158,11 @@ final class MCPHTTPServer: ObservableObject {
         limiter.record()
         await MainActor.run { requests += 1 }
         FeatureActivity.shared.used("mcpServer")
-        if request.path == "/api/run" { reply(connection, 200, await runCommand(request.body), json: true, deadline: deadline); return }
+        if request.path == "/api/run" {
+            let result = await runCommand(request.body)
+            reply(connection, result.status, result.body, json: true, deadline: deadline)
+            return
+        }
         let version = SystemInfo.appVersion
         let answer = await MCPServerCore.handle(request.body, tools: engine.registryForOutsideClients, serverVersion: version) { [engine] call in
             let result = await engine.run(call, context: AIToolContext(feature: .launcher, localOnlyMode: LocalOnly.isOn, suspectedInjection: false, fromExternalClient: true), requester: "A program connected to Kriya")
@@ -169,19 +173,21 @@ final class MCPHTTPServer: ObservableObject {
     }
 
     /// `{"type":"command|action|workflow","id":"…"}` to the same paths `kriya://` uses, with the same name checks.
-    private func runCommand(_ body: Data) async -> String {
+    /// Turned away with a 403 and the reason when remote commands are off, so the program that asked knows why nothing ran.
+    private func runCommand(_ body: Data) async -> (status: Int, body: String) {
         guard let json = JSONValue.parse(String(decoding: body, as: UTF8.self)), let type = json["type"]?.stringValue, let id = json["id"]?.stringValue, RemoteCommand.isValidID(id) else {
-            return #"{"ok":false,"error":"Send {\"type\":\"command|action|workflow\",\"id\":\"…\"}."}"#
+            return (200, #"{"ok":false,"error":"Send {\"type\":\"command|action|workflow\",\"id\":\"…\"}."}"#)
         }
         let command: RemoteCommand
         switch type {
         case "command": command = .command(id)
         case "action": command = .action(id)
         case "workflow": command = .workflow(id)
-        default: return #"{"ok":false,"error":"Unknown type."}"#
+        default: return (200, #"{"ok":false,"error":"Unknown type."}"#)
         }
-        await MainActor.run { RemoteCommands.shared?.perform(command) }
-        return #"{"ok":true}"#
+        let refusal = await MainActor.run { RemoteCommands.shared?.perform(command) }
+        if refusal == .disabled { return (403, RemoteRefusalBody.json(.disabled)) }
+        return (200, #"{"ok":true}"#)
     }
 
     private func reply(_ connection: NWConnection, _ status: Int, _ body: String, json: Bool = false, deadline: DispatchWorkItem) {

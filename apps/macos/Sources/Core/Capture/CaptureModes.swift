@@ -184,7 +184,8 @@ struct CaptureModeSettings: Codable, Equatable {
     /// Use macOS's own selection tool (`screencapture -i`) instead of Kriya's selector.
     var useMacOSSelector = false
     var timer = SelfTimer()
-    var windowLook: WindowLook = .system
+    /// How windows are captured. (`windowLook` below is the older four-way choice, which this replaces and still answers.)
+    var windowShot = WindowShotOptions()
     var display: DisplayChoice = .ask
     var hideDesktopIcons = false
     var cropNotch = false
@@ -200,6 +201,11 @@ struct CaptureModeSettings: Codable, Equatable {
     var scrollStep = 0.7
     /// Draw a PDF open in a viewer from its file, whole, instead of scrolling it.
     var scrollUsesDocument = true
+    /// The crosshair pointer and the magnifier on Kriya's selector, each on its own. (The pixel ruler has its own.)
+    var showCrosshair = true
+    var showMagnifier = true
+    /// What the chooser and the selector remember: the last recording, display and window.
+    var memory = CaptureMemory()
 
     init() {}
 
@@ -207,7 +213,12 @@ struct CaptureModeSettings: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         useMacOSSelector = try c.decodeIfPresent(Bool.self, forKey: .useMacOSSelector) ?? false
         timer = try c.decodeIfPresent(SelfTimer.self, forKey: .timer) ?? SelfTimer()
-        windowLook = try c.decodeIfPresent(WindowLook.self, forKey: .windowLook) ?? .system
+        // The new options if they are saved; otherwise what the older four-way choice meant, so nobody's windows change.
+        if let saved = try? c.decodeIfPresent(WindowShotOptions.self, forKey: .windowShot) {
+            windowShot = saved
+        } else if let legacy = try? decoder.container(keyedBy: LegacyKeys.self), let look = try? legacy.decodeIfPresent(WindowLook.self, forKey: .windowLook) {
+            windowShot = WindowShotOptions(look: look)
+        }
         display = try c.decodeIfPresent(DisplayChoice.self, forKey: .display) ?? .ask
         hideDesktopIcons = try c.decodeIfPresent(Bool.self, forKey: .hideDesktopIcons) ?? false
         cropNotch = try c.decodeIfPresent(Bool.self, forKey: .cropNotch) ?? false
@@ -219,7 +230,37 @@ struct CaptureModeSettings: Codable, Equatable {
         scrollMode = try c.decodeIfPresent(ScrollMode.self, forKey: .scrollMode) ?? .automatic
         scrollStep = min(max(try c.decodeIfPresent(Double.self, forKey: .scrollStep) ?? 0.7, 0.3), 0.9)
         scrollUsesDocument = try c.decodeIfPresent(Bool.self, forKey: .scrollUsesDocument) ?? true
+        showCrosshair = c.value(.showCrosshair, true)
+        showMagnifier = c.value(.showMagnifier, true)
+        memory = c.value(.memory, CaptureMemory())
     }
+
+    private enum LegacyKeys: String, CodingKey { case windowLook }
+
+    /// The older four-way choice, for the parts that still ask by it.
+    var windowLook: WindowLook { windowShot.look }
+
+    /// The selector's aids, from the two switches.
+    var aids: SelectorAids {
+        get { SelectorAids(showCrosshair: showCrosshair, showMagnifier: showMagnifier) }
+        set { showCrosshair = newValue.showCrosshair; showMagnifier = newValue.showMagnifier }
+    }
+
+    /// The kind of capture the chooser opens on: the one used last, or "Area" when it is set not to remember.
+    var chooserStart: CaptureChoice { memory.remembers ? lastChoice : .area }
+
+    /// The command a chooser row runs. "Record" starts the kind of recording started last (a window or an app rather than the screen)
+    /// when remembering is on; every other row is what it says.
+    func command(for choice: CaptureChoice) -> String {
+        if choice == .recordScreen, memory.remembers, memory.recording == .window || memory.recording == .app { return memory.recording.command }
+        return choice.command
+    }
+
+    /// Remembers what the chooser was used for (when remembering is on).
+    mutating func rememberChoice(_ choice: CaptureChoice) { if memory.remembers { lastChoice = choice } }
+
+    /// Remembers the scrolling mode that was used, so the next scrolling capture starts the same way.
+    mutating func rememberScrollMode(_ mode: ScrollMode) { if memory.remembers { scrollMode = mode } }
 
     var shape: SelectionGeometry.Shape { SelectionGeometry.shapes.first { $0.id == shapeID } ?? SelectionGeometry.shapes[0] }
 

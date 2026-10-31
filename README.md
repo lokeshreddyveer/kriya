@@ -715,6 +715,43 @@ dragging files to open it, or use its shortcut. Drag items back out into any app
   equaliser (saying how far off the fit is), puts it on "All sound" when that device is the output and takes it off when another is. Nothing is
   downloaded. **Sound health** lists each output's delay, what Kriya's processing adds for each app and anything that failed. New commands for
   shortcuts and `kriya://run`: the front app's favorite, boost and menu-bar icon, the device order, and front-app volume in the step you chose.
+- **Capture, recording and mouse additions (0.10.6):** a large release. Everything below is checked by tests; **none of it has been tried by a
+  person on real hardware**, and the mouse features that take hold of buttons or the pointer are off until you switch them on.
+  - **Scrolling capture:** after you drag the area, choose **Kriya scrolls for you** or **You scroll, Kriya takes the pictures**, with visible
+    Start and Cancel buttons.
+  - **19 new capture commands**, each with a shortcut slot and usable from mouse rules, workflows, the palette and `kriya://run`: capture an
+    area and copy, save, upload, mark up or pin it; the self-timer; open the history; bring back the last closed capture; show or hide the
+    desktop icons; hide, show, save or close every card; start or stop a scrolling capture; start a recording over; the camera full screen;
+    hide, show or close every pin; choose a picture and pin it.
+  - **Backdrops, output and the editor:** backdrop presets with a border, applied before the editor or on save, per profile; sRGB, 1x and
+    @2x names, a 1 pixel outline, clipboard output, asking for a file name; a pinned-picture style; annotation shadows, spotlight, filled box,
+    resize and move tools, auto-expanding canvas, and editor shortcuts you can change.
+  - **Links in text read from a picture** are listed (nothing opens by itself). **History limits** offer old pictures and recordings for the
+    Trash; files are only moved after you confirm.
+  - **Recording:** GIF size, rate and quality; click rings, keys on screen (position, style, size, how long), Do Not Disturb while recording
+    (it runs two Shortcuts you make, named "Kriya Focus On" and "Kriya Focus Off"), one mixed audio track or separate ones, and starting on the
+    screen and window used last time (Settings › Screen Capture › Recording).
+  - **Trackpad-style scrolling** (Settings › Mouse & Trackpad › Devices, off by default): a wheel turn becomes a gesture with momentum, drawn
+    once per screen refresh, with four curves, quick and precise modes and scroll-to-zoom.
+  - **Click-and-drag navigation** (Mouse & Trackpad › Drag, off by default): hold the middle or a side button and drag; the real pointer stays
+    put while a small pointer moves, and the drag scrolls, goes back or forward, opens Mission Control, App Exposé, the desktop, another
+    Space, switches app, or zooms. Letting go, Escape, a 30-second limit, sleep and quitting all give the pointer back.
+  - **Button chords** (same place, off by default): two to four mouse buttons held together, with keys, running an action when pressed,
+    released, clicked, double-clicked, held or dragged, with conflicts against drag tools, hold rules, double-click rules and ordinary clicks
+    shown beside each chord.
+  - **Trackpad gestures by name:** three- and two-finger swipes, pinch, Mission Control, App Exposé and Command-Tab are commands any shortcut,
+    button rule or chord can run. They use scroll events and macOS's own shortcuts, not forged trackpad events; rotation is not possible.
+  - **Replacing the left and right buttons** (off by default, with safeguards): a five-second confirmation naming the button to press; Escape
+    three times, a button hammered quickly, Safe Mode, sleep, a locked screen or a display change turn it off; a pause command in the
+    menu-bar menu and as a bindable shortcut; it cannot be turned on if no button would be left that clicks.
+  - **Device hardware details** (Mouse & Trackpad › Devices): maker, model, vendor and product, buttons, wheel type, sideways scrolling, and a
+    polling rate shown for information (from the device, measured on request, or estimated). An optional, clearly labelled **estimated
+    pointer-speed compensation** scales the tracking speed Kriya sets, from two resolutions you type; it never reads or changes the mouse's CPI.
+  - **Pause Mouse Rules** (menu bar, settings and a shortcut): every click, move and scroll goes straight through; keyboard features are
+    unaffected. Kriya pauses itself if macOS switches its mouse hold off for being too slow three times in ten seconds. **Other mouse tools**
+    (Mac Mouse Fix, BetterTouchTool, LinearMouse, Mos, SteerMouse, Scroll Reverser) are listed by whether they are installed and open; Kriya
+    cannot see their settings or permissions, so an open tool is only a possible overlap, and it leaves scrolling to another scrolling tool
+    by default as a precaution.
 - **Scrolling capture starts visibly (0.10.5):** after you drag the area that scrolls, the screen now shows **Start ⏎** and **Cancel ⎋**
   buttons and keeps its instruction line (before, only pressing ⏎ went on, with nothing saying so). If the first picture cannot be taken, the
   message now says why.

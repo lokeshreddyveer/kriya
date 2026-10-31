@@ -14,6 +14,9 @@ final class DeviceActivityTracker {
     private var runLoop: CFRunLoop?
     private var interfaceIDs: [UnsafeMutableRawPointer: String] = [:]   // used only on the tracker's thread
 
+    /// A rate measurement in progress: the device and the times its movement reports arrived, in nanoseconds. Guarded by lock.
+    private var sampling: (id: String, times: [UInt64])?
+
     /// Activity older than this is forgotten, so an event with no recent device falls back to the general settings.
     static let maxAgeNs: UInt64 = 300_000_000
     /// How far back the live line on the Devices tab looks, so a device moved a moment ago is still named.
@@ -104,6 +107,23 @@ final class DeviceActivityTracker {
         lock.unlock()
     }
 
+    /// Records when the movement reports of one device arrive, for `seconds`, then hands them over (on the main queue). Only one at a time;
+    /// a second request while one is running is answered with nothing. Nothing is stored after it.
+    func sampleMovement(of deviceID: String, seconds: Double, completion: @escaping ([UInt64]) -> Void) {
+        lock.lock()
+        guard sampling == nil else { lock.unlock(); DispatchQueue.main.async { completion([]) }; return }
+        sampling = (deviceID, [])
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let times = self.sampling?.times ?? []
+            self.sampling = nil
+            self.lock.unlock()
+            DispatchQueue.main.async { completion(times) }
+        }
+    }
+
     // MARK: Callbacks (tracker thread)
 
     fileprivate func added(_ device: IOHIDDevice) {
@@ -126,6 +146,13 @@ final class DeviceActivityTracker {
         guard let id = interfaceIDs[Unmanaged.passUnretained(device).toOpaque()] else { return }
         // A report of "no movement" is not activity.
         guard IOHIDValueGetIntegerValue(value) != 0 else { return }
+        lock.lock(); let measuring = sampling?.id == id; lock.unlock()
+        if measuring, IOHIDElementGetUsagePage(element) == 0x01, [0x30, 0x31].contains(IOHIDElementGetUsage(element)) {
+            let stamp = DeviceCapabilityReader.nanoseconds(fromMach: IOHIDValueGetTimeStamp(value))
+            lock.lock()
+            sampling?.times.append(stamp)
+            lock.unlock()
+        }
         let now = DispatchTime.now().uptimeNanoseconds
         lock.lock()
         lastTimes[id] = now

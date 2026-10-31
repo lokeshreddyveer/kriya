@@ -110,6 +110,8 @@ private struct MouseDevicesTab: View {
             } footer: {
                 Text("Each mouse or trackpad can use its own preset. “Same as default” uses the default preset, set under Presets. Kriya tells devices apart by watching which one just moved, scrolled or clicked. When two are used in the same instant it cannot tell, and uses the default preset for that moment instead of guessing.")
             }
+            ScrollPhysicsSection()
+            MouseRecoverySection()
         }
         .formStyle(.grouped)
         .onReceive(tick) { _ in seen = devices.activeAttribution() }
@@ -187,6 +189,7 @@ private struct DeviceAssignmentRow: View {
                 Text(appAssignments.isEmpty ? "Presets for apps on this device" : "Presets for apps on this device (\(appAssignments.count))").font(.callout)
             }
             .animation(.smooth(duration: 0.2), value: showApps)
+            DeviceHardwareDetails(device: device)
         }
     }
 

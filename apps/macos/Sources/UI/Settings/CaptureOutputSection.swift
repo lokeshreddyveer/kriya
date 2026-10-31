@@ -9,6 +9,7 @@ struct CaptureOutputSection: View {
     @State private var keepOriginal = CaptureExtraSettings.keepOriginal
     @State private var style = CaptureExtraSettings.beautify
     @State private var excluded = CaptureExtraSettings.excludedApps
+    @State private var output = CaptureExtraSettings.delivery.output
 
     var body: some View {
         Group {
@@ -19,8 +20,18 @@ struct CaptureOutputSection: View {
                     .onChange(of: format) { _, value in CaptureExtraSettings.format = value }
                 Toggle("Keep the untouched picture too when I edit one", isOn: $keepOriginal)
                     .onChange(of: keepOriginal) { _, value in CaptureExtraSettings.keepOriginal = value }
+                Toggle("Convert pictures to the sRGB colour profile", isOn: $output.convertToSRGB)
+                Picker("Retina screenshots", selection: $output.scale) { ForEach(OutputScale.allCases) { Text($0.title).tag($0) } }
+                Toggle("Add “@2x” to the name of a Retina screenshot kept at full size", isOn: $output.includeRetinaSuffix)
+                    .disabled(output.scale == .oneX)
+                Toggle("Ask for a name after every capture", isOn: $output.askForName)
             } header: { Text("Formats and privacy") } footer: {
-                Text("WebP is not offered because macOS cannot write it. Hiding from screen sharing asks macOS to leave Kriya's windows out of what other apps can capture or record; a phone pointed at the screen still sees them.")
+                Text("WebP is not offered because macOS cannot write it. Hiding from screen sharing asks macOS to leave Kriya's windows out of what other apps can capture or record; a phone pointed at the screen still sees them. sRGB makes colours look the same in apps that ignore colour profiles. “Scaled to 1x” brings a Retina picture down to its size in points (half the pixels each way) and leaves a picture from an ordinary screen alone; the untouched copy kept beside an edit is never resized or converted. “@2x” is added only to a Retina picture written at its full size, and never twice. “Ask for a name” shows the name a capture would get, checks what you type, and shows the final file name; Don't Save skips only the file, and copying and pinning still happen. It applies when screenshots are saved to the folder.")
+            }
+            .onChange(of: output) { _, value in
+                var policy = CaptureExtraSettings.delivery
+                policy.output = value
+                CaptureExtraSettings.delivery = policy
             }
 
             Section {
@@ -71,6 +82,11 @@ struct QuickAccessSection: View {
                 }
                 Stepper("Cards stacked at once: \(s.stackLimit)", value: $s.stackLimit, in: 1...6)
                 Toggle("Wait while a recording is running", isOn: $s.holdWhileRecording)
+                Toggle("Close the card after its picture is dragged out", isOn: $s.closeAfterDragging)
+                Toggle("Hold ⌥ while dragging to keep the card open", isOn: $s.optionDragKeepsOpen).disabled(!s.closeAfterDragging)
+                Toggle("Close the card after uploading", isOn: $s.closeAfterUpload)
+                SaveDestinationPicker(title: "Save puts it in", destination: $s.defaultSaveDestination)
+                SaveDestinationPicker(title: "⌥-click Save puts it in", destination: $s.alternateSaveDestination)
             }
             Picker("Menu-bar icon", selection: $s.icon) { ForEach(QuickAccessIcon.allCases) { Text($0.title).tag($0) } }
         } header: { Text("Quick access cards") } footer: {
